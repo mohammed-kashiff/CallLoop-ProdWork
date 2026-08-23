@@ -1,0 +1,3 @@
+Postgres schema for CallLoop (Supabase). Run against DATABASE_URL — never commit that value.
+
+    alembic upgrade head

@@ -325,8 +325,26 @@ Set these as **Environment** variables on the Web Service (not Secret Files, not
 | `PYAI_API_KEY` | Live key `pyai_live_…` |
 | `ANTHROPIC_API_KEY` | Claude scoring |
 | `CORS_ORIGINS` | `https://callloop-web.onrender.com` (comma-separate extra origins if needed) |
+| `DATABASE_URL` | Supabase Postgres URI (password stays in the dashboard). Alias: `SUPABASE_DB_URL`. |
 
 Optional: `JUSTCALL_API_KEY`, `JUSTCALL_API_SECRET`, `JUSTCALL_WEBHOOK_SECRET`. Never commit values.
+
+### Postgres schema (CL-4)
+
+The API still uses SQLite at runtime until the DB-layer ticket. Schema for **orgs**, **calls**, **segments**, and **audits** lives in Alembic. Every app table has `org_id NOT NULL` → `orgs(id)`. A placeholder org (`00000000-0000-4000-8000-000000000001`) is seeded for the current single-tenant data.
+
+Apply once against Supabase. Prefer the **session pooler** URI (`aws-0-us-west-2.pooler.supabase.com`, port 5432) if `db.<ref>.supabase.co` does not resolve (IPv6). Direct URI also works on networks that can reach it.
+
+```bash
+# DATABASE_URL in .env — do not paste the URI into chat or git
+source .venv/bin/activate
+pip install -r requirements.txt
+alembic upgrade head
+```
+
+Confirm in Supabase **Table Editor**: `orgs`, `calls`, `segments`, `audits`, plus indexes `idx_calls_org_id`, `idx_segments_org_id`, `idx_audits_org_id`.
+
+On Render, add `DATABASE_URL` under **Environment** (not Secret Files) on **callloop-prodwork**. The running app ignores it until the Postgres access-layer ticket.
 
 New workspace: Dashboard → **New → Blueprint** and point at this repo’s `render.yaml`, or recreate a Web Service with the table above. Paste secrets in the dashboard (`sync: false` in the Blueprint).
 
