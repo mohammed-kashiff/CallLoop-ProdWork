@@ -1,0 +1,29 @@
+# Repeatable Render Web Service for the CallProof API.
+# Secrets are dashboard-only (sync: false). Do not put key values here.
+#
+# Existing service: callloop-prodwork (https://callloop-prodwork.onrender.com)
+# Recreate: Dashboard → New → Blueprint, or match the commands below on a Web Service.
+# Deploy: git push callloop-prodwork CallLoop-build
+
+services:
+  - type: web
+    name: callloop-prodwork
+    runtime: python
+    plan: free
+    branch: CallLoop-build
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: CORS_ORIGINS
+        value: https://callloop-web.onrender.com
+      - key: PYAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: JUSTCALL_API_KEY
+        sync: false
+      - key: JUSTCALL_API_SECRET
+        sync: false
+      - key: JUSTCALL_WEBHOOK_SECRET
+        sync: false

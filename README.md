@@ -286,6 +286,54 @@ You do not need a webhook or ngrok on this laptop.
 
 ---
 
+## Deploy the API (Render)
+
+Public HTTPS API (this workspace): **https://callloop-prodwork.onrender.com**
+
+Health (must return HTTP 200 and `{"ok":true}`):
+
+```bash
+curl -sf https://callloop-prodwork.onrender.com/health
+```
+
+The live Web Service is named **callloop-prodwork**. It builds from **`CallLoop-ProdWork`** on branch **`CallLoop-build`**. Render auto-deploys that branch. Service settings (start command, health path, env var *names*) also live in [`render.yaml`](render.yaml).
+
+### Repeatable deploy (CI trigger)
+
+```bash
+git checkout CallLoop-build
+git push callloop-prodwork CallLoop-build
+```
+
+Watch **callloop-prodwork → Events** until the deploy is Live, then run the `curl` above.
+
+Dashboard fallback: open the service → **Manual Deploy → Deploy latest commit**.
+
+### Host settings (already applied on the service)
+
+| Field | Value |
+|-------|--------|
+| Runtime | Python |
+| Build | `pip install -r requirements.txt` |
+| Start | `uvicorn backend.api:app --host 0.0.0.0 --port $PORT` |
+| Health check | `/health` |
+
+Set these as **Environment** variables on the Web Service (not Secret Files, not on the Static Site):
+
+| Name | Notes |
+|------|--------|
+| `PYAI_API_KEY` | Live key `pyai_live_…` |
+| `ANTHROPIC_API_KEY` | Claude scoring |
+| `CORS_ORIGINS` | `https://callloop-web.onrender.com` (comma-separate extra origins if needed) |
+
+Optional: `JUSTCALL_API_KEY`, `JUSTCALL_API_SECRET`, `JUSTCALL_WEBHOOK_SECRET`. Never commit values.
+
+New workspace: Dashboard → **New → Blueprint** and point at this repo’s `render.yaml`, or recreate a Web Service with the table above. Paste secrets in the dashboard (`sync: false` in the Blueprint).
+
+**Not in this AC:** SQLite on a mounted disk (free instances have no persistent volume). Uploaded calls are lost on sleep/redeploy until a paid disk is attached.
+
+---
+
 ## Smoke checklist
 
 1. UI loads at http://127.0.0.1:5173  
