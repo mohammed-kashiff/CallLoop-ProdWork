@@ -85,6 +85,9 @@ app.add_middleware(
 )
 
 
+_HEALTH_PATHS = frozenset({"/", "/health", "/healthz"})
+
+
 @app.middleware("http")
 async def log_http(request: Request, call_next):
     started = time.perf_counter()
@@ -112,6 +115,8 @@ async def log_http(request: Request, call_next):
 
     duration_ms = (time.perf_counter() - started) * 1000
     status = response.status_code
+    if request.url.path in _HEALTH_PATHS and status < 400:
+        return response
     fields = {
         "method": request.method,
         "path": request.url.path,
@@ -130,6 +135,14 @@ async def log_http(request: Request, call_next):
     else:
         applog.event(log, "http_request", **fields)
     return response
+
+
+@app.get("/health")
+@app.get("/healthz")
+@app.get("/")
+def health():
+    """Liveness for hosts (Render). Does not call PyAI, JustCall, or Claude."""
+    return {"ok": True}
 
 
 def _conn():

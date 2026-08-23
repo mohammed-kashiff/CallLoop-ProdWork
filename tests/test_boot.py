@@ -10,6 +10,9 @@ from backend.paths import AUDIO_DIR, DB_PATH, ENV_FILE, LOG_FILE, ROOT, RUBRIC_P
 
 
 EXPECTED_ROUTES = {
+    "/",
+    "/health",
+    "/healthz",
     "/api/pyai/status",
     "/api/keys",
     "/api/dev/logs",
@@ -79,6 +82,18 @@ def test_app_imports_and_exposes_current_routes():
     paths = {getattr(route, "path", None) for route in app.routes}
     missing = EXPECTED_ROUTES - paths
     assert not missing, f"missing routes: {sorted(missing)}"
+
+
+def test_health_returns_200_without_external_calls():
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+
+    client = TestClient(app)
+    for path in ("/health", "/healthz", "/"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert r.json() == {"ok": True}
 
 
 def test_cors_defaults_include_vite_dev_ports(monkeypatch):
