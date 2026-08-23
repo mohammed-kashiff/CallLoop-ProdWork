@@ -86,6 +86,39 @@ app.add_middleware(
 
 
 _HEALTH_PATHS = frozenset({"/", "/health", "/healthz"})
+_PYAI_ME_TTL_SEC = 120.0
+_pyai_me_lock = threading.Lock()
+_pyai_me_cache: dict[str, object] = {"key": "", "at": 0.0, "body": None, "status": 0}
+
+
+def _pyai_me_cached(key: str, *, allow_stale: bool = False) -> tuple[int, dict] | None:
+    with _pyai_me_lock:
+        if _pyai_me_cache.get("key") != key:
+            return None
+        age = time.monotonic() - float(_pyai_me_cache.get("at") or 0)
+        if not allow_stale and age > _PYAI_ME_TTL_SEC:
+            return None
+        body = _pyai_me_cache.get("body")
+        status = int(_pyai_me_cache.get("status") or 0)
+        if not isinstance(body, dict) or status < 1:
+            return None
+        return status, body
+
+
+def _pyai_me_store(key: str, status: int, body: dict) -> None:
+    with _pyai_me_lock:
+        _pyai_me_cache["key"] = key
+        _pyai_me_cache["at"] = time.monotonic()
+        _pyai_me_cache["body"] = body
+        _pyai_me_cache["status"] = status
+
+
+def _pyai_me_clear() -> None:
+    with _pyai_me_lock:
+        _pyai_me_cache["key"] = ""
+        _pyai_me_cache["at"] = 0.0
+        _pyai_me_cache["body"] = None
+        _pyai_me_cache["status"] = 0
 
 
 @app.middleware("http")
@@ -651,30 +684,85 @@ def pyai_status():
         )
 
     kind = "sandbox" if key.startswith("pyai_test_") else "live"
-    try:
-        r = pyai_usage.get(
-            f"{transcribe.BASE_URL}/v1/me",
-            headers={"Authorization": f"Bearer {key}"},
-            timeout=15.0,
-        )
-    except httpx.HTTPError as e:
-        log.warning("pyai /v1/me failed: %s", e)
-        usage, stats = _snapshot()
-        return _pack(
-            usage, stats,
-            ok=False,
-            configured=True,
-            env="test" if kind == "sandbox" else "live",
-            label="Sandbox" if kind == "sandbox" else "Live",
-            status="unreachable",
-            quota_label=_chip_text(stats, "Could not reach PyAI"),
-            healthy=False,
-            error="unreachable",
-        )
+    cached = _pyai_me_cached(key)
+    r_status = 0
+    body: dict = {}
+    if cached:
+        r_status, body = cached
+    else:
+        try:
+            r = pyai_usage.get(
+                f"{transcribe.BASE_URL}/v1/me",
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=15.0,
+            )
+        except httpx.HTTPError as e:
+            log.warning("pyai /v1/me failed: %s", e)
+            usage, stats = _snapshot()
+            return _pack(
+                usage, stats,
+                ok=False,
+                configured=True,
+                env="test" if kind == "sandbox" else "live",
+                label="Sandbox" if kind == "sandbox" else "Live",
+                status="unreachable",
+                quota_label=_chip_text(stats, "Could not reach PyAI"),
+                healthy=False,
+                error="unreachable",
+            )
+        r_status = r.status_code
+        if r_status == 429:
+            stale = _pyai_me_cached(key, allow_stale=True)
+            usage, stats = _snapshot()
+            if stale:
+                r_status, body = stale
+            else:
+                return _pack(
+                    usage, stats,
+                    ok=True,
+                    configured=True,
+                    env="test" if kind == "sandbox" else "live",
+                    label="Sandbox" if kind == "sandbox" else "Live",
+                    status="rate_limited",
+                    quota_label=_chip_text(stats, "PyAI rate limit — retry shortly"),
+                    healthy=True,
+                    error="rate_limited",
+                )
+        elif r_status == 200:
+            body = r.json() if r.content else {}
+            if isinstance(body, dict):
+                _pyai_me_store(key, 200, body)
+            else:
+                body = {}
+        else:
+            usage, stats = _snapshot()
+            if r_status == 401:
+                return _pack(
+                    usage, stats,
+                    ok=False,
+                    configured=True,
+                    env="test" if kind == "sandbox" else "live",
+                    label="Sandbox" if kind == "sandbox" else "Live",
+                    status="unauthorized",
+                    quota_label=_chip_text(stats, "Key invalid or revoked"),
+                    healthy=False,
+                    error="unauthorized",
+                )
+            return _pack(
+                usage, stats,
+                ok=False,
+                configured=True,
+                env="test" if kind == "sandbox" else "live",
+                label="Sandbox" if kind == "sandbox" else "Live",
+                status="error",
+                quota_label=_chip_text(stats, f"HTTP {r_status}"),
+                healthy=False,
+                error=f"http_{r_status}",
+            )
 
     usage, stats = _snapshot()
 
-    if r.status_code == 401:
+    if r_status == 401:
         return _pack(
             usage, stats,
             ok=False,
@@ -687,7 +775,7 @@ def pyai_status():
             error="unauthorized",
         )
 
-    if r.status_code != 200:
+    if r_status != 200:
         return _pack(
             usage, stats,
             ok=False,
@@ -695,12 +783,11 @@ def pyai_status():
             env="test" if kind == "sandbox" else "live",
             label="Sandbox" if kind == "sandbox" else "Live",
             status="error",
-            quota_label=_chip_text(stats, f"HTTP {r.status_code}"),
+            quota_label=_chip_text(stats, f"HTTP {r_status}"),
             healthy=False,
-            error=f"http_{r.status_code}",
+            error=f"http_{r_status}",
         )
 
-    body = r.json() if r.content else {}
     env = (body.get("env") or ("test" if kind == "sandbox" else "live")).lower()
     is_sandbox = env == "test" or kind == "sandbox"
     label = "Sandbox" if is_sandbox else "Live"
@@ -816,6 +903,8 @@ def update_keys(body: KeyUpdate, request: Request):
     except OSError:
         raise HTTPException(status_code=500, detail="Could not save the key.") from None
 
+    if "pyai" in updated:
+        _pyai_me_clear()
     applog.event(log, "keys_updated", providers=",".join(updated))
     pyai = (transcribe.PYAI_API_KEY or "").strip()
     claude = (qa.ANTHROPIC_API_KEY or "").strip()

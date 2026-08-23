@@ -65,7 +65,7 @@ export function PyaiStatusProvider({ children }: { children: ReactNode }) {
       void refresh()
     }
     load()
-    const id = window.setInterval(load, 15000)
+    const id = window.setInterval(load, 60000)
     return () => {
       cancelled = true
       window.clearInterval(id)
