@@ -323,24 +323,6 @@ def _startup():
             "call_id INTEGER PRIMARY KEY, audit_json TEXT, "
             "rubric_hash TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
         )
-        cols = [r[1] for r in c.execute("PRAGMA table_info(audits)").fetchall()]
-        if "rubric_hash" not in cols:
-            c.execute("ALTER TABLE audits ADD COLUMN rubric_hash TEXT")
-        call_cols = [r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()]
-        if "filename" not in call_cols:
-            c.execute("ALTER TABLE calls ADD COLUMN filename TEXT")
-        if "source" not in call_cols:
-            c.execute("ALTER TABLE calls ADD COLUMN source TEXT")
-        if "external_id" not in call_cols:
-            c.execute("ALTER TABLE calls ADD COLUMN external_id TEXT")
-        try:
-            c.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_calls_source_external "
-                "ON calls(source, external_id) "
-                "WHERE source IS NOT NULL AND external_id IS NOT NULL"
-            )
-        except sqlite3.OperationalError:
-            pass
     os.makedirs(AUDIO_DIR, exist_ok=True)
     pyai_usage.init_usage_db(DB_PATH)
     error_notify.log_ready()

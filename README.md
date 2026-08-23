@@ -329,22 +329,38 @@ Set these as **Environment** variables on the Web Service (not Secret Files, not
 
 Optional: `JUSTCALL_API_KEY`, `JUSTCALL_API_SECRET`, `JUSTCALL_WEBHOOK_SECRET`. Never commit values.
 
-### Postgres schema (CL-4)
+### Postgres schema and Alembic (CL-4 / CL-5)
 
-The API still uses SQLite at runtime until the DB-layer ticket. Schema for **orgs**, **calls**, **segments**, and **audits** lives in Alembic. Every app table has `org_id NOT NULL` → `orgs(id)`. A placeholder org (`00000000-0000-4000-8000-000000000001`) is seeded for the current single-tenant data.
+The API still uses SQLite at runtime until the DB-layer ticket. **Do not** add columns in Python at boot. Postgres schema is versioned in `alembic/versions/`.
 
-Apply once against Supabase. Prefer the **session pooler** URI (`aws-0-us-west-2.pooler.supabase.com`, port 5432) if `db.<ref>.supabase.co` does not resolve (IPv6). Direct URI also works on networks that can reach it.
+`0001_orgs_calls` — `orgs`, `calls`, `segments`, `audits` (`org_id NOT NULL`).  
+`0002_api_usage` — `api_usage` with `org_id`.
+
+Placeholder org: `00000000-0000-4000-8000-000000000001`.
+
+**Apply** (explicit step, not on API import). Prefer session pooler `aws-0-us-west-2.pooler.supabase.com:5432` if `db.<ref>.supabase.co` does not resolve:
 
 ```bash
 # DATABASE_URL in .env — do not paste the URI into chat or git
+unset DATABASE_URL
 source .venv/bin/activate
 pip install -r requirements.txt
 alembic upgrade head
 ```
 
-Confirm in Supabase **Table Editor**: `orgs`, `calls`, `segments`, `audits`, plus indexes `idx_calls_org_id`, `idx_segments_org_id`, `idx_audits_org_id`.
+**Create a new migration** after you change the model:
 
-On Render, add `DATABASE_URL` under **Environment** (not Secret Files) on **callloop-prodwork**. The running app ignores it until the Postgres access-layer ticket.
+```bash
+alembic revision -m "short_description"
+# edit the new file under alembic/versions/
+alembic upgrade head
+```
+
+`render.yaml` sets **Pre-Deploy Command** `alembic upgrade head` so Render applies migrations on deploy, not when uvicorn loads.
+
+Confirm in **Table Editor**: `orgs`, `calls`, `segments`, `audits`, `api_usage`.
+
+`DATABASE_URL` on **callloop-prodwork** is an Environment variable (not a Secret File).
 
 New workspace: Dashboard → **New → Blueprint** and point at this repo’s `render.yaml`, or recreate a Web Service with the table above. Paste secrets in the dashboard (`sync: false` in the Blueprint).
 

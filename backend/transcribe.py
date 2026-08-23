@@ -249,23 +249,25 @@ def make_hear_copy(src_path, dest_path):
 
 # ---------- Database ----------
 def init_db():
+    """SQLite bootstrap for local/Render until CL-6. Postgres schema is Alembic only."""
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""CREATE TABLE IF NOT EXISTS calls (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, audio_url TEXT UNIQUE NOT NULL,
-        job_id TEXT, status TEXT, full_text TEXT, speakers INTEGER,
-        audio_seconds REAL, raw_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        audio_url TEXT UNIQUE NOT NULL,
+        job_id TEXT,
+        status TEXT,
+        full_text TEXT,
+        speakers INTEGER,
+        audio_seconds REAL,
+        raw_json TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        pyai_call_id TEXT,
+        filename TEXT,
+        source TEXT,
+        external_id TEXT)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS segments (
         id INTEGER PRIMARY KEY AUTOINCREMENT, call_id INTEGER NOT NULL,
         seq INTEGER, speaker TEXT, channel INTEGER, start REAL, end REAL, text TEXT)""")
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(calls)").fetchall()]
-    if "pyai_call_id" not in cols:
-        conn.execute("ALTER TABLE calls ADD COLUMN pyai_call_id TEXT")
-    if "filename" not in cols:
-        conn.execute("ALTER TABLE calls ADD COLUMN filename TEXT")
-    if "source" not in cols:
-        conn.execute("ALTER TABLE calls ADD COLUMN source TEXT")
-    if "external_id" not in cols:
-        conn.execute("ALTER TABLE calls ADD COLUMN external_id TEXT")
     try:
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_calls_source_external "

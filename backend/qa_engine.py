@@ -69,10 +69,6 @@ MAX_TOKENS = 2000
 def load_call(call_id=None):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(calls)").fetchall()]
-    if "pyai_call_id" not in cols:
-        conn.execute("ALTER TABLE calls ADD COLUMN pyai_call_id TEXT")
-        conn.commit()
     if call_id is None:
         row = conn.execute(
             "SELECT id FROM calls WHERE status='completed' ORDER BY id DESC LIMIT 1").fetchone()
