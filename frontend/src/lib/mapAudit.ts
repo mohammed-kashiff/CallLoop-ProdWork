@@ -1,4 +1,4 @@
-import { API } from './api'
+import { apiUrl } from './api'
 import type {
   AuditReport,
   CheckType,
@@ -200,7 +200,7 @@ export function mapAudit(raw: unknown): AuditReport {
     reviewSolved: Boolean(audit.review_solved),
     rubricLabel: asString(audit.rubric_id) || asString(audit.rubric) || 'v8',
     auditMode: asString(audit.audit_mode),
-    audioUrl: callId ? `${API}/api/calls/${callId}/audio` : null,
+    audioUrl: callId ? apiUrl(`/api/calls/${callId}/audio`) : null,
     criteria,
     churn: {
       level: mapChurn(churn.risk),

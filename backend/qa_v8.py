@@ -1,7 +1,7 @@
 """
 CallProof v8 rubric evaluation (dimensions + conditional LLM steps).
 
-Works with rubric_v8.json / rules_v8.py. Keeps numeric 0-100 scoring and
+Works with the runtime rubric.json (v8 shape) and rules_v8.py. Keeps numeric 0-100 scoring and
 maps it to v8 performance bands (Star Performer … Needs Immediate Attention).
 """
 
@@ -12,7 +12,7 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import rules_v8 as rv8
+from . import rules_v8 as rv8
 
 log = logging.getLogger("callproof.qa.v8")
 

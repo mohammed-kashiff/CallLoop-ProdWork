@@ -13,4 +13,4 @@ When Sushil asks you to **make a change** (code, config, env default, restart, f
 
 Do **not** run `tail -f` for questions-only prompts (explain, how does X work).
 
-Working directory: repo root (`callproof-2testing-ui`). Never tail `.env` or print secrets.
+Working directory: repo root. Never tail `.env` or print secrets.

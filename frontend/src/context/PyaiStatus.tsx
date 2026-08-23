@@ -1,22 +1,24 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react'
-import { API } from '../lib/api'
+import { apiFetch } from '../lib/api'
 import type { PyaiStatus } from '../types'
 
 interface PyaiStatusValue {
   status: PyaiStatus | null
-  /** True when the configured PyAI key is sandbox / test. */
   isSandbox: boolean
-  /** True when the configured PyAI key is live / production. */
   isLive: boolean
-  /** Display label for both the ticker and sidebar meter. */
   label: string
+  keysOpen: boolean
+  openKeys: () => void
+  closeKeys: () => void
+  refresh: () => Promise<void>
 }
 
 const PyaiStatusContext = createContext<PyaiStatusValue | null>(null)
@@ -39,25 +41,28 @@ function deriveSandbox(status: PyaiStatus | null, label: string): boolean {
 
 export function PyaiStatusProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<PyaiStatus | null>(null)
+  const [keysOpen, setKeysOpen] = useState(false)
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/pyai/status')
+      const data = (await r.json()) as PyaiStatus
+      setStatus(data)
+    } catch {
+      setStatus({
+        ok: false,
+        healthy: false,
+        label: 'PyAI',
+        quota_label: 'Status unavailable',
+      })
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     const load = () => {
-      fetch(`${API}/api/pyai/status`)
-        .then((r) => r.json() as Promise<PyaiStatus>)
-        .then((data) => {
-          if (!cancelled) setStatus(data)
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setStatus({
-              ok: false,
-              healthy: false,
-              label: 'PyAI',
-              quota_label: 'Status unavailable',
-            })
-          }
-        })
+      if (cancelled) return
+      void refresh()
     }
     load()
     const id = window.setInterval(load, 15000)
@@ -65,7 +70,7 @@ export function PyaiStatusProvider({ children }: { children: ReactNode }) {
       cancelled = true
       window.clearInterval(id)
     }
-  }, [])
+  }, [refresh])
 
   const value = useMemo(() => {
     const label = deriveLabel(status)
@@ -75,8 +80,12 @@ export function PyaiStatusProvider({ children }: { children: ReactNode }) {
       isSandbox,
       isLive: Boolean(status) && !isSandbox && label.toLowerCase() === 'live',
       label,
+      keysOpen,
+      openKeys: () => setKeysOpen(true),
+      closeKeys: () => setKeysOpen(false),
+      refresh,
     }
-  }, [status])
+  }, [status, keysOpen, refresh])
 
   return (
     <PyaiStatusContext.Provider value={value}>{children}</PyaiStatusContext.Provider>

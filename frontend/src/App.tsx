@@ -9,6 +9,7 @@ import { ChurnRisk } from './pages/ChurnRisk'
 import { Feedbacks } from './pages/Feedbacks'
 import { FlaggedForReview } from './pages/FlaggedForReview'
 import { Home } from './pages/Home'
+import { Integrations } from './pages/Integrations'
 import { Neighbourhood } from './pages/Neighbourhood'
 import { Pyai } from './pages/Pyai'
 import { Training } from './pages/Training'
@@ -30,6 +31,7 @@ function App() {
                   <Route path="agents-pulse/flagged" element={<FlaggedForReview />} />
                   <Route path="feedbacks" element={<Feedbacks />} />
                   <Route path="churn-risk" element={<ChurnRisk />} />
+                  <Route path="integrations" element={<Integrations />} />
                   <Route path="training" element={<Training />} />
                   <Route path="pyai" element={<Pyai />} />
                   <Route path="*" element={<Navigate to="/" replace />} />

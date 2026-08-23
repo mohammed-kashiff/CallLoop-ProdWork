@@ -6,7 +6,7 @@ import { SketchWallpaper } from '../components/SketchWallpaper'
 import { KpiCard } from '../components/KpiCard'
 import { Workspace, callNoteScopeKey } from '../components/Workspace'
 import { capFirst, capWords, formatTime } from '../lib/format'
-import { API, readError } from '../lib/api'
+import { apiFetch, readError } from '../lib/api'
 import { useAudit } from '../context/AuditContext'
 import type { ChurnLevel } from '../types'
 
@@ -61,7 +61,7 @@ export function ChurnRisk() {
     setEmailing(true)
     void (async () => {
       try {
-        const r = await fetch(`${API}/api/calls/${id}/stakeholder-email/compose`)
+        const r = await apiFetch(`/api/calls/${id}/stakeholder-email/compose`)
         if (!r.ok) {
           throw new Error(await readError(r, 'Could not draft the stakeholder email.'))
         }

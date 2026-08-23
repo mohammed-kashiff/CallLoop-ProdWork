@@ -14,12 +14,11 @@ import os
 import time
 
 import httpx
-from dotenv import load_dotenv
+from . import applog
+from . import pyai_usage
+from .config import load_env
 
-import applog
-import pyai_usage
-
-load_dotenv()
+load_env()
 applog.setup_logging()
 
 log = logging.getLogger("callproof.recap")

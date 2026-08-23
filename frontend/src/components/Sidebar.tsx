@@ -9,6 +9,7 @@ const HOME = { to: '/', label: 'Home', end: true, icon: 'home' } as const
 const LOOP_NAV = [
   { to: '/feedbacks', label: 'Feedbacks', end: false, icon: 'feedbacks' },
   { to: '/churn-risk', label: 'Churn Risk', end: false, icon: 'churn' },
+  { to: '/integrations', label: 'Integrations', end: false, icon: 'integrations' },
   { to: '/training', label: 'Training', end: false, icon: 'training', soon: true },
 ] as const
 
@@ -109,6 +110,28 @@ function NavIcon({ name }: { name: NavIconName }) {
           strokeWidth="1.8"
           strokeLinecap="round"
           d="M21 10.2v6.2"
+        />
+      </svg>
+    )
+  }
+  if (name === 'integrations') {
+    return (
+      <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M10 13a5 5 0 0 0 7.07 0l1.41-1.41a5 5 0 0 0-7.07-7.07L10 5.93"
+        />
+        <path
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M14 11a5 5 0 0 0-7.07 0L5.52 12.41a5 5 0 0 0 7.07 7.07L14 18.07"
         />
       </svg>
     )

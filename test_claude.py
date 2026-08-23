@@ -1,10 +1,14 @@
+"""Anthropic connectivity smoke. Usage: python test_claude.py"""
+
 import os
 import sys
 
 import httpx
 from dotenv import load_dotenv
 
-load_dotenv()
+from backend.paths import ENV_FILE
+
+load_dotenv(ENV_FILE)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 if not ANTHROPIC_API_KEY:

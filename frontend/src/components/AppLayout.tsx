@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { useColorMode } from '../context/ColorMode'
 import { BrandLogo } from './BrandLogo'
 import { ColorModeToggle } from './ColorModeToggle'
+import { KeysPanel } from './KeysPanel'
 import { LiveTicker } from './LiveTicker'
 import { Sidebar } from './Sidebar'
 
@@ -52,6 +53,7 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
+      <KeysPanel />
     </div>
   )
 }

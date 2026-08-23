@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { API, readError } from '../lib/api'
+import { apiFetch, readError } from '../lib/api'
 import { emptyReport, mapAudit } from '../lib/mapAudit'
 import { zipAudioFiles } from '../lib/zipAudio'
 import { getHearFfmpeg, transcodeHearCopy } from '../hearTranscode'
@@ -110,6 +110,7 @@ interface AuditContextValue {
   removeQueued: (key: string) => void
   startImport: () => Promise<void>
   selectCall: (id: number) => Promise<void>
+  refreshCalls: () => Promise<CallListItem[]>
   flagCurrent: () => Promise<void>
   loadFeedback: () => Promise<void>
   feedbackLoading: boolean
@@ -124,14 +125,14 @@ const AuditContext = createContext<AuditContextValue | null>(null)
 async function uploadOneFile(file: File): Promise<number> {
   const fd = new FormData()
   fd.append('file', file)
-  const r = await fetch(`${API}/api/upload`, { method: 'POST', body: fd })
+  const r = await apiFetch('/api/upload', { method: 'POST', body: fd })
   if (!r.ok) throw new Error(await readError(r, 'Upload failed'))
   const data = (await r.json()) as { call_id: number }
   return data.call_id
 }
 
 async function fetchAuditJson(id: number): Promise<Record<string, unknown>> {
-  const r = await fetch(`${API}/api/calls/${id}/audit`)
+  const r = await apiFetch(`/api/calls/${id}/audit`)
   if (!r.ok) throw new Error('Could not load the audit for this call.')
   return r.json() as Promise<Record<string, unknown>>
 }
@@ -142,7 +143,7 @@ async function uploadBatchZip(files: File[]): Promise<
   const blob = await zipAudioFiles(files)
   const fd = new FormData()
   fd.append('file', blob, 'batch.zip')
-  const r = await fetch(`${API}/api/upload-batch`, { method: 'POST', body: fd })
+  const r = await apiFetch('/api/upload-batch', { method: 'POST', body: fd })
   if (!r.ok) throw new Error(await readError(r, 'Batch upload failed'))
   const data = (await r.json()) as {
     calls?: Array<{ call_id?: number; score?: number; status?: string; error?: string }>
@@ -171,7 +172,7 @@ export function AuditProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const refreshCalls = useCallback(async () => {
-    const r = await fetch(`${API}/api/calls`)
+    const r = await apiFetch('/api/calls')
     if (!r.ok) return [] as CallListItem[]
     const data = (await r.json()) as CallListItem[]
     setCalls(data)
@@ -410,7 +411,7 @@ export function AuditProvider({ children }: { children: ReactNode }) {
   const flagCurrent = useCallback(async () => {
     const id = report.numericCallId
     if (id == null || report.flagged) return
-    const r = await fetch(`${API}/api/calls/${id}/flag`, { method: 'POST' })
+    const r = await apiFetch(`/api/calls/${id}/flag`, { method: 'POST' })
     if (!r.ok) throw new Error(await readError(r, 'Could not flag this call.'))
     setReport((prev) => ({ ...prev, flagged: true, gateFailed: true }))
     await refreshCalls()
@@ -421,7 +422,7 @@ export function AuditProvider({ children }: { children: ReactNode }) {
     if (id == null || feedbackLoading) return
     setFeedbackLoading(true)
     try {
-      const r = await fetch(`${API}/api/calls/${id}/feedback`, { method: 'POST' })
+      const r = await apiFetch(`/api/calls/${id}/feedback`, { method: 'POST' })
       if (!r.ok) throw new Error(await readError(r, 'Could not load feedback.'))
       const data = (await r.json()) as { feedback?: unknown }
       setRawAudit((prev) => {
@@ -440,7 +441,7 @@ export function AuditProvider({ children }: { children: ReactNode }) {
       'Clear cache? This deletes all stored transcripts, scorecards, and playback audio. You will need to upload recordings again.',
     )
     if (!ok) return
-    const r = await fetch(`${API}/api/cache/clear`, { method: 'POST' })
+    const r = await apiFetch('/api/cache/clear', { method: 'POST' })
     if (!r.ok) throw new Error(await readError(r, 'Could not clear cache.'))
     setCalls([])
     setJobs([])
@@ -454,7 +455,7 @@ export function AuditProvider({ children }: { children: ReactNode }) {
 
   const exportScorecard = useCallback(async () => {
     if (running) return
-    const r = await fetch(`${API}/api/calls/export-scorecard`)
+    const r = await apiFetch('/api/calls/export-scorecard')
     if (!r.ok) throw new Error(await readError(r, 'Could not export scorecard.'))
     const blob = await r.blob()
     let name = 'callproof-scorecard.xls'
@@ -500,6 +501,7 @@ export function AuditProvider({ children }: { children: ReactNode }) {
       removeQueued,
       startImport,
       selectCall,
+      refreshCalls,
       flagCurrent,
       loadFeedback,
       feedbackLoading,
@@ -526,6 +528,7 @@ export function AuditProvider({ children }: { children: ReactNode }) {
       removeQueued,
       startImport,
       selectCall,
+      refreshCalls,
       flagCurrent,
       loadFeedback,
       feedbackLoading,

@@ -2,7 +2,7 @@ import { fmtUsd } from '../lib/api'
 import { usePyaiStatus } from '../context/PyaiStatus'
 
 export function LiveTicker() {
-  const { status, label } = usePyaiStatus()
+  const { status, label, openKeys } = usePyaiStatus()
 
   const stats =
     status?.quota_label ||
@@ -17,14 +17,14 @@ export function LiveTicker() {
 
   return (
     <div className="live-ticker" aria-label="PyAI usage">
-      <span className="live-pill">
+      <button type="button" className="live-pill" onClick={openKeys} title="Change PyAI and Claude keys">
         <span
           className={['live-dot', status?.healthy ? 'is-ok' : ''].filter(Boolean).join(' ')}
           aria-hidden="true"
         />
         <strong>{label.toUpperCase()}</strong>
         <span className="live-stats">{stats}</span>
-      </span>
+      </button>
       {status?.cost_today && (
         <span
           className="live-today"

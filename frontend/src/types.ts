@@ -133,6 +133,8 @@ export interface CallListItem {
   review_solved: boolean
   churn_risk?: string | null
   cost?: { total_usd?: number } | null
+  source?: string | null
+  external_id?: string | null
 }
 
 export interface PyaiStatus {
@@ -142,6 +144,9 @@ export interface PyaiStatus {
   quota_label?: string
   usage_label?: string
   env?: string | null
+  pyai_suffix?: string | null
+  claude_configured?: boolean
+  claude_suffix?: string | null
   pyai_actions?: number
   pyai_polls?: number
   claude_hits?: number

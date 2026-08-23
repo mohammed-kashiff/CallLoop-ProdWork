@@ -1,7 +1,8 @@
 
 CallProof scores support calls against a soft-skills rubric. Agents (or managers) upload recordings; the stack transcribes them with **PyAI Hear**, evaluates them with **Claude** (and hybrid rules), then shows a scorecard, churn signals, coaching-style feedback, and a review queue in the **Call Loop** UI.
 
-Public repo: **[CallLoop](https://github.com/mohammed-kashiff/CallLoop)** · branch **`main`**.
+Public repo: **[CallLoop](https://github.com/mohammed-kashiff/CallLoop)** · branch **`main`**.  
+This working tree is **callproof `v2testing-ui-final`** (same codebase when those branches are synced).
 
 <p align="center">
   <img src="docs/call-loop-hackathon.png" alt="Call Loop — PyAI Hackathon · Team Foursight" width="720" />
@@ -16,6 +17,7 @@ Public repo: **[CallLoop](https://github.com/mohammed-kashiff/CallLoop)** · bra
 - **Score** against rubric v8 (Resolution, Ownership, Tone/Empathy/Professionalism, etc.)
 - **Surface** scorecards, churn risk, areas of improvement, stakeholder email drafts
 - **Review** flagged calls (pending / solved)
+- **JustCall** — completed calls are pulled, transcribed, and scored automatically (Integrations tab)
 - **Estimate** approximate PyAI + Claude spend (tunable rates; not an invoice)
 
 UI brand in this branch: **Call Loop v3** (React + TypeScript + Vite).  
@@ -54,10 +56,10 @@ UI brand in this branch: **Call Loop v3** (React + TypeScript + Vite).
 | Layer | Role |
 |-------|------|
 | `frontend/` | Call Loop UI (pages, sidebar, upload queue, review) |
-| `api.py` | FastAPI routes (upload, audit, flag/solve, export, status) |
-| `transcribe.py` | PyAI Hear jobs |
-| `qa_engine.py` + `rules_v8.py` + `rubric_v8.json` | Scoring |
-| `pyai_usage.py` + `cost_estimate.py` | Local usage + $ estimates |
+| `backend/api.py` | FastAPI routes (upload, audit, flag/solve, export, status) |
+| `backend/transcribe.py` | PyAI Hear jobs |
+| `backend/qa_engine.py` + `backend/rules_v8.py` + `rubric.json` | Scoring (runtime rubric is `rubric.json`) |
+| `backend/pyai_usage.py` + `backend/cost_estimate.py` | Local usage + $ estimates |
 | `callproof.db` / `audio/` / `logs/` | Data, playback, app logs |
 
 ---
@@ -83,7 +85,7 @@ You always need an **`ANTHROPIC_API_KEY`** for Claude scoring — paste your rea
 
 ## Install & run (every terminal command)
 
-Use **two terminal tabs**. Commands use `~/CallLoop` — adjust if your clone lives elsewhere.
+Use **two terminal tabs**. Run commands from the **repository root** (this folder).
 
 ### Prerequisites
 
@@ -168,8 +170,10 @@ Start the API (**Terminal 1** — leave it running):
 ```bash
 cd ~/CallLoop
 source .venv/bin/activate
-uvicorn api:app --reload --port 8000
+uvicorn backend.api:app --reload --port 8000
 ```
+
+`uvicorn api:app --reload --port 8000` still works (root shim). Prefer `backend.api:app` so `--reload` watches the package.
 
 On first start with an empty `PYAI_API_KEY`, the API tries to mint a free sandbox key and write it into `.env`. Watch the terminal for:
 
@@ -205,6 +209,8 @@ UI: **http://127.0.0.1:5173**
 
 Open that URL in your browser.
 
+Click the **Sandbox / Live** chip in the sidebar (or the same label in the top bar) to paste a live PyAI key and/or a Claude key. They are saved to `.env` and take effect immediately — the chip switches to **Live** when the PyAI key starts with `pyai_live_`.
+
 ---
 
 ### D. Day-to-day restart (after install)
@@ -214,8 +220,10 @@ Open that URL in your browser.
 ```bash
 cd ~/CallLoop
 source .venv/bin/activate
-uvicorn api:app --reload --port 8000
+uvicorn backend.api:app --reload --port 8000
 ```
+
+`uvicorn api:app --reload --port 8000` still works (root shim). Prefer `backend.api:app` so `--reload` watches the package.
 
 **Terminal 2 — UI**
 
@@ -266,14 +274,27 @@ PYAI_API_KEY=pyai_live_your_key_here
 
 ---
 
+### H. Optional: JustCall auto-ingest
+
+Completed JustCall calls are downloaded, transcribed with Hear, scored with Claude, and listed under **Integrations**.
+
+1. In JustCall → **Settings → APIs and Webhooks**, copy the API key and secret.
+2. On **Integrations**, paste both and click **Save and connect** (also available in the API keys panel).
+3. Click **Sync now**. Finished calls appear on that page. New ones are pulled automatically after that.
+
+You do not need a webhook or ngrok on this laptop.
+
+---
+
 ## Smoke checklist
 
 1. UI loads at http://127.0.0.1:5173  
 2. Status chip shows **SANDBOX** or **LIVE**  
 3. Upload a short call (or use Agents Pulse / call list if data exists)  
 4. Open a scorecard after audit completes  
-5. Logs: `logs/callproof.log`  
-6. Expect **Training** to say Coming soon — that is normal
+5. **Integrations** lists JustCall-sourced evaluations (after keys + sync)  
+6. Logs: `logs/callproof.log`  
+7. Expect **Training** to say Coming soon — that is normal
 
 ---
 
@@ -282,10 +303,12 @@ PYAI_API_KEY=pyai_live_your_key_here
 | Path | Purpose |
 |------|---------|
 | `.env` | Secrets (local only) |
+| `frontend/.env` | Optional `VITE_API_URL` (defaults to `http://localhost:8000`) |
 | `logs/callproof.log` | Backend event log |
 | `callproof.db` | Calls, segments, audits, usage |
 | `audio/` | Playback copies |
-| `rubric_v8.json` / `rules_v8.py` | Scoring rubric |
+| `rubric.json` | Runtime scoring rubric (v8 shape) |
+| `backend/` | Python API package |
 
 ---
 
@@ -294,6 +317,21 @@ PYAI_API_KEY=pyai_live_your_key_here
 - Do not commit API keys or `.env`.
 - Sandbox keys are for bootstrap; treat live keys as secrets.
 - Cost figures in the UI are **estimates** from local usage × `COST_*` rates, not provider invoices.
+- HTTP **5xx** and unhandled API crashes can notify via macOS Notification Center (default on this Mac), optional `ERROR_NOTIFY_WEBHOOK_URL`, and default operator email (Mail.app). Notices are redacted; 4xx is not alerted.
+
+### Error notifications (local)
+
+On API **500+**, you get a macOS banner: **CallProof API error**. Restart uvicorn after pulling this change.
+
+Optional in `.env`:
+
+```bash
+ERROR_NOTIFY_DESKTOP=true
+ERROR_NOTIFY_WEBHOOK_URL=
+ERROR_NOTIFY_MIN_INTERVAL_SECONDS=60
+```
+
+Error emails go to the two operator addresses baked into the app. Mail.app sends them if an account is signed in. Allow **Mail** control if macOS asks. Set `ERROR_NOTIFY_EMAIL=off` to disable, or add extra addresses as a comma-separated list. SMTP is only used if `SMTP_HOST` is set.
 
 ---
 

@@ -16,9 +16,9 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
-log = logging.getLogger("callproof.usage")
+from .paths import DB_PATH
 
-DB_PATH = "callproof.db"
+log = logging.getLogger("callproof.usage")
 _lock = threading.Lock()
 
 

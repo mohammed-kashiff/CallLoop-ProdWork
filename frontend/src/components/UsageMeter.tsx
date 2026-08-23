@@ -1,7 +1,7 @@
 import { usePyaiStatus } from '../context/PyaiStatus'
 
 export function UsageMeter() {
-  const { status, isSandbox, label } = usePyaiStatus()
+  const { status, isSandbox, label, openKeys } = usePyaiStatus()
   const title = label || 'PyAI'
   const missing =
     !status ||
@@ -11,9 +11,11 @@ export function UsageMeter() {
   const tone = isSandbox ? 'sandbox' : missing ? 'pending' : 'live'
 
   return (
-    <section
+    <button
+      type="button"
       className={['usage-meter', `is-${tone}`].join(' ')}
-      aria-label={title}
+      aria-label={`${title}. Change PyAI and Claude keys`}
+      onClick={openKeys}
     >
       <p className="usage-kicker">{title}</p>
       {isSandbox ? (
@@ -42,6 +44,7 @@ export function UsageMeter() {
           </span>
         </div>
       )}
-    </section>
+      <span className="usage-hint">Click to replace keys</span>
+    </button>
   )
 }

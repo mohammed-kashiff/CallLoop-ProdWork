@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Workspace } from '../components/Workspace'
 import { useAudit } from '../context/AuditContext'
-import { API, readError } from '../lib/api'
+import { apiFetch, readError } from '../lib/api'
 import { capFirst, capWords } from '../lib/format'
 import type { FlaggedCallRow } from '../types'
 
@@ -276,7 +276,7 @@ export function FlaggedForReview() {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    fetch(`${API}/api/calls/flagged`)
+    apiFetch('/api/calls/flagged')
       .then((r) => {
         if (!r.ok) throw new Error('Could not load flagged calls.')
         return r.json() as Promise<FlaggedCallRow[]>
@@ -345,7 +345,7 @@ export function FlaggedForReview() {
                   const row = items.find((i) => i.id === id)
                   if (!row) return
                   void (async () => {
-                    const r = await fetch(`${API}/api/calls/${row.callId}/solve`, {
+                    const r = await apiFetch(`/api/calls/${row.callId}/solve`, {
                       method: 'POST',
                     })
                     if (!r.ok) {

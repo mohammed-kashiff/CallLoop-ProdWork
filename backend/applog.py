@@ -12,8 +12,8 @@ import os
 import re
 from logging.handlers import RotatingFileHandler
 
-LOG_DIR = "logs"
-LOG_FILE = os.path.join(LOG_DIR, "callproof.log")
+from .paths import LOG_DIR, LOG_FILE
+
 MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 BACKUP_COUNT = 5
 
