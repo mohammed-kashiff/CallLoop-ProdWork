@@ -40,7 +40,7 @@ PYAI_API_KEY = (os.getenv("PYAI_API_KEY") or "").strip() or None
 BASE_URL = "https://api.pyai.com"
 RECAP_PACK_ID = os.getenv("RECAP_PACK_ID") or None
 
-SEPARATION_MODE = "channel"    # "diarize" (mono or stereo) | "channel" (true dual-channel)
+SEPARATION_MODE = "diarize"    # "diarize" (mono or stereo) | "channel" (true dual-channel)
 MODEL = "pyai-hear-telephony"
 
 # Poll PyAI async Hear jobs. Large/slow batches (and Hear backpressure) need
