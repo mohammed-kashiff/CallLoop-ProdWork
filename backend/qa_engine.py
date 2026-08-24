@@ -26,6 +26,7 @@ from . import db
 from . import pyai_usage
 from . import qa_v8
 from . import rules
+from . import transcribe
 from .config import load_env
 from .paths import RUBRIC_PATH
 
@@ -91,7 +92,7 @@ def load_call(call_id=None):
             """,
             (call_id,),
         ).fetchall()
-    return call_id, dict(meta), [dict(s) for s in segs]
+    return call_id, dict(meta), transcribe.expand_tagged_segments([dict(s) for s in segs])
 
 
 def identify_agent(segments):

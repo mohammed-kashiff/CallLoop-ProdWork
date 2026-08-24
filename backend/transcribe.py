@@ -18,6 +18,7 @@ import hashlib
 import uuid
 import shutil
 import subprocess
+import re
 
 import httpx
 from . import applog
@@ -295,11 +296,55 @@ def find_existing_external(
     ).fetchone()
 
 
+_SPEAKER_TAG = re.compile(r"\[(speaker_\d+)\]", re.I)
+
+
+def expand_tagged_segments(segments: list) -> list:
+    """Split Hear blobs like '[speaker_1] hi [speaker_2] hello' into one row per speaker."""
+    out: list = []
+    for seg in segments or []:
+        if not isinstance(seg, dict):
+            continue
+        text = str(seg.get("text") or "")
+        marks = list(_SPEAKER_TAG.finditer(text))
+        if not marks:
+            out.append(dict(seg))
+            continue
+        pieces: list[tuple[str, str]] = []
+        for i, m in enumerate(marks):
+            body = text[m.end() : (marks[i + 1].start() if i + 1 < len(marks) else len(text))]
+            body = body.strip()
+            if body:
+                pieces.append((m.group(1).lower(), body))
+        if not pieces:
+            row = dict(seg)
+            row["text"] = _SPEAKER_TAG.sub("", text).strip()
+            out.append(row)
+            continue
+        t0 = float(seg.get("start") or 0)
+        t1 = float(seg.get("end") or t0)
+        total = sum(len(b) for _, b in pieces) or 1
+        span = max(0.0, t1 - t0)
+        cursor = t0
+        for speaker, body in pieces:
+            dur = span * (len(body) / total)
+            row = dict(seg)
+            row["speaker"] = speaker
+            row["text"] = body
+            row["start"] = cursor
+            row["end"] = cursor + dur
+            out.append(row)
+            cursor += dur
+    for i, row in enumerate(out):
+        row["seq"] = i
+    return out
+
+
 def save_transcript(
     conn, identity, job_id, result, pyai_call_id=None, filename=None,
     source=None, external_id=None,
 ):
-    segments = result.get("segments") or []
+    segments = expand_tagged_segments(result.get("segments") or [])
     safe_name = sanitize_filename(filename) if filename else None
     row = conn.execute(
         """
@@ -454,6 +499,7 @@ def _normalize_sync_result(result: dict) -> dict:
     out = dict(result)
     if not out.get("segments") and out.get("words"):
         out["segments"] = out.get("words") or []
+    out["segments"] = expand_tagged_segments(out.get("segments") or [])
     return out
 
 

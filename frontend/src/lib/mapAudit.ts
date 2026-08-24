@@ -1,4 +1,5 @@
 import { apiUrl } from './api'
+import { expandTaggedTranscript } from './speakerText'
 import type {
   AuditReport,
   CheckType,
@@ -134,17 +135,13 @@ export function mapAudit(raw: unknown): AuditReport {
     segBySeq.set(asNumber(row.seq), row)
   }
 
-  const transcript: TranscriptSegment[] = segments.map((s, i) => {
-    const row = asRecord(s)
-    const speaker = asString(row.speaker)
-    return {
-      id: String(row.seq ?? i),
-      speaker: speaker === agent ? 'agent' : 'customer',
-      start: asNumber(row.start),
-      end: asNumber(row.end),
-      text: asString(row.text),
-    }
-  })
+  const transcript: TranscriptSegment[] = expandTaggedTranscript(
+    segments,
+    agent,
+    asRecord,
+    asString,
+    asNumber,
+  )
 
   const criteria: CriterionFinding[] = findings.map((f, i) => {
     const row = asRecord(f)
