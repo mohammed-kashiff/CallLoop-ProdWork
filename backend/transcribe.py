@@ -19,6 +19,8 @@ import uuid
 import shutil
 import subprocess
 import re
+import array
+import wave
 
 import httpx
 from . import applog
@@ -41,10 +43,12 @@ PYAI_API_KEY = (os.getenv("PYAI_API_KEY") or "").strip() or None
 BASE_URL = "https://api.pyai.com"
 RECAP_PACK_ID = os.getenv("RECAP_PACK_ID") or None
 
-# both: keep L/R dual-channel split AND ML diarization.
-# diarize-only on stereo telephony often returns one speaker (CL-19 regression).
-SEPARATION_MODE = "both"       # "both" | "diarize" | "channel"
+# auto: true L/R telephony → channel only; mixed/mono MP3 → diarize only.
+# Hear forbids combining channel + diarize; "both" used to send both and
+# collapsed mixed calls into one labelled blob (CL-19).
+SEPARATION_MODE = "auto"       # "auto" | "diarize" | "channel"
 MODEL = "pyai-hear-telephony"
+_STEREO_DIFF_RATIO = 0.08      # L vs R energy; duplicated mono-as-stereo is ~0
 
 # Poll PyAI async Hear jobs. Large/slow batches (and Hear backpressure) need
 # more than two minutes — we upload 8 kHz stereo copies, but STT still tracks
@@ -108,9 +112,10 @@ def _ffmpeg_bin():
     return None
 
 
-def _run_ffmpeg(ffmpeg, src_path, dest_path):
-    # 8 kHz stereo PCM keeps agent/customer on separate channels.
-    # Do not encode MP3/AAC: joint stereo bleeds L/R and Hear drops speakers.
+def _run_ffmpeg(ffmpeg, src_path, dest_path, channels=HEAR_CHANNELS):
+    # Discrete PCM only. Joint-stereo MP3/AAC bleeds L/R and Hear drops speakers.
+    # channel mode: 2 ch; diarize mode: 1 ch (never fake-stereo a mixed recording).
+    nch = 2 if int(channels) >= 2 else 1
     return subprocess.run(
         [
             ffmpeg,
@@ -120,7 +125,7 @@ def _run_ffmpeg(ffmpeg, src_path, dest_path):
             "-y",
             "-i", src_path,
             "-map", "0:a:0",
-            "-ac", str(HEAR_CHANNELS),
+            "-ac", str(nch),
             "-ar", str(HEAR_SAMPLE_RATE),
             "-c:a", "pcm_s16le",
             "-f", "wav",
@@ -133,8 +138,71 @@ def _run_ffmpeg(ffmpeg, src_path, dest_path):
     )
 
 
-def is_hear_wav(path):
-    """True if path is already an 8 kHz stereo PCM WAV (browser bulk Hear copy)."""
+def _pcm16_true_stereo(pcm: bytes) -> bool:
+    """True when interleaved s16le L/R are not the same mix duplicated."""
+    n = (len(pcm) // 4) * 2  # whole stereo frames → sample count
+    if n < 16:
+        return False
+    samples = array.array("h")
+    samples.frombytes(pcm[: n * 2])
+    diff = energy = 0
+    for i in range(0, len(samples) - 1, 2):
+        left, right = samples[i], samples[i + 1]
+        diff += abs(left - right)
+        energy += abs(left) + abs(right)
+    if energy == 0:
+        return False
+    return (diff / energy) >= _STEREO_DIFF_RATIO
+
+
+def has_true_stereo(path: str) -> bool:
+    """True for independent L/R (telephony dual-channel). False for mono/mixed."""
+    if not path or not os.path.isfile(path):
+        return False
+    try:
+        with wave.open(path, "rb") as wav:
+            if wav.getnchannels() != 2 or wav.getsampwidth() != 2:
+                return False
+            n = min(wav.getnframes(), wav.getframerate() * 15)
+            return _pcm16_true_stereo(wav.readframes(n))
+    except (OSError, wave.Error, EOFError):
+        pass
+    ffmpeg = _ffmpeg_bin()
+    if not ffmpeg:
+        return False
+    try:
+        proc = subprocess.run(
+            [
+                ffmpeg,
+                "-hide_banner", "-loglevel", "error", "-nostdin",
+                "-t", "15", "-i", path,
+                "-ac", "2", "-ar", str(HEAR_SAMPLE_RATE),
+                "-f", "s16le", "-c:a", "pcm_s16le", "pipe:1",
+            ],
+            capture_output=True,
+            timeout=HEAR_FFMPEG_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if proc.returncode != 0 or not proc.stdout:
+        return False
+    return _pcm16_true_stereo(proc.stdout)
+
+
+def resolve_separation_mode(path: str | None = None) -> str:
+    """channel XOR diarize. Hear rejects combining them."""
+    raw = (os.getenv("HEAR_SEPARATION_MODE") or SEPARATION_MODE or "auto").strip().lower()
+    if raw in ("diarize", "channel"):
+        return raw
+    if path and has_true_stereo(path):
+        return "channel"
+    return "diarize"
+
+
+def is_hear_wav(path, channels=None):
+    """True if path is already 8 kHz PCM WAV with the requested channel count."""
+    want = HEAR_CHANNELS if channels is None else int(channels)
     try:
         with open(path, "rb") as f:
             head = f.read(44)
@@ -146,12 +214,12 @@ def is_hear_wav(path):
     if fmt_at < 0 or fmt_at + 16 > len(head):
         return False
     audio_format = int.from_bytes(head[fmt_at + 8:fmt_at + 10], "little")
-    channels = int.from_bytes(head[fmt_at + 10:fmt_at + 12], "little")
+    nch = int.from_bytes(head[fmt_at + 10:fmt_at + 12], "little")
     rate = int.from_bytes(head[fmt_at + 12:fmt_at + 16], "little")
-    return audio_format == 1 and channels == HEAR_CHANNELS and rate == HEAR_SAMPLE_RATE
+    return audio_format == 1 and nch == want and rate == HEAR_SAMPLE_RATE
 
 
-def make_hear_copy(src_path, dest_path):
+def make_hear_copy(src_path, dest_path, channels=HEAR_CHANNELS, keep_if_larger=False):
     """
     Encode a smaller 8 kHz stereo PCM WAV for PyAI Hear (channel mode).
 
@@ -184,10 +252,11 @@ def make_hear_copy(src_path, dest_path):
     if os.path.exists(dest_path):
         os.remove(dest_path)
 
+    nch = 2 if int(channels) >= 2 else 1
     started = time.perf_counter()
     last_err = None
     try:
-        proc = _run_ffmpeg(ffmpeg, src_path, dest_path)
+        proc = _run_ffmpeg(ffmpeg, src_path, dest_path, channels=nch)
         if proc.returncode == 0 and os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
             last_err = None
         else:
@@ -217,7 +286,7 @@ def make_hear_copy(src_path, dest_path):
         return None
 
     hear_bytes = os.path.getsize(dest_path)
-    if hear_bytes >= original_bytes:
+    if hear_bytes >= original_bytes and not keep_if_larger:
         os.remove(dest_path)
         applog.event(
             log, "transcode_skipped",
@@ -227,8 +296,7 @@ def make_hear_copy(src_path, dest_path):
             duration_ms=duration_ms,
         )
         log.info(
-            "Hear copy not smaller (%d -> %d bytes); "
-            "uploading original to preserve L/R channels",
+            "Hear copy not smaller (%d -> %d bytes); uploading original",
             original_bytes, hear_bytes,
         )
         return None
@@ -239,15 +307,28 @@ def make_hear_copy(src_path, dest_path):
         hear_bytes=hear_bytes,
         duration_ms=duration_ms,
         saved_bytes=original_bytes - hear_bytes,
+        channels=nch,
     )
     log.info(
-        "Hear copy %d -> %d bytes (%.1f%% smaller) in %.0f ms (8 kHz stereo PCM)",
+        "Hear copy %d -> %d bytes in %.0f ms (%d ch 8 kHz PCM)",
         original_bytes,
         hear_bytes,
-        (1 - hear_bytes / original_bytes) * 100,
         duration_ms,
+        nch,
     )
     return dest_path
+
+
+def prepare_hear_upload(src_path, hear_tmp):
+    """Pick channel vs diarize and the file Hear should actually receive."""
+    mode = resolve_separation_mode(src_path)
+    nch = 2 if mode == "channel" else 1
+    if is_hear_wav(src_path, channels=nch):
+        return src_path, mode
+    copy = make_hear_copy(
+        src_path, hear_tmp, channels=nch, keep_if_larger=(mode == "channel"),
+    )
+    return (copy or src_path), mode
 
 
 # ---------- Database ----------
@@ -397,6 +478,60 @@ def save_transcript(
     return call_id
 
 
+def replace_transcript(conn, call_id, job_id, result, pyai_call_id=None):
+    """Overwrite Hear output for an existing call (re-transcribe)."""
+    segments = expand_tagged_segments(result.get("segments") or [])
+    conn.execute("DELETE FROM segments WHERE call_id = %s", (call_id,))
+    conn.execute("DELETE FROM audits WHERE call_id = %s", (call_id,))
+    conn.execute(
+        """
+        UPDATE calls SET
+            job_id = %s,
+            status = 'completed',
+            full_text = %s,
+            speakers = %s,
+            audio_seconds = %s,
+            raw_json = %s,
+            pyai_call_id = COALESCE(%s, pyai_call_id)
+        WHERE id = %s
+        """,
+        (
+            job_id,
+            result.get("text", ""),
+            result.get("speakers"),
+            result.get("audio_seconds"),
+            json.dumps(result),
+            pyai_call_id,
+            call_id,
+        ),
+    )
+    for i, seg in enumerate(segments):
+        conn.execute(
+            """
+            INSERT INTO segments (
+                org_id, call_id, seq, speaker, channel, "start", "end", text
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                DEFAULT_ORG_ID,
+                call_id,
+                i,
+                seg.get("speaker"),
+                seg.get("channel"),
+                seg.get("start"),
+                seg.get("end"),
+                seg.get("text"),
+            ),
+        )
+    conn.commit()
+    log.info(
+        "replaced transcript for call %d (%d segments, job_id=%s)",
+        call_id, len(segments), job_id,
+    )
+    return call_id
+
+
 def set_filename_if_empty(conn, call_id, filename):
     """Backfill filename on deduped uploads when the row has no name yet."""
     if not filename:
@@ -412,26 +547,22 @@ def set_filename_if_empty(conn, call_id, filename):
     conn.commit()
 
 
-def _separation_fields(*, as_strings: bool = False) -> dict:
-    """Hear speaker split. Dual-channel recordings need channel=true; mixed audio needs diarize."""
+def _separation_fields(mode: str | None = None, *, as_strings: bool = False, path: str | None = None) -> dict:
+    """Exactly one of channel or diarize. Hear forbids sending both."""
     true = "true" if as_strings else True
-    mode = (SEPARATION_MODE or "both").strip().lower()
-    out: dict = {}
-    if mode in ("channel", "both"):
-        out["channel"] = true
-    if mode in ("diarize", "both"):
-        out["diarize"] = true
-    if not out:
-        out["channel"] = true
-        out["diarize"] = true
-    return out
+    resolved = (mode or resolve_separation_mode(path)).strip().lower()
+    if resolved != "channel":
+        resolved = "diarize"
+    if resolved == "channel":
+        return {"channel": true}
+    return {"diarize": true}
 
 
 # ---------- PyAI service wrapper ----------
 def submit_job_url(audio_url, call_id=None):
     _require_api_key()
     body = {"audio_url": audio_url, "model": MODEL, "numerals": True, "output_formats": ["json"]}
-    body.update(_separation_fields())
+    body.update(_separation_fields(mode="diarize"))
     if call_id:
         body["call_id"] = call_id
         if RECAP_PACK_ID:
@@ -454,7 +585,7 @@ _SYNC_SCOPE_HELP = (
 )
 
 
-def submit_job_file(path, call_id=None):
+def submit_job_file(path, call_id=None, mode=None):
     """
     Submit audio for transcription.
 
@@ -465,19 +596,26 @@ def submit_job_file(path, call_id=None):
     with a clear error instead of saving an empty transcript.
     """
     _require_api_key()
+    resolved = (mode or resolve_separation_mode(path)).strip().lower()
+    if resolved != "channel":
+        resolved = "diarize"
     with open(path, "rb") as f:
         audio_bytes = f.read()
 
     files = {"audio": (os.path.basename(path), audio_bytes, "application/octet-stream")}
     data = {"model": MODEL, "numerals": "true", "output_formats": "json"}
-    data.update(_separation_fields(as_strings=True))
+    data.update(_separation_fields(resolved, as_strings=True))
     if call_id:
         data["call_id"] = call_id
         if RECAP_PACK_ID:
             data["pack_id"] = RECAP_PACK_ID
 
-    log.info("submitting %.2f MB to PyAI Hear (%s mode, call_id=%s)",
-             len(audio_bytes) / 1_000_000, SEPARATION_MODE, call_id)
+    applog.event(
+        log, "hear_separation",
+        mode=resolved, call_id=call_id, bytes=len(audio_bytes),
+    )
+    log.info("submitting %.2f MB to PyAI Hear (%s, call_id=%s)",
+             len(audio_bytes) / 1_000_000, resolved, call_id)
 
     resp = pyai_usage.post(
         f"{BASE_URL}/v1/transcription/jobs",
@@ -671,8 +809,8 @@ def main(argv: list[str] | None = None):
                 job_id = submit_job_url(src, call_id=pyai_id)
             else:
                 hear_tmp = src + ".hear-tmp.wav"
-                upload_path = make_hear_copy(src, hear_tmp) or src
-                job_id = submit_job_file(upload_path, call_id=pyai_id)
+                upload_path, mode = prepare_hear_upload(src, hear_tmp)
+                job_id = submit_job_file(upload_path, call_id=pyai_id, mode=mode)
             result = poll_job(job_id)
             call_id = save_transcript(
                 conn, identity, job_id, result,

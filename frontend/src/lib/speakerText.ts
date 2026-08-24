@@ -4,6 +4,22 @@ export function looksLikeSpeakerDump(text: string): boolean {
   return /\[speaker_\d+\]/i.test(text || '')
 }
 
+export function stripSpeakerTags(text: string): string {
+  return (text || '').replace(/\[speaker_\d+\]/gi, ' ').replace(/\s+/g, ' ').trim()
+}
+
+/** Hear may send speaker_1, "1", or 1. Empty agent_speaker must not map everyone to customer. */
+export function canonSpeaker(raw: unknown, fallback = ''): string {
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return `speaker_${raw}`
+  }
+  const s = String(raw ?? '').trim().toLowerCase().replace(/\s+/g, '_')
+  if (!s) return fallback
+  const m = s.match(/^(?:speaker[_-]?)?(\d+)$/)
+  if (m) return `speaker_${Number(m[1])}`
+  return s
+}
+
 export function parseSpeakerTaggedText(
   text: string,
   agentSpeaker = 'speaker_1',
@@ -17,14 +33,14 @@ export function parseSpeakerTaggedText(
   }
   if (!marks.length) return []
 
-  const agent = agentSpeaker.trim().toLowerCase().replace(/\s+/g, '_')
+  const agent = canonSpeaker(agentSpeaker, 'speaker_1')
   const out: TranscriptSegment[] = []
   for (let i = 0; i < marks.length; i++) {
     const start = marks[i].end
     const stop = i + 1 < marks.length ? marks[i + 1].index : raw.length
     const body = raw.slice(start, stop).trim()
     if (!body) continue
-    const id = marks[i].speaker
+    const id = canonSpeaker(marks[i].speaker)
     out.push({
       id: `recap-${i}`,
       speaker: id === agent ? 'agent' : 'customer',
@@ -67,10 +83,11 @@ export function expandTaggedTranscript(
       }
       continue
     }
-    const speaker = asString(row.speaker)
+    const speaker = canonSpeaker(row.speaker)
+    const agent = canonSpeaker(agentSpeaker, 'speaker_1')
     out.push({
       id: String(row.seq ?? n++),
-      speaker: speaker === agentSpeaker ? 'agent' : 'customer',
+      speaker: speaker === agent ? 'agent' : 'customer',
       start: t0,
       end: t1,
       text,

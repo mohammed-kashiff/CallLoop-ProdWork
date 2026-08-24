@@ -6,13 +6,12 @@ import { CriteriaFindings } from '../components/CriteriaFindings'
 import { KpiCard } from '../components/KpiCard'
 import { Pipeline } from '../components/Pipeline'
 import { ScoreOverview } from '../components/ScoreOverview'
-import { SpeakerTurns } from '../components/SpeakerTurns'
 import { TranscriptPlayer } from '../components/TranscriptPlayer'
 import { UploadZone } from '../components/UploadZone'
 import { Workspace, callNoteScopeKey } from '../components/Workspace'
 import { useAudit } from '../context/AuditContext'
 import { capFirst, capWords, formatTime, scoreHue } from '../lib/format'
-import { looksLikeSpeakerDump, parseSpeakerTaggedText } from '../lib/speakerText'
+import { stripSpeakerTags } from '../lib/speakerText'
 import type { BulkJob, CallListItem, JobStatus } from '../types'
 
 interface CallLaneRow {
@@ -241,20 +240,10 @@ export function AgentsPulse() {
                     <div className="eval-pane">
                       <ScoreOverview report={report} animate={scoreAnimate} />
                       <h2 className="panel-title">{report.summary.headline}</h2>
-                      {looksLikeSpeakerDump(report.summary.narrative) ? (
-                        <SpeakerTurns
-                          segments={
-                            report.transcript.length > 0
-                              ? report.transcript
-                              : parseSpeakerTaggedText(
-                                  report.summary.narrative,
-                                  report.agentSpeaker,
-                                )
-                          }
-                        />
-                      ) : (
-                        <p className="panel-lede">{report.summary.narrative}</p>
-                      )}
+                      <p className="panel-lede">
+                        {stripSpeakerTags(report.summary.narrative) ||
+                          report.summary.narrative}
+                      </p>
 
                       <section
                         className="improvement-block"

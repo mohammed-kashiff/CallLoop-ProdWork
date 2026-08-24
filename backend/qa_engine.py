@@ -180,7 +180,9 @@ def classify_roles(segments):
     speakers = []
     for s in segments:
         sp = s.get("speaker")
-        if sp and sp not in speakers:
+        if sp is None or str(sp).strip() == "":
+            continue
+        if sp not in speakers:
             speakers.append(sp)
     if len(speakers) < 2:
         agent = speakers[0] if speakers else identify_agent(segments)
@@ -188,7 +190,10 @@ def classify_roles(segments):
         log.info("role classification: agent = %s (single speaker)", agent)
         return agent
 
-    window = [s for s in segments[:15] if s.get("speaker")]
+    window = [
+        s for s in segments[:15]
+        if s.get("speaker") is not None and str(s.get("speaker")).strip() != ""
+    ]
     scores = {sp: 0 for sp in speakers}
     channel_of = {sp: [] for sp in speakers}
     for s in window:

@@ -1,5 +1,5 @@
 import { apiUrl } from './api'
-import { expandTaggedTranscript } from './speakerText'
+import { canonSpeaker, expandTaggedTranscript } from './speakerText'
 import type {
   AuditReport,
   CheckType,
@@ -121,7 +121,7 @@ export function mapAudit(raw: unknown): AuditReport {
   const callId = asNumber(audit.call_id)
   const score = asNumber(audit.score)
   const grade = asString(audit.grade)
-  const agent = asString(audit.agent_speaker, 'speaker_1')
+  const agent = canonSpeaker(audit.agent_speaker, 'speaker_1')
   const segments = Array.isArray(audit.segments) ? audit.segments : []
   const findings = Array.isArray(audit.findings) ? audit.findings : []
   const recap = asRecord(audit.recap)

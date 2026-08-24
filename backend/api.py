@@ -1503,6 +1503,30 @@ def export_calls(format: str = "csv"):
     )
 
 
+def _hydrate_audit_segments(audit: dict, call_id: int) -> dict:
+    """Serve live expanded turns, not the frozen Hear blob stored in the scorecard."""
+    if not isinstance(audit, dict) or call_id < 1:
+        return audit
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                """
+                SELECT seq, speaker, channel, "start", "end", text
+                FROM segments WHERE call_id = %s ORDER BY seq
+                """,
+                (call_id,),
+            ).fetchall()
+    except Exception:
+        return audit
+    segs = transcribe.expand_tagged_segments([dict(r) for r in rows])
+    out = dict(audit)
+    out["segments"] = segs
+    agent = out.get("agent_speaker")
+    if agent is None or (isinstance(agent, str) and not str(agent).strip()):
+        out["agent_speaker"] = qa.classify_roles(segs)
+    return out
+
+
 @app.get("/api/calls/{call_id}/audit")
 def get_audit(call_id: int, refresh: bool = False):
     rh = _rubric_hash()
@@ -1525,7 +1549,7 @@ def get_audit(call_id: int, refresh: bool = False):
                 "cache HIT  call %d (score %s) - returning stored audit",
                 call_id, cached.get("score"),
             )
-            return _attach_filename(cached, call_id)
+            return _attach_filename(_hydrate_audit_segments(cached, call_id), call_id)
         applog.event(log, "audit_cache", result="MISS", call_id=call_id)
         log.info("cache MISS  call %d - computing fresh audit", call_id)
     else:
@@ -1533,7 +1557,7 @@ def get_audit(call_id: int, refresh: bool = False):
         log.info("cache BYPASS (refresh) call %d - computing fresh audit", call_id)
     audit, _rh = _load_or_compute_audit(call_id, refresh=True)
     log.info("cached audit for call %d (score %s)", call_id, audit["score"])
-    return _attach_filename(audit, call_id)
+    return _attach_filename(_hydrate_audit_segments(audit, call_id), call_id)
 
 
 def _save_audit(call_id: int, audit: dict, rh: str):
@@ -1803,11 +1827,8 @@ def _ingest_audio_file(
                     return call_id, True
 
         pyai_id = transcribe.new_pyai_call_id()
-        if transcribe.is_hear_wav(src_path):
-            upload_path = src_path
-        else:
-            upload_path = transcribe.make_hear_copy(src_path, hear_tmp) or src_path
-        job_id = transcribe.submit_job_file(upload_path, call_id=pyai_id)
+        upload_path, mode = transcribe.prepare_hear_upload(src_path, hear_tmp)
+        job_id = transcribe.submit_job_file(upload_path, call_id=pyai_id, mode=mode)
         result = transcribe.poll_job(job_id)
         with _db_lock:
             with db.connection() as conn:
@@ -2210,6 +2231,61 @@ def get_audio(call_id: int):
             detail=f"No audio at {path}. Copy the call's file there as {call_id}.mp3.",
         )
     return FileResponse(path, media_type=_audio_media_type(path))
+
+
+@app.post("/api/calls/{call_id}/retranscribe")
+def retranscribe_call(call_id: int):
+    """Re-run Hear on the stored recording. Mixed MP3s now use diarize only."""
+    if call_id < 1:
+        raise HTTPException(status_code=400, detail="Invalid call id.")
+    path = os.path.join(AUDIO_DIR, f"{call_id}.mp3")
+    if not os.path.isfile(path):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No stored audio for call {call_id}. "
+                "Re-upload the file after this Hear fix is deployed."
+            ),
+        )
+    hear_tmp = f"{path}.{uuid.uuid4().hex}.hear.wav"
+    size = os.path.getsize(path)
+    try:
+        pyai_id = transcribe.new_pyai_call_id()
+        upload_path, mode = transcribe.prepare_hear_upload(path, hear_tmp)
+        applog.event(
+            log, "retranscribe_started",
+            call_id=call_id, mode=mode, size_bytes=size,
+        )
+        job_id = transcribe.submit_job_file(upload_path, call_id=pyai_id, mode=mode)
+        result = transcribe.poll_job(job_id)
+        with _db_lock:
+            with db.connection() as conn:
+                transcribe.replace_transcript(
+                    conn, call_id, job_id, result, pyai_call_id=pyai_id,
+                )
+        audit, _rh = _load_or_compute_audit(call_id, refresh=True)
+        applog.event(
+            log, "retranscribe_completed",
+            call_id=call_id, mode=mode, job_id=job_id,
+            segments=len(result.get("segments") or []),
+            score=audit.get("score") if isinstance(audit, dict) else None,
+        )
+        return {
+            "call_id": call_id,
+            "job_id": job_id,
+            "mode": mode,
+            "segments": len((audit or {}).get("segments") or []),
+            "score": (audit or {}).get("score"),
+        }
+    except HTTPException:
+        raise
+    except (Exception, SystemExit) as e:
+        msg = str(e)
+        log.error("retranscribe failed for call %s: %s", call_id, msg)
+        raise HTTPException(status_code=502, detail="Retranscribe failed.") from e
+    finally:
+        if os.path.exists(hear_tmp):
+            os.remove(hear_tmp)
 
 
 @app.post("/api/upload")
