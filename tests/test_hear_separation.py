@@ -10,6 +10,7 @@ import wave
 from backend.transcribe import (
     _pcm16_true_stereo,
     _separation_fields,
+    channel_split_ok,
     expand_tagged_segments,
     has_true_stereo,
     resolve_separation_mode,
@@ -38,8 +39,8 @@ def test_separation_fields_never_send_both():
     both = _separation_fields("both")
     assert channel == {"channel": True} and "diarize" not in channel
     assert diarize == {"diarize": True} and "channel" not in diarize
-    assert auto == {"diarize": True}
-    assert both == {"diarize": True}
+    assert auto == {"channel": True}
+    assert both == {"channel": True}
 
 
 def test_pcm_detects_duplicated_vs_independent_channels():
@@ -49,7 +50,8 @@ def test_pcm_detects_duplicated_vs_independent_channels():
     assert _pcm16_true_stereo(real) is True
 
 
-def test_resolve_mode_on_wav_files():
+def test_resolve_mode_on_wav_files(monkeypatch):
+    monkeypatch.setenv("HEAR_SEPARATION_MODE", "auto")
     pairs = [(900, 900)] * 80
     split = [(900, 0)] * 80
     with tempfile.TemporaryDirectory() as tmp:
@@ -61,6 +63,32 @@ def test_resolve_mode_on_wav_files():
         assert has_true_stereo(true) is True
         assert resolve_separation_mode(fake) == "diarize"
         assert resolve_separation_mode(true) == "channel"
+
+
+def test_channel_split_ok_rejects_tagged_dump():
+    dump = {
+        "speakers": 1,
+        "text": "[speaker_1] Hey Dylan. [speaker_2] Oh hey.",
+        "segments": [
+            {
+                "speaker": None,
+                "start": 0,
+                "end": 90,
+                "text": "[speaker_1] Hey Dylan. [speaker_2] Oh hey.",
+            }
+        ],
+    }
+    turns = {
+        "speakers": 2,
+        "segments": [
+            {"speaker": "speaker_1", "channel": 0, "text": "Hey", "start": 0, "end": 1},
+            {"speaker": "speaker_2", "channel": 1, "text": "Hi", "start": 1, "end": 2},
+            {"speaker": "speaker_1", "channel": 0, "text": "Sorry", "start": 2, "end": 3},
+            {"speaker": "speaker_2", "channel": 1, "text": "Lead", "start": 3, "end": 4},
+        ],
+    }
+    assert channel_split_ok(dump) is False
+    assert channel_split_ok(turns) is True
 
 
 def test_expand_tagged_blob_splits_speakers():

@@ -43,10 +43,10 @@ PYAI_API_KEY = (os.getenv("PYAI_API_KEY") or "").strip() or None
 BASE_URL = "https://api.pyai.com"
 RECAP_PACK_ID = os.getenv("RECAP_PACK_ID") or None
 
-# auto: true L/R telephony → channel only; mixed/mono MP3 → diarize only.
-# Hear forbids combining channel + diarize; "both" used to send both and
-# collapsed mixed calls into one labelled blob (CL-19).
-SEPARATION_MODE = "auto"       # "auto" | "diarize" | "channel"
+# v2testing-ui-final: channel=true on 8 kHz stereo PCM → interleaved L/R turns.
+# Never send channel+diarize together (Hear forbids it and returns one dump).
+# Mixed files: try channel first, then retry diarize-only.
+SEPARATION_MODE = "channel"    # "channel" | "diarize" | "auto"
 MODEL = "pyai-hear-telephony"
 _STEREO_DIFF_RATIO = 0.08      # L vs R energy; duplicated mono-as-stereo is ~0
 
@@ -191,13 +191,17 @@ def has_true_stereo(path: str) -> bool:
 
 
 def resolve_separation_mode(path: str | None = None) -> str:
-    """channel XOR diarize. Hear rejects combining them."""
-    raw = (os.getenv("HEAR_SEPARATION_MODE") or SEPARATION_MODE or "auto").strip().lower()
-    if raw in ("diarize", "channel"):
-        return raw
-    if path and has_true_stereo(path):
+    """channel XOR diarize. Hear rejects combining them. Default matches v2 (channel)."""
+    raw = (os.getenv("HEAR_SEPARATION_MODE") or SEPARATION_MODE or "channel").strip().lower()
+    if raw == "diarize":
+        return "diarize"
+    if raw == "auto":
+        if path and has_true_stereo(path):
+            return "channel"
+        if path:
+            return "diarize"
         return "channel"
-    return "diarize"
+    return "channel"
 
 
 def is_hear_wav(path, channels=None):
@@ -551,18 +555,16 @@ def _separation_fields(mode: str | None = None, *, as_strings: bool = False, pat
     """Exactly one of channel or diarize. Hear forbids sending both."""
     true = "true" if as_strings else True
     resolved = (mode or resolve_separation_mode(path)).strip().lower()
-    if resolved != "channel":
-        resolved = "diarize"
-    if resolved == "channel":
-        return {"channel": true}
-    return {"diarize": true}
+    if resolved == "diarize":
+        return {"diarize": true}
+    return {"channel": true}
 
 
 # ---------- PyAI service wrapper ----------
 def submit_job_url(audio_url, call_id=None):
     _require_api_key()
     body = {"audio_url": audio_url, "model": MODEL, "numerals": True, "output_formats": ["json"]}
-    body.update(_separation_fields(mode="diarize"))
+    body.update(_separation_fields(mode="channel"))
     if call_id:
         body["call_id"] = call_id
         if RECAP_PACK_ID:
@@ -597,8 +599,8 @@ def submit_job_file(path, call_id=None, mode=None):
     """
     _require_api_key()
     resolved = (mode or resolve_separation_mode(path)).strip().lower()
-    if resolved != "channel":
-        resolved = "diarize"
+    if resolved != "diarize":
+        resolved = "channel"
     with open(path, "rb") as f:
         audio_bytes = f.read()
 
@@ -772,6 +774,82 @@ def get_result(job_data):
     raise RuntimeError(f"Completed job has no result or result_url: {job_data}")
 
 
+def _looks_like_tagged_dump(result: dict) -> bool:
+    """Hear grouped both speakers into [speaker_1] … [speaker_2] … instead of turns."""
+    segs = result.get("segments") or []
+    texts = [str(result.get("text") or "")]
+    labeled = []
+    for seg in segs:
+        if not isinstance(seg, dict):
+            continue
+        texts.append(str(seg.get("text") or ""))
+        if seg.get("speaker") not in (None, ""):
+            labeled.append(seg)
+    blob = " ".join(texts)
+    tags = {m.group(1).lower() for m in _SPEAKER_TAG.finditer(blob)}
+    if len(tags) >= 2 and (len(segs) <= 1 or len(labeled) < 2):
+        return True
+    return False
+
+
+def channel_split_ok(result: dict) -> bool:
+    """True when Hear returned interleaved turns like v2testing-ui-final."""
+    if not isinstance(result, dict) or _looks_like_tagged_dump(result):
+        return False
+    segs = [s for s in (result.get("segments") or []) if isinstance(s, dict)]
+    labeled = [s for s in segs if s.get("speaker") not in (None, "")]
+    speakers = {s.get("speaker") for s in labeled}
+    channels = {s.get("channel") for s in segs if s.get("channel") is not None}
+    if len(channels) >= 2 and len(labeled) >= 2:
+        return True
+    if len(speakers) >= 2 and len(labeled) >= 4:
+        return True
+    return False
+
+
+def transcribe_with_fallback(src_path, hear_tmp, call_id=None):
+    """v2 path first: 8 kHz stereo + channel. Retry diarize if Hear returns a dump."""
+    forced = (os.getenv("HEAR_SEPARATION_MODE") or SEPARATION_MODE or "channel").strip().lower()
+    if forced == "diarize":
+        upload, mode = prepare_hear_upload(src_path, hear_tmp)
+        job_id = submit_job_file(upload, call_id=call_id, mode="diarize")
+        return job_id, poll_job(job_id), "diarize"
+
+    if is_hear_wav(src_path, channels=2):
+        channel_path = src_path
+    else:
+        channel_path = make_hear_copy(
+            src_path, hear_tmp, channels=2, keep_if_larger=True,
+        ) or src_path
+    job_id = submit_job_file(channel_path, call_id=call_id, mode="channel")
+    result = poll_job(job_id)
+    if channel_split_ok(result):
+        return job_id, result, "channel"
+
+    applog.event(
+        log, "hear_separation_retry",
+        from_mode="channel", to_mode="diarize", call_id=call_id,
+        segments=len(result.get("segments") or []),
+    )
+    log.info("channel split missing turns; retrying Hear with diarize")
+    mono_tmp = f"{hear_tmp}.mono.wav"
+    try:
+        mono_path = make_hear_copy(
+            src_path, mono_tmp, channels=1, keep_if_larger=False,
+        ) or src_path
+        job2 = submit_job_file(mono_path, call_id=call_id, mode="diarize")
+        result2 = poll_job(job2)
+    finally:
+        if os.path.exists(mono_tmp):
+            os.remove(mono_tmp)
+    if channel_split_ok(result2) or not _looks_like_tagged_dump(result2):
+        segs2 = result2.get("segments") or []
+        segs1 = result.get("segments") or []
+        if len(segs2) >= len(segs1):
+            return job2, result2, "diarize"
+    return job_id, result, "channel"
+
+
 # ---------- Orchestrator (CLI) ----------
 def identity_for(src):
     if is_url(src):
@@ -807,11 +885,12 @@ def main(argv: list[str] | None = None):
         try:
             if is_url(src):
                 job_id = submit_job_url(src, call_id=pyai_id)
+                result = poll_job(job_id)
             else:
                 hear_tmp = src + ".hear-tmp.wav"
-                upload_path, mode = prepare_hear_upload(src, hear_tmp)
-                job_id = submit_job_file(upload_path, call_id=pyai_id, mode=mode)
-            result = poll_job(job_id)
+                job_id, result, _mode = transcribe_with_fallback(
+                    src, hear_tmp, call_id=pyai_id,
+                )
             call_id = save_transcript(
                 conn, identity, job_id, result,
                 pyai_call_id=pyai_id,

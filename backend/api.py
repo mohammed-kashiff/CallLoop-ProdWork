@@ -1827,9 +1827,9 @@ def _ingest_audio_file(
                     return call_id, True
 
         pyai_id = transcribe.new_pyai_call_id()
-        upload_path, mode = transcribe.prepare_hear_upload(src_path, hear_tmp)
-        job_id = transcribe.submit_job_file(upload_path, call_id=pyai_id, mode=mode)
-        result = transcribe.poll_job(job_id)
+        job_id, result, mode = transcribe.transcribe_with_fallback(
+            src_path, hear_tmp, call_id=pyai_id,
+        )
         with _db_lock:
             with db.connection() as conn:
                 existing = None
@@ -1866,6 +1866,7 @@ def _ingest_audio_file(
             size_bytes=size,
             deduped=False,
             filename=source_name,
+            mode=mode,
         )
         log.info(
             "transcription complete -> new call %d (filename=%s, pyai_call_id=%s)",
@@ -2251,13 +2252,13 @@ def retranscribe_call(call_id: int):
     size = os.path.getsize(path)
     try:
         pyai_id = transcribe.new_pyai_call_id()
-        upload_path, mode = transcribe.prepare_hear_upload(path, hear_tmp)
         applog.event(
             log, "retranscribe_started",
-            call_id=call_id, mode=mode, size_bytes=size,
+            call_id=call_id, size_bytes=size,
         )
-        job_id = transcribe.submit_job_file(upload_path, call_id=pyai_id, mode=mode)
-        result = transcribe.poll_job(job_id)
+        job_id, result, mode = transcribe.transcribe_with_fallback(
+            path, hear_tmp, call_id=pyai_id,
+        )
         with _db_lock:
             with db.connection() as conn:
                 transcribe.replace_transcript(
