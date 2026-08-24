@@ -12,6 +12,7 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from . import applog
 from . import rules_v8 as rv8
 
 log = logging.getLogger("callproof.qa.v8")
@@ -96,10 +97,11 @@ def _run_standard_llm(call_claude, parse_json, build_prompt, validate_evidence,
     try:
         parsed = _llm_json(call_claude, parse_json, prompt)
     except Exception as e:  # noqa: BLE001
-        log.error("v8 LLM step failed: %s", e)
+        err = applog.safe_exception_text(e)
+        log.error("v8 LLM step failed: %s", err)
         return {
             "verdict": "error",
-            "reasoning": f"LLM step failed: {e}",
+            "reasoning": f"LLM step failed: {err}",
             "evidence_text": None,
             "evidence_seq": None,
             "evidence_verified": False,
@@ -177,9 +179,10 @@ def evaluate_ownership(dim, segments, agent, transcript_text, call_claude, parse
         if classification not in ("transparent_honest", "dismissive"):
             classification = "dismissive"
     except Exception as e:  # noqa: BLE001
-        log.error("ownership step2 failed: %s", e)
+        err = applog.safe_exception_text(e)
+        log.error("ownership step2 failed: %s", err)
         classification = "dismissive"
-        parsed = {"reasoning": str(e), "coaching_note": None}
+        parsed = {"reasoning": err, "coaching_note": None}
 
     combined = rv8.combine_ownership_result(step1, classification, transcript_text)
     # Prefer model coaching note when present and safe

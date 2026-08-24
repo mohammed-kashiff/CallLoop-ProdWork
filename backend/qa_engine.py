@@ -39,7 +39,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("callproof.qa")
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip() or None
 MODEL = "claude-sonnet-5"
 
 
@@ -391,7 +391,7 @@ def call_claude(prompt, model=None, effort=None, max_tokens=None, timeout=60):
                 continue
             break                                # 400/401/403: retrying won't help
         except Exception as e:  # noqa: BLE001
-            last_err = f"{type(e).__name__}: {e}"
+            last_err = applog.safe_exception_text(e)
             log.warning("claude attempt %d/%d exception: %s", attempt, MAX_HTTP_RETRIES, last_err)
             time.sleep(1)
     applog.event(
@@ -418,8 +418,9 @@ def run_llm_criterion(criterion, transcript_text, segments):
         try:
             raw = call_claude(build_prompt(question, transcript_text, allowed, strict=(attempt > 0)))
         except Exception as e:  # noqa: BLE001
-            log.error("criterion '%s' LLM call failed: %s", name, e)
-            return {"verdict": "error", "reasoning": f"LLM call failed: {e}",
+            err = applog.safe_exception_text(e)
+            log.error("criterion '%s' LLM call failed: %s", name, err)
+            return {"verdict": "error", "reasoning": f"LLM call failed: {err}",
                     "evidence_text": None, "evidence_seq": None, "evidence_verified": False}
         try:
             parsed = parse_json(raw)
@@ -460,8 +461,8 @@ def run_deterministic_criterion(criterion, segments, agent_speaker):
     try:
         r = fn(segments, agent_speaker)
     except Exception as e:  # noqa: BLE001
-        log.error("rule '%s' raised: %s", criterion["check"], e)
-        return {"verdict": "error", "reasoning": f"Rule crashed: {e}",
+        log.error("rule '%s' raised: %s", criterion["check"], applog.safe_exception_text(e))
+        return {"verdict": "error", "reasoning": "Rule crashed.",
                 "evidence_text": None, "evidence_seq": None, "evidence_verified": None}
     log.info("criterion '%s' -> %s (rule)", name, r["verdict"])
     return {"verdict": r["verdict"], "reasoning": r["reasoning"],
@@ -543,10 +544,11 @@ def draft_retention_email(transcript_text, segments):
     try:
         parsed = parse_json(call_claude(prompt))
     except Exception as e:  # noqa: BLE001
-        log.error("retention email draft failed: %s", e)
+        err = applog.safe_exception_text(e)
+        log.error("retention email draft failed: %s", err)
         return {
             "status": "error",
-            "error": str(e),
+            "error": err,
             "subject": "",
             "body": "",
             "summary": "",
@@ -797,7 +799,7 @@ def extract_feedback(transcript_text, segments, findings=None):
             timeout=90,
         ))
     except Exception as e:  # noqa: BLE001
-        log.error("feedback extraction failed: %s", e)
+        log.error("feedback extraction failed: %s", applog.safe_exception_text(e))
         agent = _agent_insights_from_findings(findings, segments)
         return {
             "status": "ok",
@@ -844,7 +846,7 @@ def assess_churn(transcript_text, segments):
     try:
         parsed = parse_json(call_claude(prompt))
     except Exception as e:  # noqa: BLE001
-        log.error("churn assessment failed: %s", e)
+        log.error("churn assessment failed: %s", applog.safe_exception_text(e))
         return {"risk": "unknown", "reasoning": "Could not assess churn.",
                 "evidence_text": None, "evidence_seq": None, "evidence_verified": None}
     risk = parsed.get("risk", "unknown")

@@ -19,12 +19,13 @@ BACKUP_COUNT = 5
 
 _CONFIGURED = False
 
-# Redact secrets before serving logs to the UI.
+# Redact secrets before serving logs to the UI or writing the file.
 _SECRET_PATTERNS = [
     re.compile(r"(?i)\b(pyai_live_|pyai_test_)[A-Za-z0-9._\-]{8,}"),
     re.compile(r"(?i)\b(sk-ant-|sk-)[A-Za-z0-9_\-]{8,}"),
     re.compile(r"(?i)(authorization|x-api-key|api[_-]?key)\s*[:=]\s*['\"]?[^\s'\"]+"),
     re.compile(r"(?i)bearer\s+[A-Za-z0-9\-._~+/]+=*"),
+    re.compile(r"(?i)illegal header value\s+\S+"),
 ]
 
 
@@ -55,6 +56,7 @@ def setup_logging(level: int = logging.INFO) -> str:
     )
     fh.setLevel(level)
     fh.setFormatter(fmt)
+    fh.addFilter(_RedactFilter())
     parent.addHandler(fh)
 
     # Keep existing per-module basicConfig console handlers; file is additive.
@@ -71,6 +73,7 @@ def _fmt_value(value) -> str:
     if isinstance(value, float):
         return f"{value:.3f}".rstrip("0").rstrip(".")
     text = str(value).replace("\n", " ").replace("\r", " ").strip()
+    text = redact_line(text)
     if " " in text or "=" in text:
         text = text.replace('"', "'")
         return f'"{text}"'
@@ -86,11 +89,41 @@ def event(logger: logging.Logger, name: str, level: int = logging.INFO, **fields
 
 
 def redact_line(line: str) -> str:
-    """Strip API keys / bearer tokens from a log line for UI display."""
+    """Strip API keys / bearer tokens / illegal-header blobs from a log line."""
     text = line or ""
     for pat in _SECRET_PATTERNS:
         text = pat.sub("[REDACTED]", text)
     return text
+
+
+def safe_exception_text(exc: BaseException) -> str:
+    """Log-safe exception summary. Never includes header values or key material."""
+    name = type(exc).__name__
+    raw = str(exc) or ""
+    lowered = raw.lower()
+    if "illegal header" in lowered or "header value" in lowered:
+        return f"{name}: illegal HTTP header value"
+    redacted = redact_line(raw)
+    return f"{name}: {redacted}" if redacted else name
+
+
+class _RedactFilter(logging.Filter):
+    """Last line of defense so a secret in record.msg/args never hits the log file."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = redact_line(record.msg)
+        args = record.args
+        if isinstance(args, dict):
+            record.args = {
+                k: redact_line(v) if isinstance(v, str) else v
+                for k, v in args.items()
+            }
+        elif isinstance(args, tuple):
+            record.args = tuple(
+                redact_line(a) if isinstance(a, str) else a for a in args
+            )
+        return True
 
 
 def read_tail(lines: int = 200, path: str | None = None) -> dict:
