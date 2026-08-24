@@ -29,8 +29,8 @@ UI brand in this branch: **Call Loop v3** (React + TypeScript + Vite).
 
 ```text
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Call Loop  │────▶│  CallProof API   │────▶│  SQLite + audio │
-│  UI :5173   │◀────│  FastAPI :8000   │◀────│  callproof.db   │
+│  Call Loop  │────▶│  CallProof API   │────▶│ Postgres + audio│
+│  UI :5173   │◀────│  FastAPI :8000   │◀────│  (DATABASE_URL) │
 └─────────────┘     └────────┬─────────┘     └─────────────────┘
                              │
               ┌──────────────┼──────────────┐
@@ -45,7 +45,7 @@ UI brand in this branch: **Call Loop v3** (React + TypeScript + Vite).
 
 1. **Upload** — UI sends audio to `POST /api/upload` (or batch zip).
 2. **Hear copy** — browser/server prepare telephony-friendly audio when needed.
-3. **Transcribe** — PyAI async job → speaker segments stored in SQLite.
+3. **Transcribe** — PyAI async job → speaker segments stored in Postgres.
 4. **Audit** — `GET /api/calls/{id}/audit` runs hybrid/full QA (rules + Claude).
 5. **Report** — score, grade, findings, churn; on-demand feedback / email / flag for review.
 
@@ -331,7 +331,7 @@ Optional: `JUSTCALL_API_KEY`, `JUSTCALL_API_SECRET`, `JUSTCALL_WEBHOOK_SECRET`. 
 
 ### Postgres schema and Alembic (CL-4 / CL-5)
 
-The API still uses SQLite at runtime until the DB-layer ticket. **Do not** add columns in Python at boot. Postgres schema is versioned in `alembic/versions/`.
+The API uses **Postgres** at runtime (`DATABASE_URL` / `SUPABASE_DB_URL`). **Do not** add columns in Python at boot. Schema is versioned in `alembic/versions/`.
 
 `0001_orgs_calls` — `orgs`, `calls`, `segments`, `audits` (`org_id NOT NULL`).  
 `0002_api_usage` — `api_usage` with `org_id`.  
@@ -339,7 +339,7 @@ The API still uses SQLite at runtime until the DB-layer ticket. **Do not** add c
 
 Placeholder org: `00000000-0000-4000-8000-000000000001`. Legacy rubric id: `00000000-0000-4000-8000-000000000011`.
 
-Local SQLite (`callproof.db`) drops the old `PRIMARY KEY (call_id)` audits table on first boot after this change and recreates it. Existing local scores are not migrated — re-run audit. Do not mutate a seeded rubric in place; bump `version` and insert a new row.
+New calls and audits write to Postgres (that org). Local `callproof.db` is unused. Do not mutate a seeded rubric in place; bump `version` and insert a new row.
 
 **Apply** (explicit step, not on API import). Prefer session pooler `aws-0-us-west-2.pooler.supabase.com:5432` if `db.<ref>.supabase.co` does not resolve:
 

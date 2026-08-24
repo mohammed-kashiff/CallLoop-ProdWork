@@ -2,7 +2,7 @@
 CallProof - transcript spine (with logging).
 
 Submit a local audio file (or public URL) to PyAI Hear, poll until done, and
-save a speaker-labelled, timestamped transcript to SQLite. Each source is
+save a speaker-labelled, timestamped transcript to Postgres. Each source is
 transcribed once (cached by content hash). On a failed job, PyAI's actual error
 is logged and raised - no more silent failures.
 """
@@ -14,7 +14,6 @@ import sys
 import time
 import json
 import logging
-import sqlite3
 import hashlib
 import uuid
 import shutil
@@ -22,10 +21,10 @@ import subprocess
 
 import httpx
 from . import applog
-from . import audit_store
+from . import db
 from . import pyai_usage
 from .config import load_env
-from .paths import DB_PATH
+from .org_ids import DEFAULT_ORG_ID
 
 load_env()
 applog.setup_logging()
@@ -250,36 +249,8 @@ def make_hear_copy(src_path, dest_path):
 
 # ---------- Database ----------
 def init_db():
-    """SQLite bootstrap for local/Render until CL-6. Postgres schema is Alembic only."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("""CREATE TABLE IF NOT EXISTS calls (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        audio_url TEXT UNIQUE NOT NULL,
-        job_id TEXT,
-        status TEXT,
-        full_text TEXT,
-        speakers INTEGER,
-        audio_seconds REAL,
-        raw_json TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        pyai_call_id TEXT,
-        filename TEXT,
-        source TEXT,
-        external_id TEXT)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS segments (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, call_id INTEGER NOT NULL,
-        seq INTEGER, speaker TEXT, channel INTEGER, start REAL, end REAL, text TEXT)""")
-    try:
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_calls_source_external "
-            "ON calls(source, external_id) "
-            "WHERE source IS NOT NULL AND external_id IS NOT NULL"
-        )
-    except sqlite3.OperationalError:
-        pass
-    audit_store.ensure_sqlite_schema(conn)
-    conn.commit()
-    return conn
+    """Confirm Postgres is reachable. Schema is Alembic-only (no CREATE/ALTER here)."""
+    db.ping()
 
 
 def sanitize_filename(name: str | None, fallback: str = "recording.mp3") -> str:
@@ -300,17 +271,25 @@ def new_pyai_call_id():
     return f"callproof_{uuid.uuid4().hex[:12]}"
 
 
-def find_existing_call(conn, identity):
+def find_existing_call(conn, identity, org_id: str = DEFAULT_ORG_ID):
     return conn.execute(
-        "SELECT id, pyai_call_id FROM calls WHERE audio_url = ? AND status = 'completed'",
-        (identity,)).fetchone()
+        """
+        SELECT id, pyai_call_id FROM calls
+        WHERE org_id = %s AND audio_url = %s AND status = 'completed'
+        """,
+        (org_id, identity),
+    ).fetchone()
 
 
-def find_existing_external(conn, source: str, external_id: str):
+def find_existing_external(
+    conn, source: str, external_id: str, org_id: str = DEFAULT_ORG_ID,
+):
     return conn.execute(
-        "SELECT id, pyai_call_id FROM calls "
-        "WHERE source = ? AND external_id = ? AND status = 'completed'",
-        (source, str(external_id)),
+        """
+        SELECT id, pyai_call_id FROM calls
+        WHERE org_id = %s AND source = %s AND external_id = %s AND status = 'completed'
+        """,
+        (org_id, source, str(external_id)),
     ).fetchone()
 
 
@@ -320,20 +299,49 @@ def save_transcript(
 ):
     segments = result.get("segments") or []
     safe_name = sanitize_filename(filename) if filename else None
-    cur = conn.execute(
-        """INSERT INTO calls (audio_url, job_id, status, full_text, speakers, audio_seconds,
-           raw_json, pyai_call_id, filename, source, external_id)
-           VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (identity, job_id, result.get("text", ""), result.get("speakers"),
-         result.get("audio_seconds"), json.dumps(result), pyai_call_id, safe_name,
-         source, str(external_id) if external_id is not None else None))
-    call_id = cur.lastrowid
+    row = conn.execute(
+        """
+        INSERT INTO calls (
+            org_id, audio_url, job_id, status, full_text, speakers, audio_seconds,
+            raw_json, pyai_call_id, filename, source, external_id
+        )
+        VALUES (%s, %s, %s, 'completed', %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            DEFAULT_ORG_ID,
+            identity,
+            job_id,
+            result.get("text", ""),
+            result.get("speakers"),
+            result.get("audio_seconds"),
+            json.dumps(result),
+            pyai_call_id,
+            safe_name,
+            source,
+            str(external_id) if external_id is not None else None,
+        ),
+    ).fetchone()
+    call_id = int(row["id"])
     for i, seg in enumerate(segments):
         conn.execute(
-            """INSERT INTO segments (call_id, seq, speaker, channel, start, end, text)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (call_id, i, seg.get("speaker"), seg.get("channel"),
-             seg.get("start"), seg.get("end"), seg.get("text")))
+            """
+            INSERT INTO segments (
+                org_id, call_id, seq, speaker, channel, "start", "end", text
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                DEFAULT_ORG_ID,
+                call_id,
+                i,
+                seg.get("speaker"),
+                seg.get("channel"),
+                seg.get("start"),
+                seg.get("end"),
+                seg.get("text"),
+            ),
+        )
     conn.commit()
     log.info(
         "saved transcript for call %d (%d segments, pyai_call_id=%s, filename=%s source=%s)",
@@ -348,8 +356,10 @@ def set_filename_if_empty(conn, call_id, filename):
         return
     safe = sanitize_filename(filename)
     conn.execute(
-        """UPDATE calls SET filename=?
-           WHERE id=? AND (filename IS NULL OR TRIM(filename) = '')""",
+        """
+        UPDATE calls SET filename = %s
+        WHERE id = %s AND (filename IS NULL OR TRIM(filename) = '')
+        """,
         (safe, call_id),
     )
     conn.commit()
@@ -579,33 +589,37 @@ def main(argv: list[str] | None = None):
             "ERROR: pass an audio file path "
             "(python transcribe.py /path/to.mp3) or set CALLPROOF_CLI_AUDIO"
         )
-    conn = init_db()
+    init_db()
     if not is_url(src) and not os.path.isfile(src):
         sys.exit(f"ERROR: file not found: {src}")
     identity = identity_for(src)
-    existing = find_existing_call(conn, identity)
-    if existing:
-        log.info("already transcribed (call id %d) - loading from DB, no API call", existing[0])
-        return
-    pyai_id = new_pyai_call_id()
-    hear_tmp = None
-    try:
-        if is_url(src):
-            job_id = submit_job_url(src, call_id=pyai_id)
-        else:
-            hear_tmp = src + ".hear-tmp.wav"
-            upload_path = make_hear_copy(src, hear_tmp) or src
-            job_id = submit_job_file(upload_path, call_id=pyai_id)
-        result = poll_job(job_id)
-        call_id = save_transcript(
-            conn, identity, job_id, result,
-            pyai_call_id=pyai_id,
-            filename=None if is_url(src) else os.path.basename(src),
-        )
-        log.info("done: call id %d", call_id)
-    finally:
-        if hear_tmp and os.path.exists(hear_tmp):
-            os.remove(hear_tmp)
+    with db.connection() as conn:
+        existing = find_existing_call(conn, identity)
+        if existing:
+            log.info(
+                "already transcribed (call id %d) - loading from DB, no API call",
+                existing["id"],
+            )
+            return
+        pyai_id = new_pyai_call_id()
+        hear_tmp = None
+        try:
+            if is_url(src):
+                job_id = submit_job_url(src, call_id=pyai_id)
+            else:
+                hear_tmp = src + ".hear-tmp.wav"
+                upload_path = make_hear_copy(src, hear_tmp) or src
+                job_id = submit_job_file(upload_path, call_id=pyai_id)
+            result = poll_job(job_id)
+            call_id = save_transcript(
+                conn, identity, job_id, result,
+                pyai_call_id=pyai_id,
+                filename=None if is_url(src) else os.path.basename(src),
+            )
+            log.info("done: call id %d", call_id)
+        finally:
+            if hear_tmp and os.path.exists(hear_tmp):
+                os.remove(hear_tmp)
 
 
 if __name__ == "__main__":

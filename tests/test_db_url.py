@@ -1,6 +1,6 @@
 """DATABASE_URL helpers must not require a live database."""
 
-from backend.db_url import database_url, sqlalchemy_url
+from backend.db_url import database_url, psycopg_url, sqlalchemy_url
 
 
 def test_sqlalchemy_url_rewrites_heroku_scheme():
@@ -19,3 +19,9 @@ def test_database_url_empty(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_DB_URL", raising=False)
     assert database_url() is None
+
+
+def test_psycopg_url_strips_sqlalchemy_driver():
+    out = psycopg_url("postgresql+psycopg://u:p@localhost/db")
+    assert out.startswith("postgresql://")
+    assert "+psycopg" not in out.split("://", 1)[0]

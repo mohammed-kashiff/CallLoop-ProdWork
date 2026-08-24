@@ -23,7 +23,6 @@ import re
 import json
 import hashlib
 import logging
-import sqlite3
 import time
 import uuid
 import shutil
@@ -40,6 +39,8 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from . import applog
+from . import audit_store
+from . import db
 from . import env_keys
 from . import error_notify
 from . import justcall
@@ -56,7 +57,6 @@ from . import qa_engine as qa
 from . import qa_v8
 from . import recap as pyai_recap
 from . import transcribe
-from . import audit_store
 from .org_ids import DEFAULT_ORG_ID, DEFAULT_RUBRIC_ID
 
 logging.basicConfig(
@@ -65,8 +65,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("callproof.api")
-
-DB_PATH = qa.DB_PATH
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_BULK_FILES = 100
 MAX_BULK_WORKERS = 20
@@ -181,9 +179,7 @@ def health():
 
 
 def _conn():
-    c = sqlite3.connect(DB_PATH, timeout=30)
-    c.row_factory = sqlite3.Row
-    return c
+    return db.connection()
 
 
 def _apply_pyai_key(api_key: str):
@@ -318,11 +314,11 @@ def _startup():
             "   ➤ Get one at https://console.anthropic.com and add to .env"
         )
 
-    transcribe.init_db().close()
+    transcribe.init_db()
     os.makedirs(AUDIO_DIR, exist_ok=True)
-    pyai_usage.init_usage_db(DB_PATH)
+    pyai_usage.init_usage_db()
     error_notify.log_ready()
-    log.info("startup complete; db=%s audit_mode=%s claude_model=%s", DB_PATH, qa.audit_mode(), qa.MODEL)
+    log.info("startup complete; db=postgres audit_mode=%s claude_model=%s", qa.audit_mode(), qa.MODEL)
 
 
 if not skip_startup():
@@ -344,7 +340,7 @@ def _rubric_hash():
 
 def _call_filename(call_id: int) -> str:
     with _conn() as c:
-        row = c.execute("SELECT filename FROM calls WHERE id=?", (call_id,)).fetchone()
+        row = c.execute("SELECT filename FROM calls WHERE id = %s", (call_id,)).fetchone()
     name = (row["filename"] if row else None) or ""
     name = name.strip()
     return name or f"call-{call_id}.mp3"
@@ -364,7 +360,7 @@ def analyze_call(call_id, agent_override=None):
 
     with _conn() as c:
         exists = c.execute(
-            "SELECT 1 FROM calls WHERE id=? AND status='completed'", (call_id,)
+            "SELECT 1 FROM calls WHERE id = %s AND status='completed'", (call_id,)
         ).fetchone()
     if not exists:
         applog.event(
@@ -962,16 +958,11 @@ def list_calls(source: str | None = None):
     """
     params: list = list(audit_store.latest_default_join_params())
     if source_filter:
-        sql += " WHERE LOWER(COALESCE(c.source, '')) = ? "
+        sql += " WHERE LOWER(COALESCE(c.source, '')) = %s "
         params.append(source_filter)
     sql += " ORDER BY c.id DESC "
-    try:
-        with _conn() as c:
-            rows = c.execute(sql, params).fetchall()
-    except sqlite3.OperationalError:
-        transcribe.init_db().close()
-        with _conn() as c:
-            rows = c.execute(sql, params).fetchall()
+    with _conn() as c:
+        rows = c.execute(sql, params).fetchall()
 
     out = []
     for r in rows:
@@ -999,16 +990,19 @@ def list_calls(source: str | None = None):
         }
         if r["findings"]:
             try:
-                cached = json.loads(r["findings"])
-                item["has_audit"] = True
-                item["audit_fresh"] = r["engine_version"] == rh
-                item["score"] = cached.get("score")
-                item["grade"] = cached.get("grade")
-                item["flagged"] = _audit_is_flagged(cached)
-                item["review_solved"] = bool(cached.get("review_solved"))
-                churn = cached.get("churn") or {}
-                if isinstance(churn, dict):
-                    item["churn_risk"] = str(churn.get("risk") or "").strip().lower()
+                cached = audit_store.decode_findings(r["findings"])
+                if cached is None:
+                    item["has_audit"] = True
+                else:
+                    item["has_audit"] = True
+                    item["audit_fresh"] = r["engine_version"] == rh
+                    item["score"] = cached.get("score")
+                    item["grade"] = cached.get("grade")
+                    item["flagged"] = _audit_is_flagged(cached)
+                    item["review_solved"] = bool(cached.get("review_solved"))
+                    churn = cached.get("churn") or {}
+                    if isinstance(churn, dict):
+                        item["churn_risk"] = str(churn.get("risk") or "").strip().lower()
             except (TypeError, json.JSONDecodeError):
                 item["has_audit"] = True
         item["cost"] = cost_estimate.estimate_call_cost(
@@ -1053,20 +1047,12 @@ def clear_cache():
     upload transcribes and scores from scratch."""
     with _db_lock:
         with _conn() as c:
-            n_calls = c.execute("SELECT COUNT(*) FROM calls").fetchone()[0]
-            n_segments = c.execute("SELECT COUNT(*) FROM segments").fetchone()[0]
-            n_audits = c.execute("SELECT COUNT(*) FROM audits").fetchone()[0]
+            n_calls = c.execute("SELECT COUNT(*) AS n FROM calls").fetchone()["n"]
+            n_segments = c.execute("SELECT COUNT(*) AS n FROM segments").fetchone()["n"]
+            n_audits = c.execute("SELECT COUNT(*) AS n FROM audits").fetchone()["n"]
             c.execute("DELETE FROM audits")
             c.execute("DELETE FROM segments")
             c.execute("DELETE FROM calls")
-            try:
-                c.execute(
-                    "DELETE FROM sqlite_sequence WHERE name IN (?, ?, ?)",
-                    ("calls", "segments", "audits"),
-                )
-            except sqlite3.OperationalError:
-                pass
-            c.commit()
     n_audio = _clear_playback_audio()
     applog.event(
         log, "cache_cleared",
@@ -1319,10 +1305,7 @@ def _load_scorecard_records() -> list[dict]:
         ).fetchall()
     records = []
     for r in rows:
-        try:
-            audit = json.loads(r["findings"] or "{}")
-        except (TypeError, json.JSONDecodeError):
-            continue
+        audit = audit_store.decode_findings(r["findings"])
         if not isinstance(audit, dict):
             continue
         fname = (r["filename"] or "").strip() or f"call-{r['id']}.mp3"
@@ -1361,9 +1344,8 @@ def list_flagged_calls():
         ).fetchall()
     out = []
     for r in rows:
-        try:
-            audit = json.loads(r["findings"] or "{}")
-        except (TypeError, json.JSONDecodeError):
+        audit = audit_store.decode_findings(r["findings"])
+        if not isinstance(audit, dict):
             continue
         if not _audit_is_flagged(audit):
             continue
@@ -1450,10 +1432,7 @@ def export_calls(format: str = "csv"):
 
     records = []
     for r in rows:
-        try:
-            audit = json.loads(r["findings"] or "{}")
-        except (TypeError, json.JSONDecodeError):
-            continue
+        audit = audit_store.decode_findings(r["findings"])
         if not isinstance(audit, dict):
             continue
 
@@ -1791,15 +1770,14 @@ def _ingest_audio_file(
 
     try:
         with _db_lock:
-            conn = sqlite3.connect(DB_PATH, timeout=30)
-            try:
+            with db.connection() as conn:
                 existing = None
                 if source and external_id:
                     existing = transcribe.find_existing_external(conn, source, external_id)
                 if not existing:
                     existing = transcribe.find_existing_call(conn, identity)
                 if existing:
-                    call_id = existing[0]
+                    call_id = int(existing["id"])
                     transcribe.set_filename_if_empty(conn, call_id, source_name)
                     applog.event(
                         log, "transcription_success",
@@ -1811,8 +1789,6 @@ def _ingest_audio_file(
                         call_id,
                     )
                     return call_id, True
-            finally:
-                conn.close()
 
         pyai_id = transcribe.new_pyai_call_id()
         if transcribe.is_hear_wav(src_path):
@@ -1822,15 +1798,14 @@ def _ingest_audio_file(
         job_id = transcribe.submit_job_file(upload_path, call_id=pyai_id)
         result = transcribe.poll_job(job_id)
         with _db_lock:
-            conn = sqlite3.connect(DB_PATH, timeout=30)
-            try:
+            with db.connection() as conn:
                 existing = None
                 if source and external_id:
                     existing = transcribe.find_existing_external(conn, source, external_id)
                 if not existing:
                     existing = transcribe.find_existing_call(conn, identity)
                 if existing:
-                    call_id = existing[0]
+                    call_id = int(existing["id"])
                     transcribe.set_filename_if_empty(conn, call_id, source_name)
                     return call_id, True
                 try:
@@ -1841,15 +1816,14 @@ def _ingest_audio_file(
                         source=source,
                         external_id=external_id,
                     )
-                except sqlite3.IntegrityError:
+                except db.IntegrityError:
+                    conn.rollback()
                     existing = transcribe.find_existing_call(conn, identity)
                     if not existing:
                         raise
-                    call_id = existing[0]
+                    call_id = int(existing["id"])
                     transcribe.set_filename_if_empty(conn, call_id, source_name)
                     return call_id, True
-            finally:
-                conn.close()
         applog.event(
             log, "transcription_success",
             call_id=call_id,
@@ -1915,13 +1889,10 @@ def _process_justcall_call(call_id: str, payload: dict | None = None) -> dict:
     tmp = None
     try:
         with _db_lock:
-            conn = sqlite3.connect(DB_PATH, timeout=30)
-            try:
+            with db.connection() as conn:
                 existing = transcribe.find_existing_external(conn, "justcall", cid)
-            finally:
-                conn.close()
         if existing:
-            local_id = int(existing[0])
+            local_id = int(existing["id"])
             dest = os.path.join(AUDIO_DIR, f"{local_id}.mp3")
             if not os.path.isfile(dest):
                 data = justcall.download_recording(cid)

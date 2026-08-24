@@ -18,3 +18,13 @@ def sqlalchemy_url(raw: str) -> str:
     if url.startswith("postgresql://") and "+psycopg" not in url.split("://", 1)[0]:
         url = "postgresql+psycopg://" + url[len("postgresql://") :]
     return url
+
+
+def psycopg_url(raw: str) -> str:
+    """psycopg.connect wants postgresql://, not SQLAlchemy's +psycopg driver tag."""
+    url = raw.strip()
+    if url.startswith("postgresql+psycopg://"):
+        return "postgresql://" + url[len("postgresql+psycopg://") :]
+    if url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://") :]
+    return url

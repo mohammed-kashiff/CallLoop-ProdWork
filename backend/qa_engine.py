@@ -19,15 +19,15 @@ import sys
 import json
 import time
 import logging
-import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import applog
+from . import db
 from . import pyai_usage
 from . import qa_v8
 from . import rules
 from .config import load_env
-from .paths import DB_PATH, RUBRIC_PATH
+from .paths import RUBRIC_PATH
 
 load_env()
 applog.setup_logging()
@@ -67,23 +67,30 @@ MAX_TOKENS = 2000
 
 # ---------- Load transcript ----------
 def load_call(call_id=None):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    if call_id is None:
-        row = conn.execute(
-            "SELECT id FROM calls WHERE status='completed' ORDER BY id DESC LIMIT 1").fetchone()
-        if not row:
-            sys.exit("No completed calls in the database. Run transcribe.py first.")
-        call_id = row["id"]
-    meta = conn.execute(
-        "SELECT id, full_text, speakers, audio_seconds, pyai_call_id FROM calls WHERE id=?",
-        (call_id,)).fetchone()
-    if not meta:
-        sys.exit(f"No call with id {call_id} in the database.")
-    segs = conn.execute(
-        "SELECT seq, speaker, channel, start, end, text FROM segments WHERE call_id=? ORDER BY seq",
-        (call_id,)).fetchall()
-    conn.close()
+    with db.connection() as conn:
+        if call_id is None:
+            row = conn.execute(
+                "SELECT id FROM calls WHERE status='completed' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if not row:
+                sys.exit("No completed calls in the database. Run transcribe.py first.")
+            call_id = row["id"]
+        meta = conn.execute(
+            """
+            SELECT id, full_text, speakers, audio_seconds, pyai_call_id
+            FROM calls WHERE id = %s
+            """,
+            (call_id,),
+        ).fetchone()
+        if not meta:
+            sys.exit(f"No call with id {call_id} in the database.")
+        segs = conn.execute(
+            """
+            SELECT seq, speaker, channel, "start", "end", text
+            FROM segments WHERE call_id = %s ORDER BY seq
+            """,
+            (call_id,),
+        ).fetchall()
     return call_id, dict(meta), [dict(s) for s in segs]
 
 

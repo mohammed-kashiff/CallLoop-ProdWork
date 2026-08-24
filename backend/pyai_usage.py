@@ -10,54 +10,25 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import threading
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
-from .paths import DB_PATH
+from . import db
+from .org_ids import DEFAULT_ORG_ID
 
 log = logging.getLogger("callproof.usage")
 _lock = threading.Lock()
 
 
 def _conn():
-    c = sqlite3.connect(DB_PATH, timeout=30)
-    c.row_factory = sqlite3.Row
-    return c
+    return db.connection()
 
 
 def init_usage_db(db_path: str | None = None) -> None:
-    path = db_path or DB_PATH
-    with _lock:
-        c = sqlite3.connect(path, timeout=30)
-        try:
-            c.execute(
-                """
-                CREATE TABLE IF NOT EXISTS api_usage (
-                  id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  provider TEXT NOT NULL,
-                  method TEXT NOT NULL,
-                  path TEXT NOT NULL,
-                  status INTEGER,
-                  units REAL,
-                  units_raw TEXT,
-                  created_at TEXT NOT NULL
-                )
-                """
-            )
-            c.execute(
-                "CREATE INDEX IF NOT EXISTS idx_api_usage_created "
-                "ON api_usage(created_at)"
-            )
-            c.execute(
-                "CREATE INDEX IF NOT EXISTS idx_api_usage_provider "
-                "ON api_usage(provider, created_at)"
-            )
-            c.commit()
-        finally:
-            c.close()
+    """No-op: api_usage is created by Alembic. Signature kept for call-site compatibility."""
+    del db_path
 
 
 def _utc_today_start() -> str:
@@ -134,15 +105,15 @@ def record_http_response(
         units = _parse_units(units_raw)
         created = datetime.now(timezone.utc).isoformat()
         with _lock:
-            c = _conn()
-            try:
+            with _conn() as c:
                 c.execute(
                     """
                     INSERT INTO api_usage
-                      (provider, method, path, status, units, units_raw, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                      (org_id, provider, method, path, status, units, units_raw, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
+                        DEFAULT_ORG_ID,
                         provider,
                         method,
                         path,
@@ -152,9 +123,6 @@ def record_http_response(
                         created,
                     ),
                 )
-                c.commit()
-            finally:
-                c.close()
         try:
             import applog
 
@@ -195,21 +163,18 @@ def usage_summary(since_iso: str | None = None) -> dict[str, Any]:
     init_usage_db()
     since = since_iso or _utc_today_start()
     with _lock:
-        c = _conn()
-        try:
+        with _conn() as c:
             rows = c.execute(
                 """
                 SELECT provider, method, path, COUNT(*) AS hits,
                        COALESCE(SUM(units), 0) AS units,
                        SUM(CASE WHEN units IS NOT NULL THEN 1 ELSE 0 END) AS metered
                 FROM api_usage
-                WHERE created_at >= ?
+                WHERE org_id = %s AND created_at >= %s
                 GROUP BY provider, method, path
                 """,
-                (since,),
+                (DEFAULT_ORG_ID, since),
             ).fetchall()
-        finally:
-            c.close()
 
     providers: dict[str, Any] = {}
     total_hits = 0
