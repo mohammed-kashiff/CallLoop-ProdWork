@@ -51,10 +51,13 @@ def test_webhook_validation_returns_200():
     assert r.json().get("ok") is True
 
 
-def test_status_never_echoes_secrets():
+def test_status_never_echoes_secrets(monkeypatch):
     from backend.api import app
 
     client = TestClient(app)
+    from tests.conftest import authorize
+
+    authorize(client, monkeypatch)
     r = client.get("/api/integrations/justcall")
     assert r.status_code == 200
     body = r.json()
@@ -78,6 +81,9 @@ def test_update_justcall_keys_persist_and_do_not_echo(tmp_path, monkeypatch):
     key = "jc_key_" + ("a" * 12)
     secret = "jc_sec_" + ("b" * 12)
     client = TestClient(app)
+    from tests.conftest import authorize
+
+    authorize(client, monkeypatch)
     r = client.post(
         "/api/keys",
         json={"justcall_api_key": key, "justcall_api_secret": secret},
@@ -105,6 +111,9 @@ def test_update_justcall_requires_both_parts(monkeypatch):
     monkeypatch.delenv("JUSTCALL_API_KEY", raising=False)
     monkeypatch.delenv("JUSTCALL_API_SECRET", raising=False)
     client = TestClient(app)
+    from tests.conftest import authorize
+
+    authorize(client, monkeypatch)
     r = client.post("/api/keys", json={"justcall_api_key": "jc_key_abcdefgh"})
     assert r.status_code == 400
     monkeypatch.delenv("JUSTCALL_API_KEY", raising=False)
@@ -112,5 +121,6 @@ def test_update_justcall_requires_both_parts(monkeypatch):
     from backend.api import app
 
     client = TestClient(app)
+    authorize(client, monkeypatch)
     r = client.post("/api/integrations/justcall/sync")
     assert r.status_code == 503

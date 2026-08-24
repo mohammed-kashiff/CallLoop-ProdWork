@@ -194,13 +194,15 @@ def test_api_audit_reads_name_a_mode():
     assert "upsert_audit" in text
 
 
-def test_list_endpoints_against_postgres():
+def test_list_endpoints_against_postgres(monkeypatch):
     _require_url()
     from fastapi.testclient import TestClient
 
     from backend.api import app
+    from tests.conftest import authorize
 
     client = TestClient(app)
+    authorize(client, monkeypatch)
     for path in (
         "/health",
         "/api/calls",

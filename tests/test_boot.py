@@ -13,6 +13,7 @@ EXPECTED_ROUTES = {
     "/",
     "/health",
     "/healthz",
+    "/api/me",
     "/api/pyai/status",
     "/api/keys",
     "/api/dev/logs",

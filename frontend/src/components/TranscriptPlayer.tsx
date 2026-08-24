@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { apiFetch } from '../lib/api'
 import { formatTime } from '../lib/format'
 import type { TranscriptSegment } from '../types'
 
@@ -25,6 +26,37 @@ export function TranscriptPlayer({
   const followRef = useRef(true)
   const ignoreScrollRef = useRef(false)
   const activeIdRef = useRef<string | null>(null)
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!audioUrl) {
+      setObjectUrl(null)
+      return
+    }
+    let cancelled = false
+    const holder: { url: string | null } = { url: null }
+    void (async () => {
+      try {
+        const r = await apiFetch(audioUrl)
+        if (!r.ok || cancelled) return
+        const blob = await r.blob()
+        if (cancelled) return
+        holder.url = URL.createObjectURL(blob)
+        if (cancelled) {
+          URL.revokeObjectURL(holder.url)
+          holder.url = null
+          return
+        }
+        setObjectUrl(holder.url)
+      } catch {
+        /* playback stays idle if audio cannot be fetched */
+      }
+    })()
+    return () => {
+      cancelled = true
+      if (holder.url) URL.revokeObjectURL(holder.url)
+    }
+  }, [audioUrl])
 
   const activeId = useMemo(() => {
     const hit = segments.find((s) => currentTime >= s.start && currentTime < s.end)
@@ -94,10 +126,10 @@ export function TranscriptPlayer({
 
   return (
     <section className="transcript-panel" aria-label="Full transcript and audio player">
-      {audioUrl ? (
+      {objectUrl ? (
         <audio
           ref={audioRef}
-          src={audioUrl}
+          src={objectUrl}
           preload="metadata"
           onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
           onEnded={() => setPlaying(false)}

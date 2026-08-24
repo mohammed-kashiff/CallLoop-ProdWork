@@ -1,6 +1,8 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { AppLayout } from './components/AppLayout'
+import { RequireAuth } from './components/RequireAuth'
 import { AuditProvider } from './context/AuditContext'
+import { AuthProvider } from './context/AuthContext'
 import { ColorModeProvider } from './context/ColorMode'
 import { PyaiStatusProvider } from './context/PyaiStatus'
 import { UsageEnvProvider } from './context/UsageEnv'
@@ -10,37 +12,51 @@ import { Feedbacks } from './pages/Feedbacks'
 import { FlaggedForReview } from './pages/FlaggedForReview'
 import { Home } from './pages/Home'
 import { Integrations } from './pages/Integrations'
+import { Login } from './pages/Login'
 import { Neighbourhood } from './pages/Neighbourhood'
 import { Pyai } from './pages/Pyai'
 import { Training } from './pages/Training'
 import './App.css'
 import './live.css'
 
+function AuthedShell() {
+  return (
+    <PyaiStatusProvider>
+      <AuditProvider>
+        <Outlet />
+      </AuditProvider>
+    </PyaiStatusProvider>
+  )
+}
+
 function App() {
   return (
     <ColorModeProvider>
-      <UsageEnvProvider>
-        <PyaiStatusProvider>
+      <AuthProvider>
+        <UsageEnvProvider>
           <BrowserRouter>
-            <AuditProvider>
-              <Routes>
-                <Route element={<AppLayout />}>
-                  <Route index element={<Home />} />
-                  <Route path="neighbourhood" element={<Neighbourhood />} />
-                  <Route path="agents-pulse" element={<AgentsPulse />} />
-                  <Route path="agents-pulse/flagged" element={<FlaggedForReview />} />
-                  <Route path="feedbacks" element={<Feedbacks />} />
-                  <Route path="churn-risk" element={<ChurnRisk />} />
-                  <Route path="integrations" element={<Integrations />} />
-                  <Route path="training" element={<Training />} />
-                  <Route path="pyai" element={<Pyai />} />
-                  <Route path="*" element={<Navigate to="/" replace />} />
+            <Routes>
+              <Route path="login" element={<Login />} />
+              <Route element={<RequireAuth />}>
+                <Route element={<AuthedShell />}>
+                  <Route element={<AppLayout />}>
+                    <Route index element={<Home />} />
+                    <Route path="neighbourhood" element={<Neighbourhood />} />
+                    <Route path="agents-pulse" element={<AgentsPulse />} />
+                    <Route path="agents-pulse/flagged" element={<FlaggedForReview />} />
+                    <Route path="feedbacks" element={<Feedbacks />} />
+                    <Route path="churn-risk" element={<ChurnRisk />} />
+                    <Route path="integrations" element={<Integrations />} />
+                    <Route path="training" element={<Training />} />
+                    <Route path="pyai" element={<Pyai />} />
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Route>
                 </Route>
-              </Routes>
-            </AuditProvider>
+              </Route>
+            </Routes>
           </BrowserRouter>
-        </PyaiStatusProvider>
-      </UsageEnvProvider>
+        </UsageEnvProvider>
+      </AuthProvider>
     </ColorModeProvider>
   )
 }

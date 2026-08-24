@@ -2791,3 +2791,71 @@ html[data-color-mode='dark'] .claude-cord-plug {
   display: flex;
   justify-content: flex-end;
 }
+
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 2rem 1rem;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.auth-card {
+  width: min(24rem, 100%);
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.5rem 1.4rem 1.35rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--control-bg);
+}
+
+.auth-card h1 {
+  margin: 0.2rem 0 0;
+  font-size: 1.4rem;
+}
+
+.auth-lead,
+.auth-error,
+.auth-info {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.auth-lead {
+  color: var(--ink-soft);
+}
+
+.auth-error {
+  color: #b91c1c;
+}
+
+.auth-info {
+  color: #0f766e;
+}
+
+.auth-form {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.auth-form input {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+}
+
+.auth-switch {
+  justify-self: start;
+}

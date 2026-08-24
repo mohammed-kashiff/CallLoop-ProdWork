@@ -80,6 +80,9 @@ def test_update_keys_persists_and_does_not_echo_secret(tmp_path, monkeypatch):
     monkeypatch.setattr("backend.api.ENV_FILE", str(env_path))
     live = "pyai_live_" + ("k" * 16)
     client = TestClient(app)
+    from tests.conftest import authorize
+
+    authorize(client, monkeypatch)
     r = client.post("/api/keys", json={"pyai_api_key": live})
     assert r.status_code == 200, r.text
     body = r.json()

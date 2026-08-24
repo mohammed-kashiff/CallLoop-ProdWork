@@ -152,7 +152,13 @@ ANTHROPIC_API_KEY=
 PYAI_API_KEY=
 
 AUDIT_MODE=hybrid
+
+# Supabase Auth (required for login — never commit real values)
+SUPABASE_URL=
+SUPABASE_JWT_SECRET=
 ```
+
+Also copy `frontend/.env.example` to `frontend/.env` and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
 
 Optional spend-estimate knobs (already in `.env.example`):
 
@@ -326,6 +332,21 @@ Set these as **Environment** variables on the Web Service (not Secret Files, not
 | `ANTHROPIC_API_KEY` | Claude scoring |
 | `CORS_ORIGINS` | `https://callloop-web.onrender.com` (comma-separate extra origins if needed) |
 | `DATABASE_URL` | Supabase Postgres URI (password stays in the dashboard). Alias: `SUPABASE_DB_URL`. |
+| `SUPABASE_URL` | Project URL (`https://<ref>.supabase.co`). JWT issuer is `{URL}/auth/v1`. |
+| `SUPABASE_JWT_SECRET` | Project Settings → API JWT secret (HS256). Dashboard-only (`sync: false`). |
+
+On the **Static Site** (`callloop-web`), set **build-time** env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL` (the API origin). Vite bakes these in at build; changing them later needs a rebuild.
+
+### Auth (CL-8)
+
+The UI signs up / logs in with **Supabase Auth**. The session is stored in the browser and refreshed automatically. Every data request sends `Authorization: Bearer <access_token>` (not cookies — no CSRF). The API verifies the JWT (HS256 via `SUPABASE_JWT_SECRET`, or ES256/RS256 via JWKS at `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`), then upserts **org membership**.
+
+- **First authenticated request** (empty `org_members`): owner of the placeholder org `00000000-0000-4000-8000-000000000001` (keeps existing Table Editor rows).
+- **Later signups**: a new org, that user as owner, plus a seeded legacy v8 rubric.
+- Unauthenticated calls to data routes return **401**. `/health` and the JustCall webhook stay public.
+- **Isolation is not in this ticket.** Handlers still read/write `DEFAULT_ORG_ID` until CL-9. Login ≠ tenant scope.
+
+Local: copy `SUPABASE_URL` / `SUPABASE_JWT_SECRET` into `.env`, and `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` into `frontend/.env`. Enable email auth in the Supabase dashboard.
 
 Optional: `JUSTCALL_API_KEY`, `JUSTCALL_API_SECRET`, `JUSTCALL_WEBHOOK_SECRET`. Never commit values.
 
@@ -335,7 +356,8 @@ The API uses **Postgres** at runtime (`DATABASE_URL` / `SUPABASE_DB_URL`). **Do 
 
 `0001_orgs_calls` — `orgs`, `calls`, `segments`, `audits` (`org_id NOT NULL`).  
 `0002_api_usage` — `api_usage` with `org_id`.  
-`0003_rubrics_audits` — `rubrics`; recreates `audits` with surrogate `id` and `UNIQUE (call_id, rubric_id, rubric_version)`. Seeds one **"Default (legacy v8)"** rubric per org from `rubric.json`. **Does not backfill** old scorecards.
+`0003_rubrics_audits` — `rubrics`; recreates `audits` with surrogate `id` and `UNIQUE (call_id, rubric_id, rubric_version)`. Seeds one **"Default (legacy v8)"** rubric per org from `rubric.json`. **Does not backfill** old scorecards.  
+`0004_org_members` — `org_members` (`user_id` = Supabase JWT `sub`, `UNIQUE (user_id)` so one org per user at launch).
 
 Placeholder org: `00000000-0000-4000-8000-000000000001`. Legacy rubric id: `00000000-0000-4000-8000-000000000011`.
 
@@ -361,7 +383,7 @@ alembic upgrade head
 
 `render.yaml` sets **Pre-Deploy Command** `alembic upgrade head` so Render applies migrations on deploy, not when uvicorn loads.
 
-Confirm in **Table Editor**: `orgs`, `calls`, `segments`, `audits`, `api_usage`, `rubrics`.
+Confirm in **Table Editor**: `orgs`, `calls`, `segments`, `audits`, `api_usage`, `rubrics`, `org_members`.
 
 `DATABASE_URL` on **callloop-prodwork** is an Environment variable (not a Secret File).
 
@@ -373,7 +395,7 @@ New workspace: Dashboard → **New → Blueprint** and point at this repo’s `r
 
 ## Smoke checklist
 
-1. UI loads at http://127.0.0.1:5173  
+1. UI loads at http://127.0.0.1:5173 — **Log in** (or sign up) before the workspace
 2. Status chip shows **SANDBOX** or **LIVE**  
 3. Upload a short call (or use Agents Pulse / call list if data exists)  
 4. Open a scorecard after audit completes  
@@ -388,7 +410,7 @@ New workspace: Dashboard → **New → Blueprint** and point at this repo’s `r
 | Path | Purpose |
 |------|---------|
 | `.env` | Secrets (local only) |
-| `frontend/.env` | Optional `VITE_API_URL` (defaults to `http://localhost:8000`) |
+| `frontend/.env` | Optional `VITE_API_URL`; `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` for login |
 | `logs/callproof.log` | Backend event log |
 | `callproof.db` | Calls, segments, audits, usage |
 | `audio/` | Playback copies |

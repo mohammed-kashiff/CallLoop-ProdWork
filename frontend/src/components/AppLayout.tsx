@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 import { useColorMode } from '../context/ColorMode'
 import { BrandLogo } from './BrandLogo'
 import { ColorModeToggle } from './ColorModeToggle'
@@ -22,6 +23,7 @@ export function AppLayout() {
   const { pathname } = useLocation()
   const theme = themeFromPath(pathname)
   const { mode } = useColorMode()
+  const { signOut } = useAuth()
 
   return (
     <div className="app-shell layout-shell" data-theme={theme} data-color-mode={mode}>
@@ -47,6 +49,9 @@ export function AppLayout() {
           <LiveTicker />
           <span className="topbar-chip">Rubric v8</span>
           <ColorModeToggle />
+          <button type="button" className="ghost-btn" onClick={() => void signOut()}>
+            Sign out
+          </button>
         </header>
 
         <main className="main">

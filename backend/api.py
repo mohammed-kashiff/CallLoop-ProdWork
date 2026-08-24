@@ -40,6 +40,7 @@ from pydantic import BaseModel
 
 from . import applog
 from . import audit_store
+from . import auth
 from . import db
 from . import env_keys
 from . import error_notify
@@ -83,6 +84,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(auth.JwtAuthMiddleware)
 
 
 _HEALTH_PATHS = frozenset({"/", "/health", "/healthz"})
@@ -176,6 +178,16 @@ async def log_http(request: Request, call_next):
 def health():
     """Liveness for hosts (Render). Does not call PyAI, JustCall, or Claude."""
     return {"ok": True}
+
+
+@app.get("/api/me")
+def me(request: Request):
+    """Current user from the verified JWT + org_members row (CL-8)."""
+    return {
+        "user_id": getattr(request.state, "user_id", None),
+        "org_id": getattr(request.state, "org_id", None),
+        "role": getattr(request.state, "role", None),
+    }
 
 
 def _conn():

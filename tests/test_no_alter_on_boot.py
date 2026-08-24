@@ -40,3 +40,14 @@ def test_third_revision_recreates_audits_with_rubric_key():
     assert "DROP TABLE IF EXISTS AUDITS" in sql
     assert "INSERT INTO AUDITS" not in sql  # no backfill
 
+
+def test_fourth_revision_org_members():
+    rev = ROOT / "alembic" / "versions" / "0004_org_members.py"
+    assert rev.is_file()
+    sql = rev.read_text(encoding="utf-8").upper()
+    assert "CREATE TABLE ORG_MEMBERS" in sql
+    assert "USER_ID UUID NOT NULL" in sql
+    assert "UNIQUE (USER_ID)" in sql
+    assert "CHECK (ROLE IN ('OWNER', 'MEMBER'))" in sql
+    assert "REFERENCES ORGS" in sql
+

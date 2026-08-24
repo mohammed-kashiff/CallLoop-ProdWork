@@ -30,3 +30,7 @@ services:
         sync: false
       - key: JUSTCALL_WEBHOOK_SECRET
         sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
