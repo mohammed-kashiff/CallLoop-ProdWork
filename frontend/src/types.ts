@@ -87,6 +87,7 @@ export interface AuditReport {
   durationSec: number
   analyzedAt: string
   agentName: string
+  agentSpeaker: string
   customerLabel: string
   overallScore: number
   band: PerformanceBand

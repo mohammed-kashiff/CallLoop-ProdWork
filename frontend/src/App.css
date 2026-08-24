@@ -1475,6 +1475,39 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   padding-left: 1.15rem;
 }
 
+.recap-turns {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  max-height: 28rem;
+  overflow: auto;
+}
+
+.recap-turn {
+  display: grid;
+  grid-template-columns: 5.2rem 1fr;
+  gap: 0.65rem;
+  padding: 0.55rem 0.2rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.recap-turn .speaker {
+  font-weight: 650;
+  font-size: 0.8rem;
+  color: var(--teal);
+}
+
+.recap-turn.customer .speaker {
+  color: var(--blue);
+}
+
+.recap-turn .text {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
 /* ——— Type leftovers ——— */
 
 .page-intro,
