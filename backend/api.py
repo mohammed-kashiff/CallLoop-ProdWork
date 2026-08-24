@@ -2236,7 +2236,7 @@ def get_audio(call_id: int):
 
 @app.post("/api/calls/{call_id}/retranscribe")
 def retranscribe_call(call_id: int):
-    """Re-run Hear on the stored recording. Mixed MP3s now use diarize only."""
+    """Re-run Hear on the stored recording (channel or diarize, never both)."""
     if call_id < 1:
         raise HTTPException(status_code=400, detail="Invalid call id.")
     path = os.path.join(AUDIO_DIR, f"{call_id}.mp3")

@@ -83,7 +83,7 @@ export function expandTaggedTranscript(
       }
       continue
     }
-    const speaker = canonSpeaker(row.speaker)
+    const speaker = canonSpeaker(row.speaker) || canonSpeaker(row.channel)
     const agent = canonSpeaker(agentSpeaker, 'speaker_1')
     out.push({
       id: String(row.seq ?? n++),

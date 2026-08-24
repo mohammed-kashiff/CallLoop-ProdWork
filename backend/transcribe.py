@@ -43,10 +43,9 @@ PYAI_API_KEY = (os.getenv("PYAI_API_KEY") or "").strip() or None
 BASE_URL = "https://api.pyai.com"
 RECAP_PACK_ID = os.getenv("RECAP_PACK_ID") or None
 
-# v2testing-ui-final: channel=true on 8 kHz stereo PCM → interleaved L/R turns.
 # Never send channel+diarize together (Hear forbids it and returns one dump).
-# Mixed files: try channel first, then retry diarize-only.
-SEPARATION_MODE = "channel"    # "channel" | "diarize" | "auto"
+# auto: true L/R telephony → channel; mixed/mono MP3 → diarize (not fake stereo).
+SEPARATION_MODE = "auto"    # "channel" | "diarize" | "auto"
 MODEL = "pyai-hear-telephony"
 _STEREO_DIFF_RATIO = 0.08      # L vs R energy; duplicated mono-as-stereo is ~0
 
@@ -191,8 +190,8 @@ def has_true_stereo(path: str) -> bool:
 
 
 def resolve_separation_mode(path: str | None = None) -> str:
-    """channel XOR diarize. Hear rejects combining them. Default matches v2 (channel)."""
-    raw = (os.getenv("HEAR_SEPARATION_MODE") or SEPARATION_MODE or "channel").strip().lower()
+    """channel XOR diarize. Hear rejects combining them. Mixed files use diarize."""
+    raw = (os.getenv("HEAR_SEPARATION_MODE") or SEPARATION_MODE or "auto").strip().lower()
     if raw == "diarize":
         return "diarize"
     if raw == "auto":
@@ -384,12 +383,87 @@ def find_existing_external(
 _SPEAKER_TAG = re.compile(r"\[(speaker_\d+)\]", re.I)
 
 
+def _channel_to_speaker(channel) -> str | None:
+    """Hear channel 0 → speaker_1, channel 1 → speaker_2."""
+    if channel is None or channel == "":
+        return None
+    try:
+        ch = int(channel)
+    except (TypeError, ValueError):
+        return None
+    if ch < 0:
+        return None
+    return f"speaker_{ch + 1}"
+
+
+def _fill_speaker_from_channel(seg: dict) -> dict:
+    row = dict(seg)
+    if row.get("speaker") in (None, ""):
+        label = _channel_to_speaker(row.get("channel"))
+        if label:
+            row["speaker"] = label
+    return row
+
+
+def _labeled_speaker_ids(segments: list) -> set:
+    out = set()
+    for seg in segments or []:
+        if not isinstance(seg, dict):
+            continue
+        sp = seg.get("speaker")
+        if sp not in (None, "") and str(sp).strip() != "":
+            out.add(str(sp).strip().lower())
+    return out
+
+
+def _segments_from_words(words: list) -> list:
+    """Group consecutive same-speaker words into turns when Hear omitted segment labels."""
+    turns: list = []
+    current = None
+    for raw in words or []:
+        if not isinstance(raw, dict):
+            continue
+        row = _fill_speaker_from_channel(raw)
+        speaker = row.get("speaker")
+        if speaker in (None, "") or str(speaker).strip() == "":
+            continue
+        token = str(row.get("word") or row.get("text") or "").strip()
+        if not token:
+            continue
+        try:
+            start = float(row.get("start") or 0)
+            end = float(row.get("end") or start)
+        except (TypeError, ValueError):
+            start, end = 0.0, 0.0
+        speaker = str(speaker).strip().lower()
+        if current and current["speaker"] == speaker:
+            if token[:1] in ",.?!:;":
+                current["text"] += token
+            else:
+                current["text"] += " " + token
+            current["end"] = end
+            continue
+        if current:
+            turns.append(current)
+        current = {
+            "speaker": speaker,
+            "channel": row.get("channel"),
+            "start": start,
+            "end": end,
+            "text": token,
+        }
+    if current:
+        turns.append(current)
+    return turns
+
+
 def expand_tagged_segments(segments: list) -> list:
     """Split Hear blobs like '[speaker_1] hi [speaker_2] hello' into one row per speaker."""
     out: list = []
     for seg in segments or []:
         if not isinstance(seg, dict):
             continue
+        seg = _fill_speaker_from_channel(seg)
         text = str(seg.get("text") or "")
         marks = list(_SPEAKER_TAG.finditer(text))
         if not marks:
@@ -425,11 +499,45 @@ def expand_tagged_segments(segments: list) -> list:
     return out
 
 
+def normalize_hear_result(result: dict) -> dict:
+    """Fill speaker from channel, rebuild turns from words, split [speaker_N] blobs."""
+    if not isinstance(result, dict):
+        return result
+    out = dict(result)
+    segs = [
+        _fill_speaker_from_channel(s)
+        for s in (out.get("segments") or [])
+        if isinstance(s, dict)
+    ]
+    words = [
+        _fill_speaker_from_channel(w)
+        for w in (out.get("words") or [])
+        if isinstance(w, dict)
+    ]
+    if words:
+        out["words"] = words
+    if len(_labeled_speaker_ids(segs)) < 2:
+        rebuilt = _segments_from_words(words)
+        if len(_labeled_speaker_ids(rebuilt)) >= 2:
+            applog.event(
+                log, "hear_segments_from_words",
+                turns=len(rebuilt),
+                speakers=len(_labeled_speaker_ids(rebuilt)),
+            )
+            segs = rebuilt
+    out["segments"] = expand_tagged_segments(segs)
+    speakers = _labeled_speaker_ids(out["segments"])
+    if speakers:
+        out["speakers"] = len(speakers)
+    return out
+
+
 def save_transcript(
     conn, identity, job_id, result, pyai_call_id=None, filename=None,
     source=None, external_id=None,
 ):
-    segments = expand_tagged_segments(result.get("segments") or [])
+    result = normalize_hear_result(result)
+    segments = result.get("segments") or []
     safe_name = sanitize_filename(filename) if filename else None
     row = conn.execute(
         """
@@ -484,7 +592,8 @@ def save_transcript(
 
 def replace_transcript(conn, call_id, job_id, result, pyai_call_id=None):
     """Overwrite Hear output for an existing call (re-transcribe)."""
-    segments = expand_tagged_segments(result.get("segments") or [])
+    result = normalize_hear_result(result)
+    segments = result.get("segments") or []
     conn.execute("DELETE FROM segments WHERE call_id = %s", (call_id,))
     conn.execute("DELETE FROM audits WHERE call_id = %s", (call_id,))
     conn.execute(
@@ -639,8 +748,7 @@ def _normalize_sync_result(result: dict) -> dict:
     out = dict(result)
     if not out.get("segments") and out.get("words"):
         out["segments"] = out.get("words") or []
-    out["segments"] = expand_tagged_segments(out.get("segments") or [])
-    return out
+    return normalize_hear_result(out)
 
 
 def _has_usable_segments(result: dict) -> bool:
@@ -776,78 +884,137 @@ def get_result(job_data):
 
 def _looks_like_tagged_dump(result: dict) -> bool:
     """Hear grouped both speakers into [speaker_1] … [speaker_2] … instead of turns."""
-    segs = result.get("segments") or []
+    segs = [s for s in (result.get("segments") or []) if isinstance(s, dict)]
     texts = [str(result.get("text") or "")]
     labeled = []
     for seg in segs:
-        if not isinstance(seg, dict):
-            continue
         texts.append(str(seg.get("text") or ""))
         if seg.get("speaker") not in (None, ""):
             labeled.append(seg)
     blob = " ".join(texts)
     tags = {m.group(1).lower() for m in _SPEAKER_TAG.finditer(blob)}
-    if len(tags) >= 2 and (len(segs) <= 1 or len(labeled) < 2):
+    if len(tags) < 2:
+        return False
+    if len(segs) <= 1 or len(labeled) < 2:
         return True
+    # Two long monologues after expanding a tagged blob — not interleaved turns.
+    if len(segs) <= 2:
+        durations = []
+        for seg in segs:
+            try:
+                durations.append(
+                    max(0.0, float(seg.get("end") or 0) - float(seg.get("start") or 0))
+                )
+            except (TypeError, ValueError):
+                durations.append(0.0)
+        if durations and min(durations) >= 15.0:
+            return True
     return False
 
 
-def channel_split_ok(result: dict) -> bool:
-    """True when Hear returned interleaved turns like v2testing-ui-final."""
+def speaker_split_ok(result: dict) -> bool:
+    """True when Hear returned at least two labelled speakers as separate turns."""
     if not isinstance(result, dict) or _looks_like_tagged_dump(result):
         return False
     segs = [s for s in (result.get("segments") or []) if isinstance(s, dict)]
     labeled = [s for s in segs if s.get("speaker") not in (None, "")]
-    speakers = {s.get("speaker") for s in labeled}
-    channels = {s.get("channel") for s in segs if s.get("channel") is not None}
-    if len(channels) >= 2 and len(labeled) >= 2:
-        return True
-    if len(speakers) >= 2 and len(labeled) >= 4:
-        return True
-    return False
+    speakers = _labeled_speaker_ids(labeled)
+    return len(speakers) >= 2 and len(labeled) >= 2
+
+
+def channel_split_ok(result: dict) -> bool:
+    """True when Hear returned interleaved turns like v2testing-ui-final."""
+    return speaker_split_ok(result)
+
+
+def _separation_score(result: dict) -> tuple:
+    """Prefer more speakers, then more turns. Penalize dumps and unlabeled blobs."""
+    segs = [s for s in (result.get("segments") or []) if isinstance(s, dict)]
+    labeled = [s for s in segs if s.get("speaker") not in (None, "")]
+    n_spk = len(_labeled_speaker_ids(labeled))
+    dump = 1 if _looks_like_tagged_dump(result) else 0
+    unlabeled = 1 if n_spk < 2 else 0
+    return (n_spk, len(labeled), -dump, -unlabeled)
+
+
+def _hear_attempt(src_path, dest_path, call_id, mode: str):
+    nch = 2 if mode == "channel" else 1
+    if is_hear_wav(src_path, channels=nch):
+        upload = src_path
+    else:
+        upload = make_hear_copy(
+            src_path, dest_path, channels=nch, keep_if_larger=(mode == "channel"),
+        ) or src_path
+    job_id = submit_job_file(upload, call_id=call_id, mode=mode)
+    result = normalize_hear_result(poll_job(job_id))
+    return job_id, result
 
 
 def transcribe_with_fallback(src_path, hear_tmp, call_id=None):
-    """v2 path first: 8 kHz stereo + channel. Retry diarize if Hear returns a dump."""
-    forced = (os.getenv("HEAR_SEPARATION_MODE") or SEPARATION_MODE or "channel").strip().lower()
+    """Split two-person calls: dual-channel → channel; mixed MP3 → diarize.
+
+    Never keep an unlabeled one-speaker blob when the other mode has turns.
+    """
+    forced = (os.getenv("HEAR_SEPARATION_MODE") or SEPARATION_MODE or "auto").strip().lower()
     if forced == "diarize":
-        upload, mode = prepare_hear_upload(src_path, hear_tmp)
-        job_id = submit_job_file(upload, call_id=call_id, mode="diarize")
-        return job_id, poll_job(job_id), "diarize"
+        job_id, result = _hear_attempt(src_path, hear_tmp, call_id, "diarize")
+        return job_id, result, "diarize"
 
-    if is_hear_wav(src_path, channels=2):
-        channel_path = src_path
-    else:
-        channel_path = make_hear_copy(
-            src_path, hear_tmp, channels=2, keep_if_larger=True,
-        ) or src_path
-    job_id = submit_job_file(channel_path, call_id=call_id, mode="channel")
-    result = poll_job(job_id)
-    if channel_split_ok(result):
-        return job_id, result, "channel"
+    stereo = has_true_stereo(src_path)
+    channel_first = forced == "channel" or (forced != "diarize" and stereo)
 
-    applog.event(
-        log, "hear_separation_retry",
-        from_mode="channel", to_mode="diarize", call_id=call_id,
-        segments=len(result.get("segments") or []),
-    )
-    log.info("channel split missing turns; retrying Hear with diarize")
+    job_id = result = None
+    if channel_first:
+        job_id, result = _hear_attempt(src_path, hear_tmp, call_id, "channel")
+        if speaker_split_ok(result):
+            applog.event(
+                log, "hear_separation_picked",
+                mode="channel", call_id=call_id,
+                speakers=result.get("speakers"),
+                segments=len(result.get("segments") or []),
+            )
+            return job_id, result, "channel"
+        applog.event(
+            log, "hear_separation_retry",
+            from_mode="channel", to_mode="diarize", call_id=call_id,
+            segments=len(result.get("segments") or []),
+            speakers=result.get("speakers"),
+        )
+        log.info("channel split missing turns; retrying Hear with diarize")
+
     mono_tmp = f"{hear_tmp}.mono.wav"
     try:
-        mono_path = make_hear_copy(
-            src_path, mono_tmp, channels=1, keep_if_larger=False,
-        ) or src_path
-        job2 = submit_job_file(mono_path, call_id=call_id, mode="diarize")
-        result2 = poll_job(job2)
+        job2, result2 = _hear_attempt(src_path, mono_tmp, call_id, "diarize")
     finally:
         if os.path.exists(mono_tmp):
             os.remove(mono_tmp)
-    if channel_split_ok(result2) or not _looks_like_tagged_dump(result2):
-        segs2 = result2.get("segments") or []
-        segs1 = result.get("segments") or []
-        if len(segs2) >= len(segs1):
-            return job2, result2, "diarize"
-    return job_id, result, "channel"
+
+    if result is None:
+        picked_id, picked, mode = job2, result2, "diarize"
+    elif _separation_score(result2) >= _separation_score(result):
+        picked_id, picked, mode = job2, result2, "diarize"
+    else:
+        picked_id, picked, mode = job_id, result, "channel"
+
+    if not speaker_split_ok(picked):
+        applog.event(
+            log, "hear_separation_unlabeled",
+            mode=mode, call_id=call_id,
+            speakers=picked.get("speakers"),
+            segments=len(picked.get("segments") or []),
+        )
+        log.warning(
+            "Hear returned no two-speaker turns (mode=%s, speakers=%s, segments=%s)",
+            mode, picked.get("speakers"), len(picked.get("segments") or []),
+        )
+    else:
+        applog.event(
+            log, "hear_separation_picked",
+            mode=mode, call_id=call_id,
+            speakers=picked.get("speakers"),
+            segments=len(picked.get("segments") or []),
+        )
+    return picked_id, picked, mode
 
 
 # ---------- Orchestrator (CLI) ----------

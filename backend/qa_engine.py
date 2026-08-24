@@ -96,7 +96,16 @@ def load_call(call_id=None):
 
 
 def identify_agent(segments):
-    return segments[0]["speaker"] if segments else None
+    if not segments:
+        return None
+    first = segments[0]
+    sp = first.get("speaker")
+    if sp is not None and str(sp).strip() != "":
+        return sp
+    ch = _channel_int(first.get("channel"))
+    if ch is not None:
+        return f"speaker_{ch + 1}"
+    return None
 
 
 def audit_mode() -> str:
@@ -181,7 +190,10 @@ def classify_roles(segments):
     for s in segments:
         sp = s.get("speaker")
         if sp is None or str(sp).strip() == "":
-            continue
+            ch = _channel_int(s.get("channel"))
+            if ch is None:
+                continue
+            sp = f"speaker_{ch + 1}"
         if sp not in speakers:
             speakers.append(sp)
     if len(speakers) < 2:
@@ -192,12 +204,20 @@ def classify_roles(segments):
 
     window = [
         s for s in segments[:15]
-        if s.get("speaker") is not None and str(s.get("speaker")).strip() != ""
+        if (
+            (s.get("speaker") is not None and str(s.get("speaker")).strip() != "")
+            or _channel_int(s.get("channel")) is not None
+        )
     ]
     scores = {sp: 0 for sp in speakers}
     channel_of = {sp: [] for sp in speakers}
     for s in window:
-        sp = s["speaker"]
+        sp = s.get("speaker")
+        if sp is None or str(sp).strip() == "":
+            ch = _channel_int(s.get("channel"))
+            sp = f"speaker_{ch + 1}" if ch is not None else None
+        if sp is None:
+            continue
         scores[sp] = scores.get(sp, 0) + _cue_score(s.get("text") or "")
         ch = _channel_int(s.get("channel"))
         if ch is not None:
