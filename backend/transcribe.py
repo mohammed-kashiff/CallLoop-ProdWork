@@ -40,7 +40,9 @@ PYAI_API_KEY = (os.getenv("PYAI_API_KEY") or "").strip() or None
 BASE_URL = "https://api.pyai.com"
 RECAP_PACK_ID = os.getenv("RECAP_PACK_ID") or None
 
-SEPARATION_MODE = "diarize"    # "diarize" (mono or stereo) | "channel" (true dual-channel)
+# both: keep L/R dual-channel split AND ML diarization.
+# diarize-only on stereo telephony often returns one speaker (CL-19 regression).
+SEPARATION_MODE = "both"       # "both" | "diarize" | "channel"
 MODEL = "pyai-hear-telephony"
 
 # Poll PyAI async Hear jobs. Large/slow batches (and Hear backpressure) need
@@ -365,11 +367,26 @@ def set_filename_if_empty(conn, call_id, filename):
     conn.commit()
 
 
+def _separation_fields(*, as_strings: bool = False) -> dict:
+    """Hear speaker split. Dual-channel recordings need channel=true; mixed audio needs diarize."""
+    true = "true" if as_strings else True
+    mode = (SEPARATION_MODE or "both").strip().lower()
+    out: dict = {}
+    if mode in ("channel", "both"):
+        out["channel"] = true
+    if mode in ("diarize", "both"):
+        out["diarize"] = true
+    if not out:
+        out["channel"] = true
+        out["diarize"] = true
+    return out
+
+
 # ---------- PyAI service wrapper ----------
 def submit_job_url(audio_url, call_id=None):
     _require_api_key()
     body = {"audio_url": audio_url, "model": MODEL, "numerals": True, "output_formats": ["json"]}
-    body.update({"channel": True} if SEPARATION_MODE == "channel" else {"diarize": True})
+    body.update(_separation_fields())
     if call_id:
         body["call_id"] = call_id
         if RECAP_PACK_ID:
@@ -408,7 +425,7 @@ def submit_job_file(path, call_id=None):
 
     files = {"audio": (os.path.basename(path), audio_bytes, "application/octet-stream")}
     data = {"model": MODEL, "numerals": "true", "output_formats": "json"}
-    data.update({"channel": "true"} if SEPARATION_MODE == "channel" else {"diarize": "true"})
+    data.update(_separation_fields(as_strings=True))
     if call_id:
         data["call_id"] = call_id
         if RECAP_PACK_ID:
