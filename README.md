@@ -334,9 +334,12 @@ Optional: `JUSTCALL_API_KEY`, `JUSTCALL_API_SECRET`, `JUSTCALL_WEBHOOK_SECRET`. 
 The API still uses SQLite at runtime until the DB-layer ticket. **Do not** add columns in Python at boot. Postgres schema is versioned in `alembic/versions/`.
 
 `0001_orgs_calls` — `orgs`, `calls`, `segments`, `audits` (`org_id NOT NULL`).  
-`0002_api_usage` — `api_usage` with `org_id`.
+`0002_api_usage` — `api_usage` with `org_id`.  
+`0003_rubrics_audits` — `rubrics`; recreates `audits` with surrogate `id` and `UNIQUE (call_id, rubric_id, rubric_version)`. Seeds one **"Default (legacy v8)"** rubric per org from `rubric.json`. **Does not backfill** old scorecards.
 
-Placeholder org: `00000000-0000-4000-8000-000000000001`.
+Placeholder org: `00000000-0000-4000-8000-000000000001`. Legacy rubric id: `00000000-0000-4000-8000-000000000011`.
+
+Local SQLite (`callproof.db`) drops the old `PRIMARY KEY (call_id)` audits table on first boot after this change and recreates it. Existing local scores are not migrated — re-run audit. Do not mutate a seeded rubric in place; bump `version` and insert a new row.
 
 **Apply** (explicit step, not on API import). Prefer session pooler `aws-0-us-west-2.pooler.supabase.com:5432` if `db.<ref>.supabase.co` does not resolve:
 
@@ -358,7 +361,7 @@ alembic upgrade head
 
 `render.yaml` sets **Pre-Deploy Command** `alembic upgrade head` so Render applies migrations on deploy, not when uvicorn loads.
 
-Confirm in **Table Editor**: `orgs`, `calls`, `segments`, `audits`, `api_usage`.
+Confirm in **Table Editor**: `orgs`, `calls`, `segments`, `audits`, `api_usage`, `rubrics`.
 
 `DATABASE_URL` on **callloop-prodwork** is an Environment variable (not a Secret File).
 

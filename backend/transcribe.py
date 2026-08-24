@@ -22,6 +22,7 @@ import subprocess
 
 import httpx
 from . import applog
+from . import audit_store
 from . import pyai_usage
 from .config import load_env
 from .paths import DB_PATH
@@ -276,6 +277,7 @@ def init_db():
         )
     except sqlite3.OperationalError:
         pass
+    audit_store.ensure_sqlite_schema(conn)
     conn.commit()
     return conn
 

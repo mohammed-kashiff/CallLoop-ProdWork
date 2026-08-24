@@ -8,3 +8,7 @@ from __future__ import annotations
 
 # UUID v4-shaped, stable across environments. Seeded in Alembic revision 0001.
 DEFAULT_ORG_ID = "00000000-0000-4000-8000-000000000001"
+
+# Legacy v8 rubric for the placeholder org. Seeded in Alembic revision 0003.
+# Other orgs get their own rubric UUID at seed time — never reuse this id.
+DEFAULT_RUBRIC_ID = "00000000-0000-4000-8000-000000000011"

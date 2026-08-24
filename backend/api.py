@@ -56,6 +56,8 @@ from . import qa_engine as qa
 from . import qa_v8
 from . import recap as pyai_recap
 from . import transcribe
+from . import audit_store
+from .org_ids import DEFAULT_ORG_ID, DEFAULT_RUBRIC_ID
 
 logging.basicConfig(
     level=logging.INFO,
@@ -317,12 +319,6 @@ def _startup():
         )
 
     transcribe.init_db().close()
-    with _conn() as c:
-        c.execute(
-            "CREATE TABLE IF NOT EXISTS audits ("
-            "call_id INTEGER PRIMARY KEY, audit_json TEXT, "
-            "rubric_hash TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
-        )
     os.makedirs(AUDIO_DIR, exist_ok=True)
     pyai_usage.init_usage_db(DB_PATH)
     error_notify.log_ready()
@@ -502,24 +498,24 @@ def analyze_call(call_id, agent_override=None):
 
 
 def _load_or_compute_audit(call_id: int, refresh: bool = False):
-    """Return (audit_dict, rubric_hash). Computes and caches on miss/refresh."""
+    """Return (audit_dict, rubric_hash). Computes and caches on miss/refresh.
+
+    Read mode: latest-per-rubric (default legacy v8).
+    """
     rh = _rubric_hash()
     prev = None
     prev_hash = None
     with _db_lock:
         with _conn() as c:
-            row = c.execute(
-                "SELECT audit_json, rubric_hash FROM audits WHERE call_id=?",
-                (call_id,),
-            ).fetchone()
-    if row:
-        prev_hash = row["rubric_hash"]
-        try:
-            prev = json.loads(row["audit_json"] or "{}")
-        except (TypeError, json.JSONDecodeError):
-            prev = None
-        if not refresh and prev_hash == rh and isinstance(prev, dict):
-            return prev, rh
+            row = audit_store.fetch_latest_for_rubric(
+                c,
+                call_id=call_id,
+                rubric_id=DEFAULT_RUBRIC_ID,
+                org_id=DEFAULT_ORG_ID,
+            )
+    prev, prev_hash = audit_store.parse_scorecard(row)
+    if not refresh and prev_hash == rh and isinstance(prev, dict):
+        return prev, rh
     audit = analyze_call(call_id)
     if isinstance(prev, dict) and prev.get("manual_review"):
         audit["manual_review"] = True
@@ -533,10 +529,12 @@ def _load_or_compute_audit(call_id: int, refresh: bool = False):
             audit["review_solved_at"] = prev["review_solved_at"]
     with _db_lock:
         with _conn() as c:
-            c.execute(
-                "INSERT OR REPLACE INTO audits (call_id, audit_json, rubric_hash) "
-                "VALUES (?, ?, ?)",
-                (call_id, json.dumps(audit), rh),
+            audit_store.upsert_audit(
+                c,
+                call_id=call_id,
+                findings=audit,
+                engine_version=rh,
+                org_id=DEFAULT_ORG_ID,
             )
     return audit, rh
 
@@ -942,7 +940,8 @@ def list_calls(source: str | None = None):
     source_filter = (source or "").strip().lower() or None
     if source_filter and not re.fullmatch(r"[a-z0-9_]{1,32}", source_filter):
         raise HTTPException(status_code=400, detail="Invalid source filter.")
-    sql = """
+    # latest-per-rubric (default legacy v8)
+    sql = f"""
             SELECT
               c.id,
               c.status,
@@ -955,16 +954,16 @@ def list_calls(source: str | None = None):
               c.source,
               c.external_id,
               (SELECT COUNT(*) FROM segments s WHERE s.call_id = c.id) AS segment_count,
-              a.audit_json,
-              a.rubric_hash,
+              a.findings,
+              a.engine_version,
               a.created_at AS audited_at
             FROM calls c
-            LEFT JOIN audits a ON a.call_id = c.id
+            {audit_store.latest_default_join_sql()}
     """
-    params: tuple = ()
+    params: list = list(audit_store.latest_default_join_params())
     if source_filter:
         sql += " WHERE LOWER(COALESCE(c.source, '')) = ? "
-        params = (source_filter,)
+        params.append(source_filter)
     sql += " ORDER BY c.id DESC "
     try:
         with _conn() as c:
@@ -998,11 +997,11 @@ def list_calls(source: str | None = None):
             "source": (r["source"] or "").strip() or "upload",
             "external_id": r["external_id"],
         }
-        if r["audit_json"]:
+        if r["findings"]:
             try:
-                cached = json.loads(r["audit_json"])
+                cached = json.loads(r["findings"])
                 item["has_audit"] = True
-                item["audit_fresh"] = r["rubric_hash"] == rh
+                item["audit_fresh"] = r["engine_version"] == rh
                 item["score"] = cached.get("score")
                 item["grade"] = cached.get("grade")
                 item["flagged"] = _audit_is_flagged(cached)
@@ -1301,23 +1300,27 @@ def _scorecard_xls(records: list[dict]) -> bytes:
 
 
 def _load_scorecard_records() -> list[dict]:
+    # latest-per-rubric (default legacy v8)
+    join_sql = audit_store.latest_default_join_sql(inner=True)
+    join_params = audit_store.latest_default_join_params()
     with _conn() as c:
         rows = c.execute(
-            """
+            f"""
             SELECT
               c.id,
               c.filename,
-              a.audit_json
+              a.findings
             FROM calls c
-            INNER JOIN audits a ON a.call_id = c.id
+            {join_sql}
             WHERE c.status = 'completed' OR c.status IS NULL OR c.status = ''
             ORDER BY c.id ASC
-            """
+            """,
+            join_params,
         ).fetchall()
     records = []
     for r in rows:
         try:
-            audit = json.loads(r["audit_json"] or "{}")
+            audit = json.loads(r["findings"] or "{}")
         except (TypeError, json.JSONDecodeError):
             continue
         if not isinstance(audit, dict):
@@ -1337,25 +1340,29 @@ def _load_scorecard_records() -> list[dict]:
 @app.get("/api/calls/flagged")
 def list_flagged_calls():
     """Scorecards flagged for manager review (manual button or auto triggers)."""
+    # latest-per-rubric (default legacy v8)
+    join_sql = audit_store.latest_default_join_sql(inner=True)
+    join_params = audit_store.latest_default_join_params()
     with _conn() as c:
         rows = c.execute(
-            """
+            f"""
             SELECT
               c.id,
               c.filename,
               c.audio_seconds,
               c.created_at,
-              a.audit_json,
+              a.findings,
               a.created_at AS audited_at
             FROM calls c
-            INNER JOIN audits a ON a.call_id = c.id
+            {join_sql}
             ORDER BY c.id DESC
-            """
+            """,
+            join_params,
         ).fetchall()
     out = []
     for r in rows:
         try:
-            audit = json.loads(r["audit_json"] or "{}")
+            audit = json.loads(r["findings"] or "{}")
         except (TypeError, json.JSONDecodeError):
             continue
         if not _audit_is_flagged(audit):
@@ -1421,28 +1428,30 @@ def export_calls(format: str = "csv"):
     if fmt not in ("csv", "json"):
         raise HTTPException(status_code=400, detail="format must be csv or json")
 
+    # latest-per-rubric (default legacy v8)
     with _conn() as c:
         rows = c.execute(
-            """
+            f"""
             SELECT
               c.id,
               c.filename,
               c.status,
               c.audio_seconds,
               c.created_at,
-              a.audit_json,
+              a.findings,
               a.created_at AS audited_at
             FROM calls c
-            INNER JOIN audits a ON a.call_id = c.id
+            {audit_store.latest_default_join_sql(inner=True)}
             WHERE c.status = 'completed' OR c.status IS NULL OR c.status = ''
             ORDER BY c.id ASC
-            """
+            """,
+            audit_store.latest_default_join_params(),
         ).fetchall()
 
     records = []
     for r in rows:
         try:
-            audit = json.loads(r["audit_json"] or "{}")
+            audit = json.loads(r["findings"] or "{}")
         except (TypeError, json.JSONDecodeError):
             continue
         if not isinstance(audit, dict):
@@ -1508,12 +1517,15 @@ def get_audit(call_id: int, refresh: bool = False):
     rh = _rubric_hash()
     if not refresh:
         with _conn() as c:
-            row = c.execute(
-                "SELECT audit_json, rubric_hash FROM audits WHERE call_id=?",
-                (call_id,),
-            ).fetchone()
-        if row and row["rubric_hash"] == rh:
-            cached = json.loads(row["audit_json"])
+            # latest-per-rubric (default legacy v8)
+            row = audit_store.fetch_latest_for_rubric(
+                c,
+                call_id=call_id,
+                rubric_id=DEFAULT_RUBRIC_ID,
+                org_id=DEFAULT_ORG_ID,
+            )
+        cached, cached_hash = audit_store.parse_scorecard(row)
+        if cached and cached_hash == rh:
             applog.event(
                 log, "audit_cache",
                 result="HIT", call_id=call_id, score=cached.get("score"),
@@ -1535,10 +1547,12 @@ def get_audit(call_id: int, refresh: bool = False):
 
 def _save_audit(call_id: int, audit: dict, rh: str):
     with _conn() as c:
-        c.execute(
-            "INSERT OR REPLACE INTO audits (call_id, audit_json, rubric_hash) "
-            "VALUES (?, ?, ?)",
-            (call_id, json.dumps(audit), rh),
+        audit_store.upsert_audit(
+            c,
+            call_id=call_id,
+            findings=audit,
+            engine_version=rh,
+            org_id=DEFAULT_ORG_ID,
         )
 
 
@@ -1548,19 +1562,19 @@ def flag_call_for_review(call_id: int):
     if call_id < 1:
         raise HTTPException(status_code=400, detail="Invalid call id.")
     with _conn() as c:
-        row = c.execute(
-            "SELECT audit_json, rubric_hash FROM audits WHERE call_id=?",
-            (call_id,),
-        ).fetchone()
+        # latest-per-rubric (default legacy v8)
+        row = audit_store.fetch_latest_for_rubric(
+            c,
+            call_id=call_id,
+            rubric_id=DEFAULT_RUBRIC_ID,
+            org_id=DEFAULT_ORG_ID,
+        )
     if not row:
         raise HTTPException(
             status_code=404,
             detail="No scorecard for this call. Score it before flagging.",
         )
-    try:
-        audit = json.loads(row["audit_json"] or "{}")
-    except (TypeError, json.JSONDecodeError):
-        raise HTTPException(status_code=500, detail="Stored scorecard is not valid JSON.")
+    audit, stored_hash = audit_store.parse_scorecard(row)
     if not isinstance(audit, dict):
         raise HTTPException(status_code=500, detail="Stored scorecard is not valid JSON.")
     already = _audit_is_flagged(audit)
@@ -1573,7 +1587,7 @@ def flag_call_for_review(call_id: int):
         audit["review_solved_at"] = None
     if not audit.get("manual_review_at"):
         audit["manual_review_at"] = datetime.now(timezone.utc).isoformat()
-    rh = row["rubric_hash"] or _rubric_hash()
+    rh = stored_hash or _rubric_hash()
     _save_audit(call_id, audit, rh)
     applog.event(
         log, "call_flagged",
@@ -1600,19 +1614,19 @@ def solve_flagged_review(call_id: int):
     if call_id < 1:
         raise HTTPException(status_code=400, detail="Invalid call id.")
     with _conn() as c:
-        row = c.execute(
-            "SELECT audit_json, rubric_hash FROM audits WHERE call_id=?",
-            (call_id,),
-        ).fetchone()
+        # latest-per-rubric (default legacy v8)
+        row = audit_store.fetch_latest_for_rubric(
+            c,
+            call_id=call_id,
+            rubric_id=DEFAULT_RUBRIC_ID,
+            org_id=DEFAULT_ORG_ID,
+        )
     if not row:
         raise HTTPException(
             status_code=404,
             detail="No scorecard for this call.",
         )
-    try:
-        audit = json.loads(row["audit_json"] or "{}")
-    except (TypeError, json.JSONDecodeError):
-        raise HTTPException(status_code=500, detail="Stored scorecard is not valid JSON.")
+    audit, stored_hash = audit_store.parse_scorecard(row)
     if not isinstance(audit, dict):
         raise HTTPException(status_code=500, detail="Stored scorecard is not valid JSON.")
     if not _audit_is_flagged(audit):
@@ -1625,7 +1639,7 @@ def solve_flagged_review(call_id: int):
     audit["review_solved"] = True
     if not audit.get("review_solved_at"):
         audit["review_solved_at"] = datetime.now(timezone.utc).isoformat()
-    rh = row["rubric_hash"] or _rubric_hash()
+    rh = stored_hash or _rubric_hash()
     _save_audit(call_id, audit, rh)
     applog.event(
         log, "review_solved",
