@@ -170,6 +170,16 @@ def test_live_relrowsecurity_if_migrated():
         ).fetchall()
         found = {r["relname"] for r in rows}
         assert found == set(TABLES)
+        members = conn.execute(
+            """
+            SELECT c.relrowsecurity
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = 'org_members'
+            """
+        ).fetchone()
+        if members:
+            assert members["relrowsecurity"] is False
         policies = conn.execute(
             """
             SELECT tablename, policyname

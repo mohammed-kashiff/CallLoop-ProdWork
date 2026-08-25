@@ -363,7 +363,8 @@ The API uses **Postgres** at runtime (`DATABASE_URL` / `SUPABASE_DB_URL`). **Do 
 
 **Service-role bypass (limited, and verified):** `postgres` / `service_role` skip RLS. Use those connections only for `alembic upgrade` and one-off backfill (`db.connection(bypass_rls=True)`). CL-10 AC: an API `db.connection()` session has `current_user = callproof_app` and `rolbypassrls = false`. Raw `psycopg.connect` as postgres does **not** count. `org_members` is not RLS’d (first-user claim reads it before the org GUC is set).
 
-`0006_rls_role_grant` — `GRANT callproof_app TO CURRENT_USER` so pooler postgres (not superuser) can `SET ROLE`. Idempotent if 0005 already granted it.
+`0006_rls_role_grant` — `GRANT callproof_app TO CURRENT_USER` so pooler postgres (not superuser) can `SET ROLE`. Idempotent if 0005 already granted it.  
+`0007_org_members_no_rls` — **DISABLE** RLS on `org_members`. Supabase had enabled it with no policies (deny-all for `callproof_app`); signup INSERT failed after SET ROLE.
 
 Placeholder org: `00000000-0000-4000-8000-000000000001`. Legacy rubric id: `00000000-0000-4000-8000-000000000011`.
 

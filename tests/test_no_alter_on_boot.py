@@ -76,3 +76,11 @@ def test_sixth_revision_grants_app_role_to_login():
     assert "GRANT CALLPROOF_APP TO CURRENT_USER" in sql
     assert "0005_RLS" in sql
 
+
+def test_seventh_revision_disables_rls_on_org_members():
+    rev = ROOT / "alembic" / "versions" / "0007_org_members_no_rls.py"
+    assert rev.is_file()
+    sql = rev.read_text(encoding="utf-8").upper()
+    assert "ALTER TABLE ORG_MEMBERS DISABLE ROW LEVEL SECURITY" in sql
+    assert "ENABLE ROW LEVEL SECURITY" in sql  # downgrade only
+
