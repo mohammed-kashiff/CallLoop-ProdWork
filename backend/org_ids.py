@@ -39,6 +39,24 @@ def bound_org_id() -> str | None:
     return _ORG_ID.get()
 
 
+_USER_ID: ContextVar[str | None] = ContextVar("callproof_user_id", default=None)
+
+
+def bound_user_id() -> str | None:
+    return _USER_ID.get()
+
+
+def bind_user_id(user_id: str) -> Token:
+    parsed = parse_org_id(user_id)
+    if not parsed:
+        raise ValueError("user_id must be a UUID")
+    return _USER_ID.set(parsed)
+
+
+def reset_user_id(token: Token) -> None:
+    _USER_ID.reset(token)
+
+
 def bind_org_id(org_id: str) -> Token:
     parsed = parse_org_id(org_id)
     if not parsed:

@@ -51,3 +51,28 @@ def test_fourth_revision_org_members():
     assert "CHECK (ROLE IN ('OWNER', 'MEMBER'))" in sql
     assert "REFERENCES ORGS" in sql
 
+
+def test_fifth_revision_enables_rls():
+    rev = ROOT / "alembic" / "versions" / "0005_rls.py"
+    assert rev.is_file()
+    sql = rev.read_text(encoding="utf-8").upper()
+    assert "ENABLE ROW LEVEL SECURITY" in sql
+    for table in ("ORGS", "CALLS", "SEGMENTS", "AUDITS", "RUBRICS", "API_USAGE"):
+        assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in sql
+        for action in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+            assert f"{table}_{action}" in sql
+    assert "CALLPROOF_APP" in sql
+    assert "NOBYPASSRLS" in sql
+    assert "SERVICE_ROLE" in sql
+    assert "ALEMBIC" in sql
+    assert "GRANT CALLPROOF_APP TO CURRENT_USER" in sql
+    assert "FORCE ROW LEVEL SECURITY" not in sql
+
+
+def test_sixth_revision_grants_app_role_to_login():
+    rev = ROOT / "alembic" / "versions" / "0006_rls_role_grant.py"
+    assert rev.is_file()
+    sql = rev.read_text(encoding="utf-8").upper()
+    assert "GRANT CALLPROOF_APP TO CURRENT_USER" in sql
+    assert "0005_RLS" in sql
+

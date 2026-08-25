@@ -21,7 +21,14 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from . import audit_store
 from . import db
 from .config import cors_origins
-from .org_ids import DEFAULT_ORG_ID, bind_org_id, parse_org_id, reset_org_id
+from .org_ids import (
+    DEFAULT_ORG_ID,
+    bind_org_id,
+    bind_user_id,
+    parse_org_id,
+    reset_org_id,
+    reset_user_id,
+)
 
 _PUBLIC_EXACT = frozenset({"/", "/health", "/healthz"})
 _PUBLIC_PATHS = frozenset({"/api/integrations/justcall/webhook"})
@@ -128,6 +135,7 @@ def ensure_membership(user_id: str, email: str | None = None) -> Membership:
     """One membership per user at launch. First user claims DEFAULT_ORG_ID."""
     uid = str(uuid.UUID(str(user_id)))
     with db.connection() as conn:
+        db.apply_tenant_gucs(conn, user_id=uid)
         row = conn.execute(
             """
             SELECT org_id, role FROM org_members
@@ -156,6 +164,7 @@ def ensure_membership(user_id: str, email: str | None = None) -> Membership:
             org_id = DEFAULT_ORG_ID
         else:
             org_id = str(uuid.uuid4())
+            db.apply_tenant_gucs(conn, org_id=org_id, user_id=uid)
             conn.execute(
                 "INSERT INTO orgs (id, name) VALUES (%s, %s)",
                 (org_id, _workspace_name(email)),
@@ -164,6 +173,7 @@ def ensure_membership(user_id: str, email: str | None = None) -> Membership:
                 conn, org_id=org_id, rubric_id=str(uuid.uuid4()),
             )
 
+        db.apply_tenant_gucs(conn, org_id=org_id, user_id=uid)
         try:
             conn.execute(
                 """
@@ -174,6 +184,7 @@ def ensure_membership(user_id: str, email: str | None = None) -> Membership:
             )
         except UniqueViolation:
             conn.rollback()
+            db.apply_tenant_gucs(conn, user_id=uid)
             row = conn.execute(
                 """
                 SELECT org_id, role FROM org_members
@@ -237,7 +248,6 @@ class JwtAuthMiddleware:
             sub = str(claims["sub"])
             email = claims.get("email")
             email_s = email.strip() if isinstance(email, str) else None
-            membership = ensure_membership(sub, email_s)
         except AuthConfigError:
             response = _auth_failure(request, 503, "Auth is not configured")
             await response(scope, receive, send)
@@ -246,14 +256,19 @@ class JwtAuthMiddleware:
             response = _auth_failure(request, 401, "Invalid or expired token")
             await response(scope, receive, send)
             return
-        request.state.user_id = membership.user_id
-        request.state.org_id = membership.org_id
-        request.state.role = membership.role
-        token_org = bind_org_id(membership.org_id)
+        user_token = bind_user_id(sub)
+        org_token = None
         try:
+            membership = ensure_membership(sub, email_s)
+            request.state.user_id = membership.user_id
+            request.state.org_id = membership.org_id
+            request.state.role = membership.role
+            org_token = bind_org_id(membership.org_id)
             await self.app(scope, receive, send)
         finally:
-            reset_org_id(token_org)
+            if org_token is not None:
+                reset_org_id(org_token)
+            reset_user_id(user_token)
 
 
 def org_id_from_request(request: Request) -> str:

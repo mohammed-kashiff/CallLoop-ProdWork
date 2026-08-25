@@ -27,7 +27,7 @@ from . import applog
 from . import db
 from . import pyai_usage
 from .config import load_env
-from .org_ids import DEFAULT_ORG_ID
+from .org_ids import DEFAULT_ORG_ID, org_scope
 
 load_env()
 applog.setup_logging()
@@ -1060,35 +1060,36 @@ def main(argv: list[str] | None = None):
     if not is_url(src) and not os.path.isfile(src):
         sys.exit(f"ERROR: file not found: {src}")
     identity = identity_for(src)
-    with db.connection() as conn:
-        existing = find_existing_call(conn, identity, org_id=DEFAULT_ORG_ID)
-        if existing:
-            log.info(
-                "already transcribed (call id %d) - loading from DB, no API call",
-                existing["id"],
-            )
-            return
-        pyai_id = new_pyai_call_id()
-        hear_tmp = None
-        try:
-            if is_url(src):
-                job_id = submit_job_url(src, call_id=pyai_id)
-                result = poll_job(job_id)
-            else:
-                hear_tmp = src + ".hear-tmp.wav"
-                job_id, result, _mode = transcribe_with_fallback(
-                    src, hear_tmp, call_id=pyai_id,
+    with org_scope(DEFAULT_ORG_ID):
+        with db.connection() as conn:
+            existing = find_existing_call(conn, identity, org_id=DEFAULT_ORG_ID)
+            if existing:
+                log.info(
+                    "already transcribed (call id %d) - loading from DB, no API call",
+                    existing["id"],
                 )
-            call_id = save_transcript(
-                conn, identity, job_id, result,
-                pyai_call_id=pyai_id,
-                filename=None if is_url(src) else os.path.basename(src),
-                org_id=DEFAULT_ORG_ID,
-            )
-            log.info("done: call id %d", call_id)
-        finally:
-            if hear_tmp and os.path.exists(hear_tmp):
-                os.remove(hear_tmp)
+                return
+            pyai_id = new_pyai_call_id()
+            hear_tmp = None
+            try:
+                if is_url(src):
+                    job_id = submit_job_url(src, call_id=pyai_id)
+                    result = poll_job(job_id)
+                else:
+                    hear_tmp = src + ".hear-tmp.wav"
+                    job_id, result, _mode = transcribe_with_fallback(
+                        src, hear_tmp, call_id=pyai_id,
+                    )
+                call_id = save_transcript(
+                    conn, identity, job_id, result,
+                    pyai_call_id=pyai_id,
+                    filename=None if is_url(src) else os.path.basename(src),
+                    org_id=DEFAULT_ORG_ID,
+                )
+                log.info("done: call id %d", call_id)
+            finally:
+                if hear_tmp and os.path.exists(hear_tmp):
+                    os.remove(hear_tmp)
 
 
 if __name__ == "__main__":

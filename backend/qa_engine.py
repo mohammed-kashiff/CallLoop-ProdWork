@@ -28,7 +28,7 @@ from . import qa_v8
 from . import rules
 from . import transcribe
 from .config import load_env
-from .org_ids import DEFAULT_ORG_ID
+from .org_ids import DEFAULT_ORG_ID, org_scope
 from .paths import RUBRIC_PATH
 
 load_env()
@@ -907,7 +907,8 @@ def main():
     arg_id = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else None
     agent_override = sys.argv[2] if len(sys.argv) > 2 else None
 
-    call_id, meta, segments = load_call(arg_id)
+    with org_scope(DEFAULT_ORG_ID):
+        call_id, meta, segments = load_call(arg_id)
     if not segments:
         sys.exit(f"Call {call_id} has no segments to analyze.")
     agent = agent_override or classify_roles(segments)

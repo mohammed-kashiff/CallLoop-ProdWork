@@ -13,6 +13,7 @@ Application-layer defence, independent of RLS. Review every data change against 
 - [ ] **Writes:** every `INSERT` sets `org_id` from that same token (or `org_scope` in a worker).
 - [ ] **Miss:** another org's row is **404**, not 403 (no existence leak).
 - [ ] **No JWT:** JustCall webhook/poller uses `JUSTCALL_ORG_ID` or `DEFAULT_ORG_ID`, never a payload field. CLI uses `DEFAULT_ORG_ID` explicitly.
+- [ ] **RLS (CL-10):** second layer. `db.connection()` SET LOCAL ROLE `callproof_app` (`NOBYPASSRLS`) and `app.current_org_id` from the JWT-bound context. Policies live in `alembic/versions/0005_rls.py`. Isolation tests must use `db.connection()`, not a raw postgres connect.
 
 ```python
 # BAD

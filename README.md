@@ -345,6 +345,7 @@ The UI signs up / logs in with **Supabase Auth**. The session is stored in the b
 - **Later signups**: a new org, that user as owner, plus a seeded legacy v8 rubric.
 - Unauthenticated calls to data routes return **401**. `/health` and the JustCall webhook stay public.
 - **Isolation (CL-9):** every read and write uses `org_id` from the verified JWT (`request.state.org_id`). Query params, path, and JSON bodies cannot set it. JustCall webhook/poller use `JUSTCALL_ORG_ID` (or the placeholder org), never a payload field. Code review: `.cursor/rules/org-isolation.mdc`.
+- **RLS (CL-10):** second layer. Alembic `0005_rls` enables RLS on `orgs`, `calls`, `segments`, `audits`, `rubrics`, `api_usage`. The API does `SET LOCAL ROLE callproof_app` (`NOBYPASSRLS`) then `SET LOCAL app.current_org_id` from the JWT org. `DATABASE_URL` may stay the postgres URI (Alembic needs bypass). Do not apply policies by hand in the dashboard. `org_members` is not RLS’d (signup bootstrap).
 
 Local: copy `SUPABASE_URL` / `SUPABASE_JWT_SECRET` into `.env`, and `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` into `frontend/.env`. Enable email auth in the Supabase dashboard.
 
@@ -357,7 +358,12 @@ The API uses **Postgres** at runtime (`DATABASE_URL` / `SUPABASE_DB_URL`). **Do 
 `0001_orgs_calls` — `orgs`, `calls`, `segments`, `audits` (`org_id NOT NULL`).  
 `0002_api_usage` — `api_usage` with `org_id`.  
 `0003_rubrics_audits` — `rubrics`; recreates `audits` with surrogate `id` and `UNIQUE (call_id, rubric_id, rubric_version)`. Seeds one **"Default (legacy v8)"** rubric per org from `rubric.json`. **Does not backfill** old scorecards.  
-`0004_org_members` — `org_members` (`user_id` = Supabase JWT `sub`, `UNIQUE (user_id)` so one org per user at launch).
+`0004_org_members` — `org_members` (`user_id` = Supabase JWT `sub`, `UNIQUE (user_id)` so one org per user at launch).  
+`0005_rls` — **ENABLE ROW LEVEL SECURITY** on `orgs`, `calls`, `segments`, `audits`, `rubrics`, `api_usage`, with SELECT/INSERT/UPDATE/DELETE policies keyed on `app.current_org_id`. Creates `callproof_app` (`NOLOGIN`, `NOBYPASSRLS`). The API `SET LOCAL ROLE`s to it so RLS actually applies even when `DATABASE_URL` is postgres. Policies live in this revision — do not toggle them in the Table Editor.
+
+**Service-role bypass (limited, and verified):** `postgres` / `service_role` skip RLS. Use those connections only for `alembic upgrade` and one-off backfill (`db.connection(bypass_rls=True)`). CL-10 AC: an API `db.connection()` session has `current_user = callproof_app` and `rolbypassrls = false`. Raw `psycopg.connect` as postgres does **not** count. `org_members` is not RLS’d (first-user claim reads it before the org GUC is set).
+
+`0006_rls_role_grant` — `GRANT callproof_app TO CURRENT_USER` so pooler postgres (not superuser) can `SET ROLE`. Idempotent if 0005 already granted it.
 
 Placeholder org: `00000000-0000-4000-8000-000000000001`. Legacy rubric id: `00000000-0000-4000-8000-000000000011`.
 
