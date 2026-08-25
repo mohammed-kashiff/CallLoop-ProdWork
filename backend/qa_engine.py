@@ -28,6 +28,7 @@ from . import qa_v8
 from . import rules
 from . import transcribe
 from .config import load_env
+from .org_ids import DEFAULT_ORG_ID
 from .paths import RUBRIC_PATH
 
 load_env()
@@ -67,11 +68,17 @@ MAX_TOKENS = 2000
 
 
 # ---------- Load transcript ----------
-def load_call(call_id=None):
+def load_call(call_id=None, *, org_id: str | None = None):
+    tenant = org_id or DEFAULT_ORG_ID
     with db.connection() as conn:
         if call_id is None:
             row = conn.execute(
-                "SELECT id FROM calls WHERE status='completed' ORDER BY id DESC LIMIT 1"
+                """
+                SELECT id FROM calls
+                WHERE org_id = %s AND status='completed'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (tenant,),
             ).fetchone()
             if not row:
                 sys.exit("No completed calls in the database. Run transcribe.py first.")
@@ -79,18 +86,21 @@ def load_call(call_id=None):
         meta = conn.execute(
             """
             SELECT id, full_text, speakers, audio_seconds, pyai_call_id
-            FROM calls WHERE id = %s
+            FROM calls WHERE id = %s AND org_id = %s
             """,
-            (call_id,),
+            (call_id, tenant),
         ).fetchone()
         if not meta:
-            sys.exit(f"No call with id {call_id} in the database.")
+            msg = f"No call with id {call_id} in the database."
+            if org_id is not None:
+                raise LookupError(msg)
+            sys.exit(msg)
         segs = conn.execute(
             """
             SELECT seq, speaker, channel, "start", "end", text
-            FROM segments WHERE call_id = %s ORDER BY seq
+            FROM segments WHERE call_id = %s AND org_id = %s ORDER BY seq
             """,
-            (call_id,),
+            (call_id, tenant),
         ).fetchall()
     return call_id, dict(meta), transcribe.expand_tagged_segments([dict(s) for s in segs])
 

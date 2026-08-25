@@ -58,7 +58,7 @@ from . import qa_engine as qa
 from . import qa_v8
 from . import recap as pyai_recap
 from . import transcribe
-from .org_ids import DEFAULT_ORG_ID, DEFAULT_RUBRIC_ID
+from .org_ids import DEFAULT_RUBRIC_ID, integration_org_id, org_scope
 
 logging.basicConfig(
     level=logging.INFO,
@@ -182,16 +182,22 @@ def health():
 
 @app.get("/api/me")
 def me(request: Request):
-    """Current user from the verified JWT + org_members row (CL-8)."""
+    """Current user from the verified JWT + org_members row."""
+    org_id = _org(request)
     return {
         "user_id": getattr(request.state, "user_id", None),
-        "org_id": getattr(request.state, "org_id", None),
+        "org_id": org_id,
         "role": getattr(request.state, "role", None),
     }
 
 
 def _conn():
     return db.connection()
+
+
+def _org(request: Request) -> str:
+    """JWT membership only. Never query, body, or path."""
+    return auth.org_id_from_request(request)
 
 
 def _apply_pyai_key(api_key: str):
@@ -350,29 +356,36 @@ def _rubric_hash():
     return hashlib.sha256(body).hexdigest()[:16]
 
 
-def _call_filename(call_id: int) -> str:
+def _call_filename(call_id: int, org_id: str) -> str:
     with _conn() as c:
-        row = c.execute("SELECT filename FROM calls WHERE id = %s", (call_id,)).fetchone()
+        row = c.execute(
+            "SELECT filename FROM calls WHERE id = %s AND org_id = %s",
+            (call_id, org_id),
+        ).fetchone()
     name = (row["filename"] if row else None) or ""
     name = name.strip()
     return name or f"call-{call_id}.mp3"
 
 
-def _attach_filename(audit: dict, call_id: int) -> dict:
+def _attach_filename(audit: dict, call_id: int, org_id: str) -> dict:
     out = dict(audit)
     out["call_id"] = call_id
-    out["filename"] = _call_filename(call_id)
+    out["filename"] = _call_filename(call_id, org_id)
     return out
 
 
 
-def analyze_call(call_id, agent_override=None):
+def analyze_call(call_id, org_id: str, agent_override=None):
     started = time.perf_counter()
     applog.event(log, "audit_started", call_id=call_id)
 
     with _conn() as c:
         exists = c.execute(
-            "SELECT 1 FROM calls WHERE id = %s AND status='completed'", (call_id,)
+            """
+            SELECT 1 FROM calls
+            WHERE id = %s AND org_id = %s AND status='completed'
+            """,
+            (call_id, org_id),
         ).fetchone()
     if not exists:
         applog.event(
@@ -383,7 +396,7 @@ def analyze_call(call_id, agent_override=None):
             status_code=404, detail=f"No completed call with id {call_id}"
         )
 
-    call_id, meta, segments = qa.load_call(call_id)
+    call_id, meta, segments = qa.load_call(call_id, org_id=org_id)
     if not segments:
         applog.event(
             log, "audit_failed", level=logging.ERROR,
@@ -491,7 +504,7 @@ def analyze_call(call_id, agent_override=None):
 
     return {
         "call_id": call_id,
-        "filename": _call_filename(call_id),
+        "filename": _call_filename(call_id, org_id),
         "audio_seconds": meta.get("audio_seconds"),
         "agent_speaker": agent, "rubric": rubric["name"],
         "rubric_id": rubric.get("rubric_id") or rubric.get("name"),
@@ -505,7 +518,7 @@ def analyze_call(call_id, agent_override=None):
     }
 
 
-def _load_or_compute_audit(call_id: int, refresh: bool = False):
+def _load_or_compute_audit(call_id: int, org_id: str, refresh: bool = False):
     """Return (audit_dict, rubric_hash). Computes and caches on miss/refresh.
 
     Read mode: latest-per-rubric (default legacy v8).
@@ -519,12 +532,12 @@ def _load_or_compute_audit(call_id: int, refresh: bool = False):
                 c,
                 call_id=call_id,
                 rubric_id=DEFAULT_RUBRIC_ID,
-                org_id=DEFAULT_ORG_ID,
+                org_id=org_id,
             )
     prev, prev_hash = audit_store.parse_scorecard(row)
     if not refresh and prev_hash == rh and isinstance(prev, dict):
         return prev, rh
-    audit = analyze_call(call_id)
+    audit = analyze_call(call_id, org_id)
     if isinstance(prev, dict) and prev.get("manual_review"):
         audit["manual_review"] = True
         audit["flagged"] = True
@@ -542,7 +555,7 @@ def _load_or_compute_audit(call_id: int, refresh: bool = False):
                 call_id=call_id,
                 findings=audit,
                 engine_version=rh,
-                org_id=DEFAULT_ORG_ID,
+                org_id=org_id,
             )
     return audit, rh
 
@@ -600,14 +613,14 @@ def _flag_reason_text(audit: dict) -> str:
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.get("/api/pyai/status")
-def pyai_status():
+def pyai_status(request: Request):
     """
     Safe PyAI key posture + local CallProof usage counters for the UI.
     Never returns the API key. Usage is CallProof-recorded outbound hits
     (PyAI does not publish a remaining-request counter).
     """
     def _snapshot():
-        usage = pyai_usage.usage_summary()
+        usage = pyai_usage.usage_summary(org_id=_org(request))
         pyai_u = (usage.get("by_provider") or {}).get("pyai") or {}
         claude_u = (usage.get("by_provider") or {}).get("anthropic") or {}
         return usage, {
@@ -919,13 +932,13 @@ def update_keys(body: KeyUpdate, request: Request):
 
 
 @app.get("/api/dev/logs")
-def dev_logs(lines: int = 200):
+def dev_logs(request: Request, lines: int = 200):
     """
     Tail CallProof's rotating app log (logs/callproof.log) for the Dev Logs UI.
     Secrets are redacted. Same structured events as the terminal callproof.* stream.
     """
     payload = applog.read_tail(lines=lines)
-    usage = pyai_usage.usage_summary()
+    usage = pyai_usage.usage_summary(org_id=_org(request))
     payload["usage"] = {
         "total_hits": usage.get("total_hits"),
         "total_actions": usage.get("total_actions"),
@@ -939,11 +952,12 @@ def dev_logs(lines: int = 200):
 
 
 @app.get("/api/calls")
-def list_calls(source: str | None = None):
+def list_calls(request: Request, source: str | None = None):
     """
-    Library listing of stored calls (SQLite). Omits raw transcript / raw_json
+    Library listing of stored calls. Omits raw transcript / raw_json
     payloads — those stay on the audit/detail paths.
     """
+    org_id = _org(request)
     rh = _rubric_hash()
     source_filter = (source or "").strip().lower() or None
     if source_filter and not re.fullmatch(r"[a-z0-9_]{1,32}", source_filter):
@@ -961,16 +975,19 @@ def list_calls(source: str | None = None):
               c.filename,
               c.source,
               c.external_id,
-              (SELECT COUNT(*) FROM segments s WHERE s.call_id = c.id) AS segment_count,
+              (SELECT COUNT(*) FROM segments s
+                 WHERE s.call_id = c.id AND s.org_id = c.org_id) AS segment_count,
               a.findings,
               a.engine_version,
               a.created_at AS audited_at
             FROM calls c
             {audit_store.latest_default_join_sql()}
+            WHERE c.org_id = %s
     """
-    params: list = list(audit_store.latest_default_join_params())
+    params: list = list(audit_store.latest_default_join_params(org_id))
+    params.append(org_id)
     if source_filter:
-        sql += " WHERE LOWER(COALESCE(c.source, '')) = %s "
+        sql += " AND LOWER(COALESCE(c.source, '')) = %s "
         params.append(source_filter)
     sql += " ORDER BY c.id DESC "
     with _conn() as c:
@@ -1029,22 +1046,30 @@ def _playback_root() -> str:
     return os.path.realpath(AUDIO_DIR)
 
 
-def _clear_playback_audio() -> int:
-    """Delete playback copies and batch temps under audio/. Keeps the folder."""
+def _clear_playback_audio(call_ids: list[int] | None = None) -> int:
+    """Delete playback copies. If call_ids is set, only those files."""
     root = _playback_root()
     if not os.path.isdir(root):
         return 0
     removed = 0
-    for name in os.listdir(root):
+    names: list[str]
+    if call_ids is not None:
+        names = [f"{cid}.mp3" for cid in call_ids]
+    else:
+        names = os.listdir(root)
+    for name in names:
         path = os.path.join(root, name)
+        if not os.path.lexists(path):
+            continue
         real = os.path.realpath(path)
         if not real.startswith(root + os.sep):
             log.warning("skipping audio path outside %s", AUDIO_DIR)
             continue
         try:
             if os.path.isdir(path) and not os.path.islink(path):
-                shutil.rmtree(path)
-                removed += 1
+                if call_ids is None:
+                    shutil.rmtree(path)
+                    removed += 1
             elif os.path.isfile(path) or os.path.islink(path):
                 os.remove(path)
                 removed += 1
@@ -1054,18 +1079,28 @@ def _clear_playback_audio() -> int:
 
 
 @app.post("/api/cache/clear")
-def clear_cache():
-    """Delete stored transcripts, scorecards, and playback audio so the next
-    upload transcribes and scores from scratch."""
+def clear_cache(request: Request):
+    """Delete this org's transcripts, scorecards, and playback audio."""
+    org_id = _org(request)
     with _db_lock:
         with _conn() as c:
-            n_calls = c.execute("SELECT COUNT(*) AS n FROM calls").fetchone()["n"]
-            n_segments = c.execute("SELECT COUNT(*) AS n FROM segments").fetchone()["n"]
-            n_audits = c.execute("SELECT COUNT(*) AS n FROM audits").fetchone()["n"]
-            c.execute("DELETE FROM audits")
-            c.execute("DELETE FROM segments")
-            c.execute("DELETE FROM calls")
-    n_audio = _clear_playback_audio()
+            id_rows = c.execute(
+                "SELECT id FROM calls WHERE org_id = %s", (org_id,),
+            ).fetchall()
+            call_ids = [int(r["id"]) for r in id_rows]
+            n_calls = c.execute(
+                "SELECT COUNT(*) AS n FROM calls WHERE org_id = %s", (org_id,),
+            ).fetchone()["n"]
+            n_segments = c.execute(
+                "SELECT COUNT(*) AS n FROM segments WHERE org_id = %s", (org_id,),
+            ).fetchone()["n"]
+            n_audits = c.execute(
+                "SELECT COUNT(*) AS n FROM audits WHERE org_id = %s", (org_id,),
+            ).fetchone()["n"]
+            c.execute("DELETE FROM audits WHERE org_id = %s", (org_id,))
+            c.execute("DELETE FROM segments WHERE org_id = %s", (org_id,))
+            c.execute("DELETE FROM calls WHERE org_id = %s", (org_id,))
+    n_audio = _clear_playback_audio(call_ids)
     applog.event(
         log, "cache_cleared",
         calls=n_calls, segments=n_segments, audits=n_audits, audio=n_audio,
@@ -1297,10 +1332,10 @@ def _scorecard_xls(records: list[dict]) -> bytes:
     return xml.encode("utf-8")
 
 
-def _load_scorecard_records() -> list[dict]:
+def _load_scorecard_records(org_id: str) -> list[dict]:
     # latest-per-rubric (default legacy v8)
     join_sql = audit_store.latest_default_join_sql(inner=True)
-    join_params = audit_store.latest_default_join_params()
+    join_params = audit_store.latest_default_join_params(org_id)
     with _conn() as c:
         rows = c.execute(
             f"""
@@ -1310,10 +1345,11 @@ def _load_scorecard_records() -> list[dict]:
               a.findings
             FROM calls c
             {join_sql}
-            WHERE c.status = 'completed' OR c.status IS NULL OR c.status = ''
+            WHERE c.org_id = %s
+              AND (c.status = 'completed' OR c.status IS NULL OR c.status = '')
             ORDER BY c.id ASC
             """,
-            join_params,
+            (*join_params, org_id),
         ).fetchall()
     records = []
     for r in rows:
@@ -1333,11 +1369,12 @@ def _load_scorecard_records() -> list[dict]:
 
 
 @app.get("/api/calls/flagged")
-def list_flagged_calls():
+def list_flagged_calls(request: Request):
     """Scorecards flagged for manager review (manual button or auto triggers)."""
+    org_id = _org(request)
     # latest-per-rubric (default legacy v8)
     join_sql = audit_store.latest_default_join_sql(inner=True)
-    join_params = audit_store.latest_default_join_params()
+    join_params = audit_store.latest_default_join_params(org_id)
     with _conn() as c:
         rows = c.execute(
             f"""
@@ -1350,9 +1387,10 @@ def list_flagged_calls():
               a.created_at AS audited_at
             FROM calls c
             {join_sql}
+            WHERE c.org_id = %s
             ORDER BY c.id DESC
             """,
-            join_params,
+            (*join_params, org_id),
         ).fetchall()
     out = []
     for r in rows:
@@ -1387,11 +1425,11 @@ def list_flagged_calls():
 
 
 @app.get("/api/calls/export-scorecard")
-def export_scorecard():
+def export_scorecard(request: Request):
     """Scorecard spreadsheet: recording id/name, agent, overall score (colored),
     and each scoring area. Excel XML so the Score column can be green/orange/red
     (plain CSV cannot store cell colors)."""
-    records = _load_scorecard_records()
+    records = _load_scorecard_records(_org(request))
     if not records:
         raise HTTPException(
             status_code=404,
@@ -1413,16 +1451,18 @@ def export_scorecard():
 
 
 @app.get("/api/calls/export")
-def export_calls(format: str = "csv"):
+def export_calls(request: Request, format: str = "csv"):
     """
     One-click bulk export of score/grade, finding ratings, and recap.
     Omits raw transcripts. Defaults to CSV download; use format=json for JSON.
     """
+    org_id = _org(request)
     fmt = (format or "csv").strip().lower()
     if fmt not in ("csv", "json"):
         raise HTTPException(status_code=400, detail="format must be csv or json")
 
     # latest-per-rubric (default legacy v8)
+    join_params = audit_store.latest_default_join_params(org_id)
     with _conn() as c:
         rows = c.execute(
             f"""
@@ -1436,10 +1476,11 @@ def export_calls(format: str = "csv"):
               a.created_at AS audited_at
             FROM calls c
             {audit_store.latest_default_join_sql(inner=True)}
-            WHERE c.status = 'completed' OR c.status IS NULL OR c.status = ''
+            WHERE c.org_id = %s
+              AND (c.status = 'completed' OR c.status IS NULL OR c.status = '')
             ORDER BY c.id ASC
             """,
-            audit_store.latest_default_join_params(),
+            (*join_params, org_id),
         ).fetchall()
 
     records = []
@@ -1503,7 +1544,7 @@ def export_calls(format: str = "csv"):
     )
 
 
-def _hydrate_audit_segments(audit: dict, call_id: int) -> dict:
+def _hydrate_audit_segments(audit: dict, call_id: int, org_id: str) -> dict:
     """Serve live expanded turns, not the frozen Hear blob stored in the scorecard."""
     if not isinstance(audit, dict) or call_id < 1:
         return audit
@@ -1512,9 +1553,9 @@ def _hydrate_audit_segments(audit: dict, call_id: int) -> dict:
             rows = c.execute(
                 """
                 SELECT seq, speaker, channel, "start", "end", text
-                FROM segments WHERE call_id = %s ORDER BY seq
+                FROM segments WHERE call_id = %s AND org_id = %s ORDER BY seq
                 """,
-                (call_id,),
+                (call_id, org_id),
             ).fetchall()
     except Exception:
         return audit
@@ -1528,7 +1569,8 @@ def _hydrate_audit_segments(audit: dict, call_id: int) -> dict:
 
 
 @app.get("/api/calls/{call_id}/audit")
-def get_audit(call_id: int, refresh: bool = False):
+def get_audit(call_id: int, request: Request, refresh: bool = False):
+    org_id = _org(request)
     rh = _rubric_hash()
     if not refresh:
         with _conn() as c:
@@ -1537,7 +1579,7 @@ def get_audit(call_id: int, refresh: bool = False):
                 c,
                 call_id=call_id,
                 rubric_id=DEFAULT_RUBRIC_ID,
-                org_id=DEFAULT_ORG_ID,
+                org_id=org_id,
             )
         cached, cached_hash = audit_store.parse_scorecard(row)
         if cached and cached_hash == rh:
@@ -1549,31 +1591,36 @@ def get_audit(call_id: int, refresh: bool = False):
                 "cache HIT  call %d (score %s) - returning stored audit",
                 call_id, cached.get("score"),
             )
-            return _attach_filename(_hydrate_audit_segments(cached, call_id), call_id)
+            return _attach_filename(
+                _hydrate_audit_segments(cached, call_id, org_id), call_id, org_id,
+            )
         applog.event(log, "audit_cache", result="MISS", call_id=call_id)
         log.info("cache MISS  call %d - computing fresh audit", call_id)
     else:
         applog.event(log, "audit_cache", result="BYPASS", call_id=call_id)
         log.info("cache BYPASS (refresh) call %d - computing fresh audit", call_id)
-    audit, _rh = _load_or_compute_audit(call_id, refresh=True)
+    audit, _rh = _load_or_compute_audit(call_id, org_id, refresh=True)
     log.info("cached audit for call %d (score %s)", call_id, audit["score"])
-    return _attach_filename(_hydrate_audit_segments(audit, call_id), call_id)
+    return _attach_filename(
+        _hydrate_audit_segments(audit, call_id, org_id), call_id, org_id,
+    )
 
 
-def _save_audit(call_id: int, audit: dict, rh: str):
+def _save_audit(call_id: int, audit: dict, rh: str, org_id: str):
     with _conn() as c:
         audit_store.upsert_audit(
             c,
             call_id=call_id,
             findings=audit,
             engine_version=rh,
-            org_id=DEFAULT_ORG_ID,
+            org_id=org_id,
         )
 
 
 @app.post("/api/calls/{call_id}/flag")
-def flag_call_for_review(call_id: int):
+def flag_call_for_review(call_id: int, request: Request):
     """Persist a manual manager-review flag on the stored scorecard."""
+    org_id = _org(request)
     if call_id < 1:
         raise HTTPException(status_code=400, detail="Invalid call id.")
     with _conn() as c:
@@ -1582,7 +1629,7 @@ def flag_call_for_review(call_id: int):
             c,
             call_id=call_id,
             rubric_id=DEFAULT_RUBRIC_ID,
-            org_id=DEFAULT_ORG_ID,
+            org_id=org_id,
         )
     if not row:
         raise HTTPException(
@@ -1603,7 +1650,7 @@ def flag_call_for_review(call_id: int):
     if not audit.get("manual_review_at"):
         audit["manual_review_at"] = datetime.now(timezone.utc).isoformat()
     rh = stored_hash or _rubric_hash()
-    _save_audit(call_id, audit, rh)
+    _save_audit(call_id, audit, rh, org_id)
     applog.event(
         log, "call_flagged",
         call_id=call_id,
@@ -1624,8 +1671,9 @@ def flag_call_for_review(call_id: int):
 
 
 @app.post("/api/calls/{call_id}/solve")
-def solve_flagged_review(call_id: int):
+def solve_flagged_review(call_id: int, request: Request):
     """Move a flagged scorecard from Pending to Solved."""
+    org_id = _org(request)
     if call_id < 1:
         raise HTTPException(status_code=400, detail="Invalid call id.")
     with _conn() as c:
@@ -1634,7 +1682,7 @@ def solve_flagged_review(call_id: int):
             c,
             call_id=call_id,
             rubric_id=DEFAULT_RUBRIC_ID,
-            org_id=DEFAULT_ORG_ID,
+            org_id=org_id,
         )
     if not row:
         raise HTTPException(
@@ -1655,7 +1703,7 @@ def solve_flagged_review(call_id: int):
     if not audit.get("review_solved_at"):
         audit["review_solved_at"] = datetime.now(timezone.utc).isoformat()
     rh = stored_hash or _rubric_hash()
-    _save_audit(call_id, audit, rh)
+    _save_audit(call_id, audit, rh, org_id)
     applog.event(
         log, "review_solved",
         call_id=call_id,
@@ -1671,7 +1719,7 @@ def solve_flagged_review(call_id: int):
     }
 
 
-def _ensure_retention_draft(call_id: int, audit: dict, rh: str) -> dict:
+def _ensure_retention_draft(call_id: int, audit: dict, rh: str, org_id: str) -> dict:
     """
     Run the retention Claude draft once if missing, cache on the audit, return updated audit.
     """
@@ -1679,7 +1727,7 @@ def _ensure_retention_draft(call_id: int, audit: dict, rh: str) -> dict:
     if existing.get("status") == "ok" and (existing.get("body") or "").strip():
         return audit
 
-    call_id, _meta, segments = qa.load_call(call_id)
+    call_id, _meta, segments = qa.load_call(call_id, org_id=org_id)
     if not segments:
         audit["retention_email"] = {
             "status": "error",
@@ -1689,7 +1737,7 @@ def _ensure_retention_draft(call_id: int, audit: dict, rh: str) -> dict:
             "summary": "",
             "suggested_actions": [],
         }
-        _save_audit(call_id, audit, rh)
+        _save_audit(call_id, audit, rh, org_id)
         return audit
 
     agent = audit.get("agent_speaker") or qa.classify_roles(segments)
@@ -1697,22 +1745,23 @@ def _ensure_retention_draft(call_id: int, audit: dict, rh: str) -> dict:
     log.info("on-demand retention draft for call %d", call_id)
     draft = qa.draft_retention_email(transcript_text, segments)
     audit["retention_email"] = draft
-    _save_audit(call_id, audit, rh)
+    _save_audit(call_id, audit, rh, org_id)
     return audit
 
 
 @app.post("/api/calls/{call_id}/feedback")
-def post_feedback(call_id: int):
+def post_feedback(call_id: int, request: Request):
     """On-demand areas of improvement (Sonnet, effort=high). Cached after first success
     that includes at least one agent insight."""
-    audit, rh = _load_or_compute_audit(call_id, refresh=False)
+    org_id = _org(request)
+    audit, rh = _load_or_compute_audit(call_id, org_id, refresh=False)
     existing = audit.get("feedback") or {}
     if existing.get("status") == "ok" and (existing.get("agent") or []):
         log.info("on-demand feedback cache HIT for call %d", call_id)
         applog.event(log, "feedback_cache", result="HIT", call_id=call_id)
         return {"call_id": call_id, "feedback": existing}
 
-    _cid, _meta, segments = qa.load_call(call_id)
+    _cid, _meta, segments = qa.load_call(call_id, org_id=org_id)
     if not segments:
         audit["feedback"] = {
             "status": "error",
@@ -1720,7 +1769,7 @@ def post_feedback(call_id: int):
             "agent": [],
             "product": [],
         }
-        _save_audit(call_id, audit, rh)
+        _save_audit(call_id, audit, rh, org_id)
         applog.event(
             log, "feedback_failure", level=logging.ERROR,
             call_id=call_id, error="no_segments",
@@ -1737,7 +1786,7 @@ def post_feedback(call_id: int):
         transcript_text, segments, findings=audit.get("findings"),
     )
     audit["feedback"] = feedback
-    _save_audit(call_id, audit, rh)
+    _save_audit(call_id, audit, rh, org_id)
     applog.event(
         log, "feedback_success" if feedback.get("status") == "ok" else "feedback_failure",
         call_id=call_id,
@@ -1751,13 +1800,14 @@ def post_feedback(call_id: int):
 
 
 @app.get("/api/calls/{call_id}/stakeholder-email/compose")
-def get_stakeholder_email_compose(call_id: int):
+def get_stakeholder_email_compose(call_id: int, request: Request):
     """
     Prefill a Gmail compose draft for this call's churn alert.
     Drafts the retention email with Claude on first use, then caches it.
     Frontend opens gmail_url in a new tab (user sends from their own Gmail).
     """
-    audit, rh = _load_or_compute_audit(call_id, refresh=False)
+    org_id = _org(request)
+    audit, rh = _load_or_compute_audit(call_id, org_id, refresh=False)
     risk = ((audit.get("churn") or {}).get("risk") or "").lower()
     if risk not in ("high", "medium"):
         raise HTTPException(
@@ -1768,7 +1818,7 @@ def get_stakeholder_email_compose(call_id: int):
             ),
         )
 
-    audit = _ensure_retention_draft(call_id, audit, rh)
+    audit = _ensure_retention_draft(call_id, audit, rh, org_id)
     payload = email_notify.build_compose_payload(call_id, audit)
     log.info(
         "stakeholder Gmail compose for call %d (risk=%s, to=%s, retention=%s)",
@@ -1791,6 +1841,7 @@ def _ingest_audio_file(
     src_path: str,
     source_name: str,
     *,
+    org_id: str,
     identity: str | None = None,
     source: str | None = None,
     external_id: str | None = None,
@@ -1809,12 +1860,18 @@ def _ingest_audio_file(
             with db.connection() as conn:
                 existing = None
                 if source and external_id:
-                    existing = transcribe.find_existing_external(conn, source, external_id)
+                    existing = transcribe.find_existing_external(
+                        conn, source, external_id, org_id=org_id,
+                    )
                 if not existing:
-                    existing = transcribe.find_existing_call(conn, identity)
+                    existing = transcribe.find_existing_call(
+                        conn, identity, org_id=org_id,
+                    )
                 if existing:
                     call_id = int(existing["id"])
-                    transcribe.set_filename_if_empty(conn, call_id, source_name)
+                    transcribe.set_filename_if_empty(
+                        conn, call_id, source_name, org_id=org_id,
+                    )
                     applog.event(
                         log, "transcription_success",
                         call_id=call_id, deduped=True, size_bytes=size,
@@ -1834,12 +1891,18 @@ def _ingest_audio_file(
             with db.connection() as conn:
                 existing = None
                 if source and external_id:
-                    existing = transcribe.find_existing_external(conn, source, external_id)
+                    existing = transcribe.find_existing_external(
+                        conn, source, external_id, org_id=org_id,
+                    )
                 if not existing:
-                    existing = transcribe.find_existing_call(conn, identity)
+                    existing = transcribe.find_existing_call(
+                        conn, identity, org_id=org_id,
+                    )
                 if existing:
                     call_id = int(existing["id"])
-                    transcribe.set_filename_if_empty(conn, call_id, source_name)
+                    transcribe.set_filename_if_empty(
+                        conn, call_id, source_name, org_id=org_id,
+                    )
                     return call_id, True
                 try:
                     call_id = transcribe.save_transcript(
@@ -1848,14 +1911,19 @@ def _ingest_audio_file(
                         filename=source_name,
                         source=source,
                         external_id=external_id,
+                        org_id=org_id,
                     )
                 except db.IntegrityError:
                     conn.rollback()
-                    existing = transcribe.find_existing_call(conn, identity)
+                    existing = transcribe.find_existing_call(
+                        conn, identity, org_id=org_id,
+                    )
                     if not existing:
                         raise
                     call_id = int(existing["id"])
-                    transcribe.set_filename_if_empty(conn, call_id, source_name)
+                    transcribe.set_filename_if_empty(
+                        conn, call_id, source_name, org_id=org_id,
+                    )
                     return call_id, True
         applog.event(
             log, "transcription_success",
@@ -1911,7 +1979,7 @@ def _justcall_status() -> dict:
     }
 
 
-def _process_justcall_call(call_id: str, payload: dict | None = None) -> dict:
+def _process_justcall_call(call_id: str, payload: dict | None = None, *, org_id: str) -> dict:
     """Download a JustCall recording, transcribe, score. Safe to retry."""
     cid = str(call_id or "").strip()
     if not cid or "/" in cid or "\\" in cid or ".." in cid:
@@ -1922,59 +1990,63 @@ def _process_justcall_call(call_id: str, payload: dict | None = None) -> dict:
         _justcall_inflight.add(cid)
     tmp = None
     try:
-        with _db_lock:
-            with db.connection() as conn:
-                existing = transcribe.find_existing_external(conn, "justcall", cid)
-        if existing:
-            local_id = int(existing["id"])
-            dest = os.path.join(AUDIO_DIR, f"{local_id}.mp3")
-            if not os.path.isfile(dest):
-                data = justcall.download_recording(cid)
-                if data:
-                    os.makedirs(AUDIO_DIR, exist_ok=True)
-                    with open(dest, "wb") as f:
-                        f.write(data)
-            _load_or_compute_audit(local_id)
+        with org_scope(org_id):
+            with _db_lock:
+                with db.connection() as conn:
+                    existing = transcribe.find_existing_external(
+                        conn, "justcall", cid, org_id=org_id,
+                    )
+            if existing:
+                local_id = int(existing["id"])
+                dest = os.path.join(AUDIO_DIR, f"{local_id}.mp3")
+                if not os.path.isfile(dest):
+                    data = justcall.download_recording(cid)
+                    if data:
+                        os.makedirs(AUDIO_DIR, exist_ok=True)
+                        with open(dest, "wb") as f:
+                            f.write(data)
+                _load_or_compute_audit(local_id, org_id)
+                applog.event(
+                    log, "justcall_ingest",
+                    justcall_id=cid, call_id=local_id, deduped=True,
+                )
+                return {"status": "existing", "justcall_id": cid, "call_id": local_id}
+
+            data = justcall.download_recording(cid)
+            if not data:
+                applog.event(log, "justcall_recording_skip", justcall_id=cid)
+                return {"status": "pending_recording", "justcall_id": cid}
+
+            os.makedirs(AUDIO_DIR, exist_ok=True)
+            suffix = justcall.recording_suffix(data)
+            tmp = os.path.join(AUDIO_DIR, f"_justcall_{uuid.uuid4().hex}{suffix}")
+            with open(tmp, "wb") as f:
+                f.write(data)
+            source_name = justcall.display_name(payload or {}, cid)
+            identity = justcall.identity_for(cid)
+            local_id, deduped = _ingest_audio_file(
+                tmp, source_name,
+                org_id=org_id,
+                identity=identity,
+                source="justcall",
+                external_id=cid,
+            )
+            _store_playback(tmp, local_id)
+            audit, _rh = _load_or_compute_audit(local_id, org_id)
             applog.event(
                 log, "justcall_ingest",
-                justcall_id=cid, call_id=local_id, deduped=True,
+                justcall_id=cid,
+                call_id=local_id,
+                deduped=deduped,
+                score=audit.get("score") if isinstance(audit, dict) else None,
             )
-            return {"status": "existing", "justcall_id": cid, "call_id": local_id}
-
-        data = justcall.download_recording(cid)
-        if not data:
-            applog.event(log, "justcall_recording_skip", justcall_id=cid)
-            return {"status": "pending_recording", "justcall_id": cid}
-
-        os.makedirs(AUDIO_DIR, exist_ok=True)
-        suffix = justcall.recording_suffix(data)
-        tmp = os.path.join(AUDIO_DIR, f"_justcall_{uuid.uuid4().hex}{suffix}")
-        with open(tmp, "wb") as f:
-            f.write(data)
-        source_name = justcall.display_name(payload or {}, cid)
-        identity = justcall.identity_for(cid)
-        local_id, deduped = _ingest_audio_file(
-            tmp, source_name,
-            identity=identity,
-            source="justcall",
-            external_id=cid,
-        )
-        _store_playback(tmp, local_id)
-        audit, _rh = _load_or_compute_audit(local_id)
-        applog.event(
-            log, "justcall_ingest",
-            justcall_id=cid,
-            call_id=local_id,
-            deduped=deduped,
-            score=audit.get("score") if isinstance(audit, dict) else None,
-        )
-        return {
-            "status": "ok",
-            "justcall_id": cid,
-            "call_id": local_id,
-            "deduped": deduped,
-            "score": audit.get("score") if isinstance(audit, dict) else None,
-        }
+            return {
+                "status": "ok",
+                "justcall_id": cid,
+                "call_id": local_id,
+                "deduped": deduped,
+                "score": audit.get("score") if isinstance(audit, dict) else None,
+            }
     finally:
         if tmp and os.path.exists(tmp):
             os.remove(tmp)
@@ -1982,7 +2054,7 @@ def _process_justcall_call(call_id: str, payload: dict | None = None) -> dict:
             _justcall_inflight.discard(cid)
 
 
-def _sync_justcall_recent(hours: int = 24) -> dict:
+def _sync_justcall_recent(hours: int = 24, *, org_id: str) -> dict:
     """Pull recent JustCall calls, ingest any that are not stored yet."""
     if not justcall.configured():
         raise RuntimeError(
@@ -2006,7 +2078,7 @@ def _sync_justcall_recent(hours: int = 24) -> dict:
             results.append({"justcall_id": cid, "status": "pending_recording"})
             continue
         try:
-            out = _process_justcall_call(cid, row)
+            out = _process_justcall_call(cid, row, org_id=org_id)
         except Exception as e:  # noqa: BLE001
             errors += 1
             msg = str(e)[:300]
@@ -2047,7 +2119,7 @@ def _sync_justcall_recent(hours: int = 24) -> dict:
 def _justcall_poll_loop():
     while True:
         try:
-            _sync_justcall_recent()
+            _sync_justcall_recent(org_id=integration_org_id())
         except Exception as e:  # noqa: BLE001
             applog.event(
                 log, "justcall_poll_error",
@@ -2082,14 +2154,14 @@ def justcall_integration_status():
 
 
 @app.post("/api/integrations/justcall/sync")
-def justcall_sync_now():
+def justcall_sync_now(request: Request):
     if not justcall.configured():
         raise HTTPException(
             status_code=503,
             detail="JustCall is not connected. Save the API key and secret on the Integrations page.",
         )
     try:
-        return _sync_justcall_recent()
+        return _sync_justcall_recent(org_id=_org(request))
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except httpx.HTTPStatusError as e:
@@ -2129,9 +2201,10 @@ async def justcall_webhook(request: Request):
             status_code=503,
             detail="JustCall API credentials are not set on this server.",
         )
+    org_id = integration_org_id()
     threading.Thread(
         target=_process_justcall_call,
-        args=(cid, payload),
+        kwargs={"call_id": cid, "payload": payload, "org_id": org_id},
         name=f"justcall-{cid}",
         daemon=True,
     ).start()
@@ -2224,21 +2297,28 @@ def _extract_batch_zip(zip_path: str, batch_dir: str) -> list[dict]:
 
 
 @app.get("/api/calls/{call_id}/audio")
-def get_audio(call_id: int):
+def get_audio(call_id: int, request: Request):
+    org_id = _org(request)
+    with _conn() as c:
+        row = transcribe.get_call(c, call_id, org_id=org_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No audio for this call.")
     path = os.path.join(AUDIO_DIR, f"{call_id}.mp3")
     if not os.path.isfile(path):
-        raise HTTPException(
-            status_code=404,
-            detail=f"No audio at {path}. Copy the call's file there as {call_id}.mp3.",
-        )
+        raise HTTPException(status_code=404, detail="No audio for this call.")
     return FileResponse(path, media_type=_audio_media_type(path))
 
 
 @app.post("/api/calls/{call_id}/retranscribe")
-def retranscribe_call(call_id: int):
+def retranscribe_call(call_id: int, request: Request):
     """Re-run Hear on the stored recording (channel or diarize, never both)."""
+    org_id = _org(request)
     if call_id < 1:
         raise HTTPException(status_code=400, detail="Invalid call id.")
+    with _conn() as c:
+        row = transcribe.get_call(c, call_id, org_id=org_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No stored audio for this call.")
     path = os.path.join(AUDIO_DIR, f"{call_id}.mp3")
     if not os.path.isfile(path):
         raise HTTPException(
@@ -2262,9 +2342,10 @@ def retranscribe_call(call_id: int):
         with _db_lock:
             with db.connection() as conn:
                 transcribe.replace_transcript(
-                    conn, call_id, job_id, result, pyai_call_id=pyai_id,
+                    conn, call_id, job_id, result,
+                    pyai_call_id=pyai_id, org_id=org_id,
                 )
-        audit, _rh = _load_or_compute_audit(call_id, refresh=True)
+        audit, _rh = _load_or_compute_audit(call_id, org_id, refresh=True)
         applog.event(
             log, "retranscribe_completed",
             call_id=call_id, mode=mode, job_id=job_id,
@@ -2290,7 +2371,7 @@ def retranscribe_call(call_id: int):
 
 
 @app.post("/api/upload")
-def upload(file: UploadFile = File(...)):
+def upload(request: Request, file: UploadFile = File(...)):
     data = file.file.read()
     if not data:
         raise HTTPException(status_code=400, detail="The uploaded file was empty.")
@@ -2325,9 +2406,10 @@ def upload(file: UploadFile = File(...)):
         f.write(data)
 
     source_name = transcribe.sanitize_filename(file.filename)
+    org_id = _org(request)
 
     try:
-        call_id, _deduped = _ingest_audio_file(tmp, source_name)
+        call_id, _deduped = _ingest_audio_file(tmp, source_name, org_id=org_id)
         os.replace(tmp, os.path.join(AUDIO_DIR, f"{call_id}.mp3"))
     except HTTPException:
         raise
@@ -2345,11 +2427,11 @@ def upload(file: UploadFile = File(...)):
         if os.path.exists(tmp):
             os.remove(tmp)
 
-    return {"call_id": call_id, "filename": _call_filename(call_id)}
+    return {"call_id": call_id, "filename": _call_filename(call_id, org_id)}
 
 
 @app.post("/api/upload-batch")
-def upload_batch(file: UploadFile = File(...)):
+def upload_batch(request: Request, file: UploadFile = File(...)):
     """
     One zip of up to MAX_BULK_FILES audio files. Extract to unique paths,
     transcribe all on PyAI in parallel, then run Claude QA in parallel.
@@ -2381,11 +2463,15 @@ def upload_batch(file: UploadFile = File(...)):
         )
         log.info("batch %s: %d file(s), parallel transcribe then parallel QA", batch_id, len(extracted))
 
+        org_id = _org(request)
         ingest_rows = [None] * len(extracted)
 
         def ingest_one(item):
             try:
-                call_id, deduped = _ingest_audio_file(item["path"], item["filename"])
+                with org_scope(org_id):
+                    call_id, deduped = _ingest_audio_file(
+                        item["path"], item["filename"], org_id=org_id,
+                    )
                 _store_playback(item["path"], call_id)
                 return {
                     "index": item["index"],
@@ -2420,7 +2506,8 @@ def upload_batch(file: UploadFile = File(...)):
 
         def audit_one(row):
             try:
-                audit, _rh = _load_or_compute_audit(row["call_id"], refresh=False)
+                with org_scope(org_id):
+                    audit, _rh = _load_or_compute_audit(row["call_id"], org_id, refresh=False)
                 return {
                     **row,
                     "status": "ok",

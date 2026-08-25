@@ -344,7 +344,7 @@ The UI signs up / logs in with **Supabase Auth**. The session is stored in the b
 - **First authenticated request** (empty `org_members`): owner of the placeholder org `00000000-0000-4000-8000-000000000001` (keeps existing Table Editor rows).
 - **Later signups**: a new org, that user as owner, plus a seeded legacy v8 rubric.
 - Unauthenticated calls to data routes return **401**. `/health` and the JustCall webhook stay public.
-- **Isolation is not in this ticket.** Handlers still read/write `DEFAULT_ORG_ID` until CL-9. Login ≠ tenant scope.
+- **Isolation (CL-9):** every read and write uses `org_id` from the verified JWT (`request.state.org_id`). Query params, path, and JSON bodies cannot set it. JustCall webhook/poller use `JUSTCALL_ORG_ID` (or the placeholder org), never a payload field. Code review: `.cursor/rules/org-isolation.mdc`.
 
 Local: copy `SUPABASE_URL` / `SUPABASE_JWT_SECRET` into `.env`, and `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` into `frontend/.env`. Enable email auth in the Supabase dashboard.
 

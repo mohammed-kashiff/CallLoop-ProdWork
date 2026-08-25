@@ -358,7 +358,7 @@ def new_pyai_call_id():
     return f"callproof_{uuid.uuid4().hex[:12]}"
 
 
-def find_existing_call(conn, identity, org_id: str = DEFAULT_ORG_ID):
+def find_existing_call(conn, identity, *, org_id: str):
     return conn.execute(
         """
         SELECT id, pyai_call_id FROM calls
@@ -369,7 +369,7 @@ def find_existing_call(conn, identity, org_id: str = DEFAULT_ORG_ID):
 
 
 def find_existing_external(
-    conn, source: str, external_id: str, org_id: str = DEFAULT_ORG_ID,
+    conn, source: str, external_id: str, *, org_id: str,
 ):
     return conn.execute(
         """
@@ -377,6 +377,18 @@ def find_existing_external(
         WHERE org_id = %s AND source = %s AND external_id = %s AND status = 'completed'
         """,
         (org_id, source, str(external_id)),
+    ).fetchone()
+
+
+def get_call(conn, call_id: int, *, org_id: str):
+    """Return the call row if it belongs to this org, else None."""
+    return conn.execute(
+        """
+        SELECT id, filename, status, audio_url, pyai_call_id
+        FROM calls
+        WHERE id = %s AND org_id = %s
+        """,
+        (call_id, org_id),
     ).fetchone()
 
 
@@ -534,7 +546,7 @@ def normalize_hear_result(result: dict) -> dict:
 
 def save_transcript(
     conn, identity, job_id, result, pyai_call_id=None, filename=None,
-    source=None, external_id=None,
+    source=None, external_id=None, *, org_id: str,
 ):
     result = normalize_hear_result(result)
     segments = result.get("segments") or []
@@ -549,7 +561,7 @@ def save_transcript(
         RETURNING id
         """,
         (
-            DEFAULT_ORG_ID,
+            org_id,
             identity,
             job_id,
             result.get("text", ""),
@@ -572,7 +584,7 @@ def save_transcript(
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                DEFAULT_ORG_ID,
+                org_id,
                 call_id,
                 i,
                 seg.get("speaker"),
@@ -590,13 +602,19 @@ def save_transcript(
     return call_id
 
 
-def replace_transcript(conn, call_id, job_id, result, pyai_call_id=None):
+def replace_transcript(conn, call_id, job_id, result, pyai_call_id=None, *, org_id: str):
     """Overwrite Hear output for an existing call (re-transcribe)."""
     result = normalize_hear_result(result)
     segments = result.get("segments") or []
-    conn.execute("DELETE FROM segments WHERE call_id = %s", (call_id,))
-    conn.execute("DELETE FROM audits WHERE call_id = %s", (call_id,))
     conn.execute(
+        "DELETE FROM segments WHERE call_id = %s AND org_id = %s",
+        (call_id, org_id),
+    )
+    conn.execute(
+        "DELETE FROM audits WHERE call_id = %s AND org_id = %s",
+        (call_id, org_id),
+    )
+    updated = conn.execute(
         """
         UPDATE calls SET
             job_id = %s,
@@ -606,7 +624,7 @@ def replace_transcript(conn, call_id, job_id, result, pyai_call_id=None):
             audio_seconds = %s,
             raw_json = %s,
             pyai_call_id = COALESCE(%s, pyai_call_id)
-        WHERE id = %s
+        WHERE id = %s AND org_id = %s
         """,
         (
             job_id,
@@ -616,8 +634,11 @@ def replace_transcript(conn, call_id, job_id, result, pyai_call_id=None):
             json.dumps(result),
             pyai_call_id,
             call_id,
+            org_id,
         ),
     )
+    if getattr(updated, "rowcount", 1) == 0:
+        raise LookupError(f"call {call_id} not in org")
     for i, seg in enumerate(segments):
         conn.execute(
             """
@@ -627,7 +648,7 @@ def replace_transcript(conn, call_id, job_id, result, pyai_call_id=None):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                DEFAULT_ORG_ID,
+                org_id,
                 call_id,
                 i,
                 seg.get("speaker"),
@@ -645,7 +666,7 @@ def replace_transcript(conn, call_id, job_id, result, pyai_call_id=None):
     return call_id
 
 
-def set_filename_if_empty(conn, call_id, filename):
+def set_filename_if_empty(conn, call_id, filename, *, org_id: str):
     """Backfill filename on deduped uploads when the row has no name yet."""
     if not filename:
         return
@@ -653,9 +674,9 @@ def set_filename_if_empty(conn, call_id, filename):
     conn.execute(
         """
         UPDATE calls SET filename = %s
-        WHERE id = %s AND (filename IS NULL OR TRIM(filename) = '')
+        WHERE id = %s AND org_id = %s AND (filename IS NULL OR TRIM(filename) = '')
         """,
-        (safe, call_id),
+        (safe, call_id, org_id),
     )
     conn.commit()
 
@@ -1040,7 +1061,7 @@ def main(argv: list[str] | None = None):
         sys.exit(f"ERROR: file not found: {src}")
     identity = identity_for(src)
     with db.connection() as conn:
-        existing = find_existing_call(conn, identity)
+        existing = find_existing_call(conn, identity, org_id=DEFAULT_ORG_ID)
         if existing:
             log.info(
                 "already transcribed (call id %d) - loading from DB, no API call",
@@ -1062,6 +1083,7 @@ def main(argv: list[str] | None = None):
                 conn, identity, job_id, result,
                 pyai_call_id=pyai_id,
                 filename=None if is_url(src) else os.path.basename(src),
+                org_id=DEFAULT_ORG_ID,
             )
             log.info("done: call id %d", call_id)
         finally:

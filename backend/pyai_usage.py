@@ -16,7 +16,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from . import db
-from .org_ids import DEFAULT_ORG_ID
+from .org_ids import DEFAULT_ORG_ID, bound_org_id
 
 log = logging.getLogger("callproof.usage")
 _lock = threading.Lock()
@@ -113,7 +113,7 @@ def record_http_response(
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        DEFAULT_ORG_ID,
+                        bound_org_id() or DEFAULT_ORG_ID,
                         provider,
                         method,
                         path,
@@ -158,10 +158,11 @@ def post(url: str, *, provider: str = "pyai", **kwargs):
     return request("POST", url, provider=provider, **kwargs)
 
 
-def usage_summary(since_iso: str | None = None) -> dict[str, Any]:
+def usage_summary(since_iso: str | None = None, *, org_id: str | None = None) -> dict[str, Any]:
     """Aggregate hits since `since_iso` (default: UTC midnight)."""
     init_usage_db()
     since = since_iso or _utc_today_start()
+    tenant = org_id or bound_org_id() or DEFAULT_ORG_ID
     with _lock:
         with _conn() as c:
             rows = c.execute(
@@ -173,7 +174,7 @@ def usage_summary(since_iso: str | None = None) -> dict[str, Any]:
                 WHERE org_id = %s AND created_at >= %s
                 GROUP BY provider, method, path
                 """,
-                (DEFAULT_ORG_ID, since),
+                (tenant, since),
             ).fetchall()
 
     providers: dict[str, Any] = {}

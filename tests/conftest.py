@@ -37,15 +37,16 @@ def mint_access_token(
     return jwt.encode(payload, secret or TEST_JWT_SECRET, algorithm="HS256")
 
 
-def authorize(client, monkeypatch, *, sub: str | None = None) -> str:
+def authorize(client, monkeypatch, *, sub: str | None = None, org_id: str | None = None) -> str:
     """Attach a valid test JWT and stub org membership. Returns user_id."""
     from backend.auth import Membership
     from backend.org_ids import DEFAULT_ORG_ID
 
     uid = sub or str(uuid.uuid4())
+    tenant = org_id or DEFAULT_ORG_ID
     monkeypatch.setattr(
         "backend.auth.ensure_membership",
-        lambda user_id, email=None: Membership(DEFAULT_ORG_ID, "owner", str(user_id)),
+        lambda user_id, email=None: Membership(tenant, "owner", str(user_id)),
     )
     client.headers["Authorization"] = f"Bearer {mint_access_token(sub=uid)}"
     return uid

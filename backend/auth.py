@@ -1,8 +1,8 @@
-"""Supabase JWT verification and org membership bootstrap (CL-8).
+"""Supabase JWT verification and org membership bootstrap (CL-8 / CL-9).
 
-Auth only: callers get request.state.user_id / org_id / role. Handlers still
-use DEFAULT_ORG_ID until CL-9. Never log the token. Never take org_id from
-the client.
+Callers get request.state.user_id / org_id / role from the verified token and
+org_members. Handlers must use org_id_from_request — never query, body, or path.
+Never log the token.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass
 
 import jwt
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from jwt import PyJWKClient
 from psycopg.errors import UniqueViolation
@@ -21,7 +21,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from . import audit_store
 from . import db
 from .config import cors_origins
-from .org_ids import DEFAULT_ORG_ID
+from .org_ids import DEFAULT_ORG_ID, bind_org_id, parse_org_id, reset_org_id
 
 _PUBLIC_EXACT = frozenset({"/", "/health", "/healthz"})
 _PUBLIC_PATHS = frozenset({"/api/integrations/justcall/webhook"})
@@ -249,4 +249,20 @@ class JwtAuthMiddleware:
         request.state.user_id = membership.user_id
         request.state.org_id = membership.org_id
         request.state.role = membership.role
-        await self.app(scope, receive, send)
+        token_org = bind_org_id(membership.org_id)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            reset_org_id(token_org)
+
+
+def org_id_from_request(request: Request) -> str:
+    """Tenant id from the verified JWT membership only.
+
+    Never reads query params, path params, headers (other than the already-
+    verified Bearer token), or the request body.
+    """
+    org = parse_org_id(getattr(request.state, "org_id", None))
+    if not org:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return org

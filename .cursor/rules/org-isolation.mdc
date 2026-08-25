@@ -1,0 +1,25 @@
+---
+description: Tenant isolation — org_id only from the JWT
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+# Org isolation (CL-9)
+
+Application-layer defence, independent of RLS. Review every data change against this list:
+
+- [ ] **Source:** `org_id` comes from `auth.org_id_from_request` / `request.state.org_id` (JWT membership). Never from query, path, JSON body, or form fields named `org_id`.
+- [ ] **Reads:** every `SELECT` / `UPDATE` / `DELETE` on `calls`, `segments`, `audits`, `api_usage`, `rubrics` includes `org_id = %s` (parameterized).
+- [ ] **Writes:** every `INSERT` sets `org_id` from that same token (or `org_scope` in a worker).
+- [ ] **Miss:** another org's row is **404**, not 403 (no existence leak).
+- [ ] **No JWT:** JustCall webhook/poller uses `JUSTCALL_ORG_ID` or `DEFAULT_ORG_ID`, never a payload field. CLI uses `DEFAULT_ORG_ID` explicitly.
+
+```python
+# BAD
+org_id = request.query_params.get("org_id")
+conn.execute("SELECT * FROM calls WHERE id = %s", (call_id,))
+
+# GOOD
+org_id = auth.org_id_from_request(request)
+conn.execute("SELECT * FROM calls WHERE id = %s AND org_id = %s", (call_id, org_id))
+```
