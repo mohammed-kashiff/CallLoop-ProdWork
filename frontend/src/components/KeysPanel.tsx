@@ -10,6 +10,7 @@ export function KeysPanel() {
   const [justcallSuffix, setJustcallSuffix] = useState<string | null>(null)
   const [justcallOn, setJustcallOn] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [removing, setRemoving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [okNote, setOkNote] = useState<string | null>(null)
 
@@ -55,32 +56,51 @@ export function KeysPanel() {
     setError(null)
     setOkNote(null)
     try {
-      const r = await apiFetch('/api/keys', {
+      const r = await apiFetch('/api/integrations/justcall', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          justcall_api_key: jcKey,
-          justcall_api_secret: jcSecret,
+          api_key: jcKey,
+          api_secret: jcSecret,
         }),
       })
       if (!r.ok) throw new Error(await readError(r, 'Could not save the key.'))
       const data = (await r.json()) as {
-        justcall?: { configured?: boolean; suffix?: string | null }
+        configured?: boolean
+        key_suffix?: string | null
       }
       setJustcallKey('')
       setJustcallSecret('')
-      if (data.justcall) {
-        setJustcallOn(Boolean(data.justcall.configured))
-        setJustcallSuffix(data.justcall.suffix || null)
-      }
+      setJustcallOn(Boolean(data.configured))
+      setJustcallSuffix(data.key_suffix || null)
       await refresh()
       setOkNote(
-        'JustCall connected for this process. Set JUSTCALL_API_KEY and JUSTCALL_API_SECRET on the host to keep them after restart.',
+        'JustCall is connected for this organization. Credentials are encrypted and are not shown again.',
       )
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not save the key.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const onDisconnect = async () => {
+    setRemoving(true)
+    setError(null)
+    setOkNote(null)
+    try {
+      const r = await apiFetch('/api/integrations/justcall', { method: 'DELETE' })
+      if (!r.ok) throw new Error(await readError(r, 'Could not disconnect JustCall.'))
+      setJustcallKey('')
+      setJustcallSecret('')
+      setJustcallOn(false)
+      setJustcallSuffix(null)
+      await refresh()
+      setOkNote('JustCall credentials were removed for this organization.')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not disconnect JustCall.')
+    } finally {
+      setRemoving(false)
     }
   }
 
@@ -105,7 +125,9 @@ export function KeysPanel() {
 
         <p className="keys-lede">
           PyAI, Anthropic, and the Supabase service role are host environment
-          variables. This app does not write them to <code>.env</code> or the database.
+          variables. JustCall credentials are encrypted per organization in Vault
+          — never stored as plaintext, never returned to this page, and never
+          written to logs.
         </p>
 
         <section className="keys-block">
@@ -146,8 +168,8 @@ export function KeysPanel() {
           </div>
           <p className="keys-meta">
             {justcallOn
-              ? `this process · ending ${justcallSuffix || '••••'}`
-              : 'set JUSTCALL_API_KEY and JUSTCALL_API_SECRET on the host, or paste below for this process only'}
+              ? `this organization · ending ${justcallSuffix || '••••'}`
+              : 'encrypted per organization — paste below, or use the Integrations page'}
           </p>
           <label className="keys-field">
             <span>API key</span>
@@ -181,9 +203,19 @@ export function KeysPanel() {
         {okNote ? <p className="keys-ok">{okNote}</p> : null}
 
         <div className="keys-actions">
-          <button type="button" className="start-btn" onClick={() => void onSave()} disabled={saving}>
-            {saving ? 'Saving…' : 'Connect JustCall'}
+          <button type="button" className="start-btn" onClick={() => void onSave()} disabled={saving || removing}>
+            {saving ? 'Saving…' : justcallOn ? 'Replace JustCall' : 'Connect JustCall'}
           </button>
+          {justcallOn ? (
+            <button
+              type="button"
+              className="ghost-btn"
+              disabled={saving || removing}
+              onClick={() => void onDisconnect()}
+            >
+              {removing ? 'Removing…' : 'Disconnect'}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

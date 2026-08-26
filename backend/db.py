@@ -86,8 +86,10 @@ def connection(*, bypass_rls: bool = False) -> Iterator[psycopg.Connection]:
     """Open a connection and bind tenant GUCs for RLS.
 
     bypass_rls=True skips SET LOCAL ROLE callproof_app and tenant GUCs.
-    Use only from Alembic-adjacent backfill running as postgres/service_role.
-    The API must never pass True.
+    Use only for Alembic-adjacent backfill, Vault catalog reads/writes
+    (vault.secrets is not tenant-RLS'd; isolation is name justcall/{org_id}
+    plus the bound JWT/worker org), and the poller listing org_credentials
+    across orgs. Do not use it for calls/segments/audits/rubrics.
     """
     conn = psycopg.connect(
         require_database_url(),

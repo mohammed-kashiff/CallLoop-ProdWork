@@ -11,6 +11,9 @@ import hashlib
 import hmac
 import logging
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -24,18 +27,49 @@ BASE_URL = "https://api.justcall.io"
 MAX_RECORDING_BYTES = 25 * 1024 * 1024
 
 
+_CREDS: ContextVar[tuple[str, str] | None] = ContextVar(
+    "justcall_creds", default=None,
+)
+
+
 def api_key() -> str:
+    bound = _CREDS.get()
+    if bound:
+        return bound[0]
     return (os.getenv("JUSTCALL_API_KEY") or "").strip()
 
 
 def api_secret() -> str:
+    bound = _CREDS.get()
+    if bound:
+        return bound[1]
     return (os.getenv("JUSTCALL_API_SECRET") or "").strip()
 
 
+def host_configured() -> bool:
+    """App-level JustCall env (operator ingest), not a customer org's Vault pair."""
+    key = (os.getenv("JUSTCALL_API_KEY") or "").strip()
+    secret = (os.getenv("JUSTCALL_API_SECRET") or "").strip()
+    return bool(key and secret)
+
+
 def set_credentials(api_key: str, api_secret_value: str) -> None:
-    """Apply JustCall credentials for this process. Does not log the values."""
+    """Apply host-level JustCall env for this process. Does not log the values."""
     os.environ["JUSTCALL_API_KEY"] = (api_key or "").strip()
     os.environ["JUSTCALL_API_SECRET"] = (api_secret_value or "").strip()
+
+
+@contextmanager
+def bound_credentials(api_key_value: str, api_secret_value: str) -> Iterator[None]:
+    """Use this org's pair for JustCall HTTP calls. Does not touch host env."""
+    pair = ((api_key_value or "").strip(), (api_secret_value or "").strip())
+    if not pair[0] or not pair[1]:
+        raise RuntimeError("JustCall is not configured for this organization.")
+    token = _CREDS.set(pair)
+    try:
+        yield
+    finally:
+        _CREDS.reset(token)
 
 
 def webhook_secret() -> str:
@@ -64,8 +98,7 @@ def _headers() -> dict[str, str]:
 def _require_configured() -> None:
     if not configured():
         raise RuntimeError(
-            "JustCall is not configured. Set JUSTCALL_API_KEY and "
-            "JUSTCALL_API_SECRET on the host (from JustCall → APIs and Webhooks)."
+            "JustCall is not configured for this organization."
         )
 
 

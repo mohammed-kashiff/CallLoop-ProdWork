@@ -23,3 +23,10 @@ def test_redact_line_covers_header_blob_and_key_prefix():
     assert "sk-ant-" not in out
     assert "zzzzzzzzzzzzzzzz" not in out
     assert "[REDACTED]" in out
+
+
+def test_redact_line_covers_justcall_secret_fields():
+    line = "justcall_api_secret=jc_sec_should_not_remain api_key=abc"
+    out = redact_line(line)
+    assert "jc_sec_should_not_remain" not in out
+    assert "[REDACTED]" in out

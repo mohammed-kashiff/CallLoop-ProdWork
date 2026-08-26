@@ -23,6 +23,7 @@ export function Integrations() {
   const [saving, setSaving] = useState(false)
   const [opening, setOpening] = useState<number | null>(null)
   const [note, setNote] = useState<string | null>(null)
+  const [removing, setRemoving] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [apiSecret, setApiSecret] = useState('')
 
@@ -54,25 +55,43 @@ export function Integrations() {
     setError(null)
     setNote(null)
     try {
-      const r = await apiFetch('/api/keys', {
+      const r = await apiFetch('/api/integrations/justcall', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          justcall_api_key: key,
-          justcall_api_secret: secret,
+          api_key: key,
+          api_secret: secret,
         }),
       })
       if (!r.ok) throw new Error(await readError(r, 'Could not save JustCall credentials.'))
       setApiKey('')
       setApiSecret('')
       setNote(
-        'JustCall connected for this process. Set JUSTCALL_API_KEY and JUSTCALL_API_SECRET on the host to keep them after restart. Click Sync now to pull completed calls.',
+        'JustCall is connected for this organization. Credentials are encrypted and are not shown again. Click Sync now to pull completed calls.',
       )
       await load()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not save JustCall credentials.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const onDisconnect = async () => {
+    setError(null)
+    setNote(null)
+    setRemoving(true)
+    try {
+      const r = await apiFetch('/api/integrations/justcall', { method: 'DELETE' })
+      if (!r.ok) throw new Error(await readError(r, 'Could not disconnect JustCall.'))
+      setApiKey('')
+      setApiSecret('')
+      setNote('JustCall credentials were removed for this organization.')
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not disconnect JustCall.')
+    } finally {
+      setRemoving(false)
     }
   }
 
@@ -162,11 +181,11 @@ export function Integrations() {
             ? status?.polling
               ? `Connected${status.key_suffix ? ` · key ending ${status.key_suffix}` : ''}. New calls are picked up every ${interval}s. Click Sync now to pull immediately.`
               : `Connected${status?.key_suffix ? ` · key ending ${status.key_suffix}` : ''}. Click Sync now to pull completed calls.`
-            : 'Get the API key and API secret from JustCall → Settings → APIs and Webhooks, paste them here, then click Save.'}
+            : 'Get the API key and API secret from JustCall → Settings → APIs and Webhooks, paste them here, then click Save. They are stored encrypted for this organization only.'}
         </p>
         <p className="panel-lede">
-          After you save, click <strong>Sync now</strong>. That is the only extra step. New
-          finished calls keep coming in on their own after that.
+          After you save, click <strong>Sync now</strong>. Finished calls keep coming in on
+          their own after that. Disconnect removes this org&apos;s credentials.
         </p>
 
         <div className="integrations-fields">
@@ -192,14 +211,26 @@ export function Integrations() {
               onChange={(e) => setApiSecret(e.target.value)}
             />
           </label>
-          <button
-            type="button"
-            className="ghost-btn"
-            disabled={saving}
-            onClick={() => void onSave()}
-          >
-            {saving ? 'Saving…' : connected ? 'Replace credentials' : 'Save and connect'}
-          </button>
+          <div className="integrations-actions">
+            <button
+              type="button"
+              className="ghost-btn"
+              disabled={saving || removing}
+              onClick={() => void onSave()}
+            >
+              {saving ? 'Saving…' : connected ? 'Replace credentials' : 'Save and connect'}
+            </button>
+            {connected ? (
+              <button
+                type="button"
+                className="ghost-btn"
+                disabled={saving || removing}
+                onClick={() => void onDisconnect()}
+              >
+                {removing ? 'Removing…' : 'Disconnect'}
+              </button>
+            ) : null}
+          </div>
         </div>
       </section>
 

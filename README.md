@@ -258,8 +258,11 @@ Then start API and UI again.
 Completed JustCall calls are downloaded, transcribed with Hear, scored with Claude, and listed under **Integrations**.
 
 1. In JustCall → **Settings → APIs and Webhooks**, copy the API key and secret.
-2. Set `JUSTCALL_API_KEY` and `JUSTCALL_API_SECRET` on the host. **Integrations** can apply them to this process only; they do not persist in the repo.
+2. On **Integrations**, paste them and click **Save**. They are encrypted in **Supabase Vault** for that organization (`justcall/{org_id}`). The table `org_credentials` stores only a key suffix — never the secret. The UI never gets the key back.
 3. Click **Sync now**. Finished calls appear on that page. New ones are pulled automatically after that.
+4. **Disconnect** removes that org's Vault secret. Another org cannot read or replace these credentials.
+
+Host env `JUSTCALL_API_KEY` / `JUSTCALL_API_SECRET` is an **operator fallback** for webhook/poller ingest into `JUSTCALL_ORG_ID` (or the placeholder org). It is not a customer org's key. `JUSTCALL_WEBHOOK_SECRET` stays app-level HMAC.
 
 You do not need a webhook or ngrok on this laptop.
 
@@ -318,12 +321,12 @@ The UI signs up / logs in with **Supabase Auth**. The session is stored in the b
 - **First authenticated request** (empty `org_members`): owner of the placeholder org `00000000-0000-4000-8000-000000000001` (keeps existing Table Editor rows).
 - **Later signups**: a new org, that user as owner, plus a seeded legacy v8 rubric.
 - Unauthenticated calls to data routes return **401**. `/health` and the JustCall webhook stay public.
-- **Isolation (CL-9):** every read and write uses `org_id` from the verified JWT (`request.state.org_id`). Query params, path, and JSON bodies cannot set it. JustCall webhook/poller use `JUSTCALL_ORG_ID` (or the placeholder org), never a payload field. Playback lives in a **private** Storage bucket at `{org_id}/{call_id}.mp3`; `GET /api/calls/{id}/audio` mints a time-limited signed URL only after that membership check. Code review: `.cursor/rules/org-isolation.mdc`.
+- **Isolation (CL-9):** every read and write uses `org_id` from the verified JWT (`request.state.org_id`). Query params, path, and JSON bodies cannot set it. JustCall webhook/poller use `JUSTCALL_ORG_ID` (or the placeholder org), never a payload field. Playback lives in a **private** Storage bucket at `{org_id}/{call_id}.mp3`; `GET /api/calls/{id}/audio` mints a time-limited signed URL only after that membership check. Per-org JustCall keys are in **Vault** (`justcall/{org_id}`); status/save/delete are JWT-scoped and never return the secret. Code review: `.cursor/rules/org-isolation.mdc`.
 - **RLS (CL-10):** second layer. Alembic `0005_rls` enables RLS on `orgs`, `calls`, `segments`, `audits`, `rubrics`, `api_usage`. The API does `SET LOCAL ROLE callproof_app` (`NOBYPASSRLS`) then `SET LOCAL app.current_org_id` from the JWT org. `DATABASE_URL` may stay the postgres URI (Alembic needs bypass). Do not apply policies by hand in the dashboard. `org_members` is not RLS’d (signup bootstrap).
 
 Local: copy `SUPABASE_URL` / `SUPABASE_JWT_SECRET` into `.env`, and `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` into `frontend/.env`. Enable email auth in the Supabase dashboard.
 
-Optional: `JUSTCALL_API_KEY`, `JUSTCALL_API_SECRET`, `JUSTCALL_WEBHOOK_SECRET`. Never commit values.
+Optional: `JUSTCALL_WEBHOOK_SECRET` (app-level HMAC). Host `JUSTCALL_API_KEY` / `JUSTCALL_API_SECRET` are operator ingest fallback only. Customer orgs save JustCall on **Integrations** (Vault). Never commit values.
 
 ### Postgres schema and Alembic (CL-4 / CL-5)
 
@@ -335,11 +338,12 @@ The API uses **Postgres** at runtime (`DATABASE_URL` / `SUPABASE_DB_URL`). **Do 
 `0004_org_members` — `org_members` (`user_id` = Supabase JWT `sub`, `UNIQUE (user_id)` so one org per user at launch).  
 `0005_rls` — **ENABLE ROW LEVEL SECURITY** on `orgs`, `calls`, `segments`, `audits`, `rubrics`, `api_usage`, with SELECT/INSERT/UPDATE/DELETE policies keyed on `app.current_org_id`. Creates `callproof_app` (`NOLOGIN`, `NOBYPASSRLS`). The API `SET LOCAL ROLE`s to it so RLS actually applies even when `DATABASE_URL` is postgres. Policies live in this revision — do not toggle them in the Table Editor.
 
-**Service-role bypass (limited, and verified):** `postgres` / `service_role` skip RLS. Use those connections only for `alembic upgrade` and one-off backfill (`db.connection(bypass_rls=True)`). CL-10 AC: an API `db.connection()` session has `current_user = callproof_app` and `rolbypassrls = false`. Raw `psycopg.connect` as postgres does **not** count. `org_members` is not RLS’d (first-user claim reads it before the org GUC is set).
+**Service-role bypass (limited, and verified):** `postgres` / `service_role` skip RLS. Use those connections for `alembic upgrade`, one-off backfill, and Vault catalog I/O (`vault.secrets` is not tenant-RLS'd; isolation is secret name `justcall/{org_id}` plus the bound JWT/worker org). CL-10 AC: an API `db.connection()` session has `current_user = callproof_app` and `rolbypassrls = false`. Raw `psycopg.connect` as postgres does **not** count. `org_members` is not RLS’d (first-user claim reads it before the org GUC is set).
 
 `0006_rls_role_grant` — `GRANT callproof_app TO CURRENT_USER` so pooler postgres (not superuser) can `SET ROLE`. Idempotent if 0005 already granted it.  
 `0007_org_members_no_rls` — **DISABLE** RLS on `org_members`. Supabase had enabled it with no policies (deny-all for `callproof_app`); signup INSERT failed after SET ROLE.  
-`0008_storage_audio_bucket` — private `call-audio` bucket in `storage.buckets` when that schema exists (no-op on vanilla CI Postgres). Runtime also `ensure_bucket()`. Objects are `{org_id}/{call_id}.mp3`. No public/authenticated read policies — the API mints signed URLs with the service role.
+`0008_storage_audio_bucket` — private `call-audio` bucket in `storage.buckets` when that schema exists (no-op on vanilla CI Postgres). Runtime also `ensure_bucket()`. Objects are `{org_id}/{call_id}.mp3`. No public/authenticated read policies — the API mints signed URLs with the service role.  
+`0009_org_vault_justcall` — `org_credentials` (`org_id`, `provider`, `key_suffix` only) with RLS. Grants on `vault` when that schema exists (no-op on vanilla CI Postgres). Secrets are written with `vault.create_secret` / `update_secret`, never as plaintext columns.
 
 Placeholder org: `00000000-0000-4000-8000-000000000001`. Legacy rubric id: `00000000-0000-4000-8000-000000000011`.
 

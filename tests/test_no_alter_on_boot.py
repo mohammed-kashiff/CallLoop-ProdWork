@@ -97,3 +97,16 @@ def test_eighth_revision_private_storage_bucket():
     assert "call-audio" in raw
     assert "0007_org_members_no_rls" in raw
 
+
+def test_ninth_revision_org_vault_justcall():
+    rev = ROOT / "alembic" / "versions" / "0009_org_vault_justcall.py"
+    assert rev.is_file()
+    raw = rev.read_text(encoding="utf-8")
+    sql = raw.upper()
+    assert "CREATE TABLE ORG_CREDENTIALS" in sql
+    assert "KEY_SUFFIX" in sql
+    assert "ENABLE ROW LEVEL SECURITY" in sql
+    assert "0008_storage_audio_bucket" in raw
+    assert "API_KEY" not in sql
+    assert "API_SECRET" not in sql
+

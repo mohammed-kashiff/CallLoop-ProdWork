@@ -2569,6 +2569,13 @@ html[data-color-mode='dark'] .review-note-field {
   justify-self: start;
 }
 
+.integrations-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-self: start;
+}
+
 .pyai-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2822,6 +2829,8 @@ html[data-color-mode='dark'] .claude-cord-plug {
 
 .keys-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   justify-content: flex-end;
 }
 

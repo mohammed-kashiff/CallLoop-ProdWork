@@ -44,6 +44,7 @@ from . import db
 from . import env_keys
 from . import error_notify
 from . import justcall
+from . import org_vault
 from .config import cors_origins, load_env, skip_startup
 
 load_env()
@@ -741,6 +742,13 @@ class KeyUpdate(BaseModel):
     justcall_api_secret: str | None = None
 
 
+class JustCallCredentialBody(BaseModel):
+    api_key: str | None = None
+    api_secret: str | None = None
+    justcall_api_key: str | None = None
+    justcall_api_secret: str | None = None
+
+
 def _require_loopback(request: Request) -> None:
     host = (request.client.host if request.client else "") or ""
     if host in ("127.0.0.1", "::1", "localhost"):
@@ -756,11 +764,7 @@ def _require_loopback(request: Request) -> None:
 
 @app.post("/api/keys")
 def update_keys(body: KeyUpdate, request: Request):
-    """Apply JustCall credentials for this process. App-owned keys are host env only.
-
-    Never writes .env or the database. Never returns the submitted secret.
-    Localhost only.
-    """
+    """App-owned keys are host env only. JustCall is per-org Vault (integrations)."""
     _require_loopback(request)
     pyai_raw = (body.pyai_api_key or "").strip()
     claude_raw = (body.anthropic_api_key or "").strip()
@@ -772,53 +776,15 @@ def update_keys(body: KeyUpdate, request: Request):
                 "(PYAI_API_KEY, ANTHROPIC_API_KEY). They cannot be set from the API."
             ),
         )
-    jc_key_raw = (body.justcall_api_key or "").strip()
-    jc_secret_raw = (body.justcall_api_secret or "").strip()
-    jc_partial = bool(jc_key_raw) ^ bool(jc_secret_raw)
-    if jc_partial:
+    if (body.justcall_api_key or "").strip() or (body.justcall_api_secret or "").strip():
         raise HTTPException(
             status_code=400,
-            detail="JustCall needs both the API key and the API secret.",
+            detail="JustCall credentials are per-organization. Use POST /api/integrations/justcall.",
         )
-    if not jc_key_raw:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide JustCall key + secret, or set app keys on the host.",
-        )
-
-    updated: list[str] = []
-    try:
-        jc_key = env_keys.normalize_justcall_key(jc_key_raw)
-        jc_secret = env_keys.normalize_justcall_secret(jc_secret_raw)
-        justcall.set_credentials(jc_key, jc_secret)
-        updated.append("justcall")
-        _start_justcall_poller()
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    applog.event(log, "keys_updated", providers=",".join(updated))
-    pyai = (transcribe.PYAI_API_KEY or "").strip()
-    claude = (qa.ANTHROPIC_API_KEY or "").strip()
-    kind = env_keys.pyai_kind(pyai) if pyai else None
-    return {
-        "ok": True,
-        "updated": updated,
-        "pyai": {
-            "configured": bool(pyai),
-            "env": "test" if kind == "sandbox" else ("live" if kind else None),
-            "label": "Sandbox" if kind == "sandbox" else ("Live" if kind else "No key"),
-            "suffix": env_keys.key_suffix(pyai),
-        },
-        "claude": {
-            "configured": bool(claude),
-            "suffix": env_keys.key_suffix(claude),
-        },
-        "justcall": {
-            "configured": justcall.configured(),
-            "suffix": env_keys.key_suffix(justcall.api_key()) if justcall.configured() else None,
-            "polling": _justcall_poller_started,
-        },
-    }
+    raise HTTPException(
+        status_code=400,
+        detail="Set app keys on the host, or JustCall via Integrations.",
+    )
 
 
 @app.get("/api/dev/logs")
@@ -1826,17 +1792,42 @@ _justcall_inflight: set[str] = set()
 _justcall_inflight_lock = threading.Lock()
 
 
-def _justcall_status() -> dict:
-    configured = justcall.configured()
+def _justcall_pair(org_id: str, *, host_fallback: bool = False) -> tuple[str, str] | None:
+    """Load this org's Vault pair. Host env only for the operator ingest org."""
+    try:
+        secret = org_vault.load_justcall(org_id)
+    except (org_vault.VaultUnavailable, org_vault.VaultError):
+        secret = None
+    if secret:
+        return secret.api_key, secret.api_secret
+    if host_fallback and justcall.host_configured():
+        key = (os.environ.get("JUSTCALL_API_KEY") or "").strip()
+        sec = (os.environ.get("JUSTCALL_API_SECRET") or "").strip()
+        if key and sec:
+            return key, sec
+    return None
+
+
+def _justcall_status(org_id: str) -> dict:
+    try:
+        st = org_vault.status(org_id)
+    except Exception:
+        st = {"configured": False, "suffix": None}
     return {
-        "configured": configured,
+        "configured": bool(st.get("configured")),
         "polling": _justcall_poller_started,
         "poll_seconds": justcall.poll_seconds(),
-        "key_suffix": env_keys.key_suffix(justcall.api_key()) if configured else None,
+        "key_suffix": st.get("suffix"),
     }
 
 
-def _process_justcall_call(call_id: str, payload: dict | None = None, *, org_id: str) -> dict:
+def _process_justcall_call(
+    call_id: str,
+    payload: dict | None = None,
+    *,
+    org_id: str,
+    host_fallback: bool = False,
+) -> dict:
     """Download a JustCall recording, transcribe, score. Safe to retry."""
     cid = str(call_id or "").strip()
     if not cid or "/" in cid or "\\" in cid or ".." in cid:
@@ -1846,7 +1837,14 @@ def _process_justcall_call(call_id: str, payload: dict | None = None, *, org_id:
             return {"status": "in_flight", "justcall_id": cid}
         _justcall_inflight.add(cid)
     tmp = None
+    creds_cm = None
     try:
+        pair = _justcall_pair(org_id, host_fallback=host_fallback)
+        if not pair:
+            applog.event(log, "justcall_recording_skip", justcall_id=cid, reason="no_credentials")
+            return {"status": "pending_recording", "justcall_id": cid}
+        creds_cm = justcall.bound_credentials(pair[0], pair[1])
+        creds_cm.__enter__()
         with org_scope(org_id):
             with _db_lock:
                 with db.connection() as conn:
@@ -1910,19 +1908,23 @@ def _process_justcall_call(call_id: str, payload: dict | None = None, *, org_id:
                 "score": audit.get("score") if isinstance(audit, dict) else None,
             }
     finally:
+        if creds_cm is not None:
+            creds_cm.__exit__(None, None, None)
         if tmp and os.path.exists(tmp):
             os.remove(tmp)
         with _justcall_inflight_lock:
             _justcall_inflight.discard(cid)
 
 
-def _sync_justcall_recent(hours: int = 24, *, org_id: str) -> dict:
+def _sync_justcall_recent(hours: int = 24, *, org_id: str, host_fallback: bool = False) -> dict:
     """Pull recent JustCall calls, ingest any that are not stored yet."""
-    if not justcall.configured():
+    pair = _justcall_pair(org_id, host_fallback=host_fallback)
+    if not pair:
         raise RuntimeError(
             "JustCall is not connected. Save the API key and secret on the Integrations page."
         )
-    rows = justcall.list_recent_calls(hours=hours)
+    with justcall.bound_credentials(pair[0], pair[1]):
+        rows = justcall.list_recent_calls(hours=hours)
     queued = 0
     existing = 0
     pending = 0
@@ -1940,7 +1942,9 @@ def _sync_justcall_recent(hours: int = 24, *, org_id: str) -> dict:
             results.append({"justcall_id": cid, "status": "pending_recording"})
             continue
         try:
-            out = _process_justcall_call(cid, row, org_id=org_id)
+            out = _process_justcall_call(
+                cid, row, org_id=org_id, host_fallback=host_fallback,
+            )
         except Exception as e:  # noqa: BLE001
             errors += 1
             msg = str(e)[:300]
@@ -1981,22 +1985,31 @@ def _sync_justcall_recent(hours: int = 24, *, org_id: str) -> dict:
 def _justcall_poll_loop():
     while True:
         try:
-            _sync_justcall_recent(org_id=integration_org_id())
-        except Exception as e:  # noqa: BLE001
-            applog.event(
-                log, "justcall_poll_error",
-                level=logging.ERROR,
-                error=str(e)[:300],
-            )
+            ids = org_vault.list_org_ids()
+        except Exception:
+            ids = []
+        host_oid = integration_org_id()
+        if justcall.host_configured() and host_oid not in ids:
+            ids = list(ids) + [host_oid]
+        for oid in ids:
+            try:
+                with org_scope(oid):
+                    _sync_justcall_recent(
+                        org_id=oid,
+                        host_fallback=(oid == host_oid),
+                    )
+            except Exception as e:  # noqa: BLE001
+                applog.event(
+                    log, "justcall_poll_error",
+                    level=logging.ERROR,
+                    error=str(e)[:300],
+                )
         time.sleep(justcall.poll_seconds())
 
 
 def _start_justcall_poller():
     global _justcall_poller_started
     if _justcall_poller_started or skip_startup():
-        return
-    if not justcall.configured():
-        applog.event(log, "justcall_idle", reason="not_configured")
         return
     _justcall_poller_started = True
     threading.Thread(
@@ -2011,19 +2024,77 @@ def _start_justcall_poller():
 
 
 @app.get("/api/integrations/justcall")
-def justcall_integration_status():
-    return _justcall_status()
+def justcall_integration_status(request: Request):
+    return _justcall_status(_org(request))
+
+
+@app.post("/api/integrations/justcall")
+def justcall_save_credentials(body: JustCallCredentialBody, request: Request):
+    """Store this org's JustCall pair in Vault. Never echoes the secret."""
+    org_id = _org(request)
+    key_raw = (body.api_key or body.justcall_api_key or "").strip()
+    secret_raw = (body.api_secret or body.justcall_api_secret or "").strip()
+    if not key_raw or not secret_raw:
+        raise HTTPException(
+            status_code=400,
+            detail="Paste both the JustCall API key and the API secret.",
+        )
+    try:
+        key = env_keys.normalize_justcall_key(key_raw)
+        secret = env_keys.normalize_justcall_secret(secret_raw)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        suffix = org_vault.put_justcall(org_id, key, secret)
+    except org_vault.VaultUnavailable:
+        raise HTTPException(
+            status_code=503,
+            detail="Credential vault is not available on this database.",
+        ) from None
+    except org_vault.VaultError:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not store JustCall credentials.",
+        ) from None
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _start_justcall_poller()
+    applog.event(log, "justcall_credentials_saved")
+    return {
+        "ok": True,
+        "configured": True,
+        "key_suffix": suffix or None,
+    }
+
+
+@app.delete("/api/integrations/justcall")
+def justcall_delete_credentials(request: Request):
+    """Remove this org's JustCall pair from Vault. Never echoes the secret."""
+    org_id = _org(request)
+    try:
+        existed = org_vault.delete_justcall(org_id)
+    except org_vault.VaultUnavailable:
+        existed = False
+    except org_vault.VaultError:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not remove JustCall credentials.",
+        ) from None
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    applog.event(log, "justcall_credentials_removed")
+    return {
+        "ok": True,
+        "configured": False,
+        "removed": existed,
+        "key_suffix": None,
+    }
 
 
 @app.post("/api/integrations/justcall/sync")
 def justcall_sync_now(request: Request):
-    if not justcall.configured():
-        raise HTTPException(
-            status_code=503,
-            detail="JustCall is not connected. Save the API key and secret on the Integrations page.",
-        )
     try:
-        return _sync_justcall_recent(org_id=_org(request))
+        return _sync_justcall_recent(org_id=_org(request), host_fallback=False)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except httpx.HTTPStatusError as e:
@@ -2057,16 +2128,21 @@ async def justcall_webhook(request: Request):
     )
     if not justcall.verify_webhook_signature(raw, sig):
         raise HTTPException(status_code=401, detail="Invalid webhook signature.")
-    if not justcall.configured():
+    org_id = integration_org_id()
+    if not _justcall_pair(org_id, host_fallback=True):
         applog.event(log, "justcall_webhook", accepted=False, reason="not_configured")
         raise HTTPException(
             status_code=503,
-            detail="JustCall API credentials are not set on this server.",
+            detail="JustCall API credentials are not set for this organization.",
         )
-    org_id = integration_org_id()
     threading.Thread(
         target=_process_justcall_call,
-        kwargs={"call_id": cid, "payload": payload, "org_id": org_id},
+        kwargs={
+            "call_id": cid,
+            "payload": payload,
+            "org_id": org_id,
+            "host_fallback": True,
+        },
         name=f"justcall-{cid}",
         daemon=True,
     ).start()

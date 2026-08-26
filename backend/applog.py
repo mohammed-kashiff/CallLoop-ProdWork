@@ -24,6 +24,7 @@ _SECRET_PATTERNS = [
     re.compile(r"(?i)\b(pyai_live_|pyai_test_)[A-Za-z0-9._\-]{8,}"),
     re.compile(r"(?i)\b(sk-ant-|sk-)[A-Za-z0-9_\-]{8,}"),
     re.compile(r"(?i)(authorization|x-api-key|api[_-]?key)\s*[:=]\s*['\"]?[^\s'\"]+"),
+    re.compile(r"(?i)(justcall_api_(?:key|secret)|api_secret)\s*[:=]\s*\S+"),
     re.compile(r"(?i)bearer\s+[A-Za-z0-9\-._~+/]+=*"),
     re.compile(r"(?i)illegal header value\s+\S+"),
 ]
