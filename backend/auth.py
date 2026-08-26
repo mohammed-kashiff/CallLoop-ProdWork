@@ -23,6 +23,7 @@ from . import db
 from .config import cors_origins
 from .org_ids import (
     DEFAULT_ORG_ID,
+    DEFAULT_RUBRIC_ID,
     bind_org_id,
     bind_user_id,
     parse_org_id,
@@ -145,7 +146,9 @@ def ensure_membership(user_id: str, email: str | None = None) -> Membership:
             (uid,),
         ).fetchone()
         if row:
-            return Membership(str(row["org_id"]), str(row["role"]), uid)
+            org_id = str(row["org_id"])
+            _ensure_placeholder_rubric(conn, org_id=org_id, user_id=uid)
+            return Membership(org_id, str(row["role"]), uid)
 
         conn.execute("LOCK TABLE org_members IN EXCLUSIVE MODE")
         row = conn.execute(
@@ -157,7 +160,9 @@ def ensure_membership(user_id: str, email: str | None = None) -> Membership:
             (uid,),
         ).fetchone()
         if row:
-            return Membership(str(row["org_id"]), str(row["role"]), uid)
+            org_id = str(row["org_id"])
+            _ensure_placeholder_rubric(conn, org_id=org_id, user_id=uid)
+            return Membership(org_id, str(row["role"]), uid)
 
         existing = conn.execute("SELECT 1 FROM org_members LIMIT 1").fetchone()
         if existing is None:
@@ -174,6 +179,7 @@ def ensure_membership(user_id: str, email: str | None = None) -> Membership:
             )
 
         db.apply_tenant_gucs(conn, org_id=org_id, user_id=uid)
+        _ensure_placeholder_rubric(conn, org_id=org_id, user_id=uid)
         try:
             conn.execute(
                 """
@@ -195,9 +201,22 @@ def ensure_membership(user_id: str, email: str | None = None) -> Membership:
             ).fetchone()
             if not row:
                 raise
+            _ensure_placeholder_rubric(
+                conn, org_id=str(row["org_id"]), user_id=uid,
+            )
             return Membership(str(row["org_id"]), str(row["role"]), uid)
 
         return Membership(org_id, "owner", uid)
+
+
+def _ensure_placeholder_rubric(conn, *, org_id: str, user_id: str) -> None:
+    """Re-seed Default (legacy v8) if a data wipe removed it. No-op for other orgs."""
+    if org_id != DEFAULT_ORG_ID:
+        return
+    db.apply_tenant_gucs(conn, org_id=org_id, user_id=user_id)
+    audit_store.seed_legacy_rubric(
+        conn, org_id=org_id, rubric_id=DEFAULT_RUBRIC_ID,
+    )
 
 
 def _bearer(request: Request) -> str | None:

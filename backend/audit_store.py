@@ -203,6 +203,8 @@ def upsert_audit(
     """
     audit_id = str(uuid.uuid4())
     score = findings.get("score") if isinstance(findings, dict) else None
+    if rubric_id == DEFAULT_RUBRIC_ID:
+        seed_legacy_rubric(conn, org_id=org_id, rubric_id=DEFAULT_RUBRIC_ID)
     conn.execute(
         """
         INSERT INTO audits (
