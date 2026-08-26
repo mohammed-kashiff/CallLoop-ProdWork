@@ -6,8 +6,9 @@
 __pycache__/
 *.pyc
 
-# data & audio (regenerated locally / recordings are sensitive)
+# data (regenerated locally; recordings are in Storage)
 callproof.db
+# leftover local recordings (backfill into Storage, then delete)
 audio/
 
 # local runtime logs (rotating file under logs/)

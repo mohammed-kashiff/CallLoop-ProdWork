@@ -23,6 +23,7 @@ import re
 import json
 import hashlib
 import logging
+import tempfile
 import time
 import uuid
 import shutil
@@ -35,18 +36,19 @@ from xml.sax.saxutils import escape as xml_escape
 import httpx
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from . import applog
 from . import audit_store
+from . import audio_store
 from . import auth
 from . import db
 from . import env_keys
 from . import error_notify
 from . import justcall
 from .config import cors_origins, load_env, skip_startup
-from .paths import AUDIO_DIR, ENV_FILE
+from .paths import ENV_FILE
 
 load_env()
 applog.setup_logging()
@@ -333,7 +335,12 @@ def _startup():
         )
 
     transcribe.init_db()
-    os.makedirs(AUDIO_DIR, exist_ok=True)
+    if not audio_store.configured():
+        log.warning(
+            "SUPABASE_SERVICE_ROLE_KEY is not set.\n"
+            "   ➤ Uploads and playback need private Storage.\n"
+            "   ➤ Add the service role key from Project Settings → API to .env"
+        )
     pyai_usage.init_usage_db()
     error_notify.log_ready()
     log.info("startup complete; db=postgres audit_mode=%s claude_model=%s", qa.audit_mode(), qa.MODEL)
@@ -1042,40 +1049,26 @@ def list_calls(request: Request, source: str | None = None):
     return out
 
 
-def _playback_root() -> str:
-    return os.path.realpath(AUDIO_DIR)
+def _temp_audio_path(suffix: str = "") -> str:
+    fd, path = tempfile.mkstemp(prefix="callproof_", suffix=suffix)
+    os.close(fd)
+    return path
 
 
-def _clear_playback_audio(call_ids: list[int] | None = None) -> int:
-    """Delete playback copies. If call_ids is set, only those files."""
-    root = _playback_root()
-    if not os.path.isdir(root):
+def _store_playback(src_path: str, call_id: int, org_id: str) -> None:
+    """Copy the recording into the private per-org Storage object."""
+    audio_store.put_file(org_id, call_id, src_path)
+
+
+def _clear_playback_audio(org_id: str, call_ids: list[int] | None = None) -> int:
+    """Delete this org's Storage objects. If call_ids is set, only those keys."""
+    try:
+        if call_ids is not None:
+            return audio_store.remove_objects(org_id, call_ids)
+        return audio_store.remove_org_prefix(org_id)
+    except audio_store.AudioStoreError as e:
+        log.warning("could not clear playback audio: %s", e)
         return 0
-    removed = 0
-    names: list[str]
-    if call_ids is not None:
-        names = [f"{cid}.mp3" for cid in call_ids]
-    else:
-        names = os.listdir(root)
-    for name in names:
-        path = os.path.join(root, name)
-        if not os.path.lexists(path):
-            continue
-        real = os.path.realpath(path)
-        if not real.startswith(root + os.sep):
-            log.warning("skipping audio path outside %s", AUDIO_DIR)
-            continue
-        try:
-            if os.path.isdir(path) and not os.path.islink(path):
-                if call_ids is None:
-                    shutil.rmtree(path)
-                    removed += 1
-            elif os.path.isfile(path) or os.path.islink(path):
-                os.remove(path)
-                removed += 1
-        except OSError as e:
-            log.warning("could not remove %s: %s", path, e)
-    return removed
 
 
 @app.post("/api/cache/clear")
@@ -1100,7 +1093,7 @@ def clear_cache(request: Request):
             c.execute("DELETE FROM audits WHERE org_id = %s", (org_id,))
             c.execute("DELETE FROM segments WHERE org_id = %s", (org_id,))
             c.execute("DELETE FROM calls WHERE org_id = %s", (org_id,))
-    n_audio = _clear_playback_audio(call_ids)
+    n_audio = _clear_playback_audio(org_id, call_ids)
     applog.event(
         log, "cache_cleared",
         calls=n_calls, segments=n_segments, audits=n_audits, audio=n_audio,
@@ -1946,25 +1939,6 @@ def _ingest_audio_file(
             os.remove(hear_tmp)
 
 
-def _audio_media_type(path: str) -> str:
-    """Playback files may be original MP3s or 8 kHz Hear WAVs from bulk import."""
-    try:
-        with open(path, "rb") as f:
-            head = f.read(12)
-    except OSError:
-        return "audio/mpeg"
-    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WAVE":
-        return "audio/wav"
-    return "audio/mpeg"
-
-
-def _store_playback(src_path: str, call_id: int):
-    dest = os.path.join(AUDIO_DIR, f"{call_id}.mp3")
-    os.makedirs(AUDIO_DIR, exist_ok=True)
-    if os.path.abspath(src_path) != os.path.abspath(dest):
-        shutil.copy2(src_path, dest)
-
-
 _justcall_inflight: set[str] = set()
 _justcall_inflight_lock = threading.Lock()
 
@@ -1998,13 +1972,19 @@ def _process_justcall_call(call_id: str, payload: dict | None = None, *, org_id:
                     )
             if existing:
                 local_id = int(existing["id"])
-                dest = os.path.join(AUDIO_DIR, f"{local_id}.mp3")
-                if not os.path.isfile(dest):
+                missing = True
+                try:
+                    missing = not audio_store.object_exists(org_id, local_id)
+                except audio_store.AudioStoreError:
+                    missing = True
+                if missing:
                     data = justcall.download_recording(cid)
                     if data:
-                        os.makedirs(AUDIO_DIR, exist_ok=True)
-                        with open(dest, "wb") as f:
+                        suffix = justcall.recording_suffix(data)
+                        tmp = _temp_audio_path(suffix)
+                        with open(tmp, "wb") as f:
                             f.write(data)
+                        _store_playback(tmp, local_id, org_id)
                 _load_or_compute_audit(local_id, org_id)
                 applog.event(
                     log, "justcall_ingest",
@@ -2017,9 +1997,8 @@ def _process_justcall_call(call_id: str, payload: dict | None = None, *, org_id:
                 applog.event(log, "justcall_recording_skip", justcall_id=cid)
                 return {"status": "pending_recording", "justcall_id": cid}
 
-            os.makedirs(AUDIO_DIR, exist_ok=True)
             suffix = justcall.recording_suffix(data)
-            tmp = os.path.join(AUDIO_DIR, f"_justcall_{uuid.uuid4().hex}{suffix}")
+            tmp = _temp_audio_path(suffix)
             with open(tmp, "wb") as f:
                 f.write(data)
             source_name = justcall.display_name(payload or {}, cid)
@@ -2031,7 +2010,7 @@ def _process_justcall_call(call_id: str, payload: dict | None = None, *, org_id:
                 source="justcall",
                 external_id=cid,
             )
-            _store_playback(tmp, local_id)
+            _store_playback(tmp, local_id, org_id)
             audit, _rh = _load_or_compute_audit(local_id, org_id)
             applog.event(
                 log, "justcall_ingest",
@@ -2298,15 +2277,20 @@ def _extract_batch_zip(zip_path: str, batch_dir: str) -> list[dict]:
 
 @app.get("/api/calls/{call_id}/audio")
 def get_audio(call_id: int, request: Request):
+    """Return a time-limited signed URL. Membership is checked before signing."""
     org_id = _org(request)
     with _conn() as c:
         row = transcribe.get_call(c, call_id, org_id=org_id)
     if not row:
         raise HTTPException(status_code=404, detail="No audio for this call.")
-    path = os.path.join(AUDIO_DIR, f"{call_id}.mp3")
-    if not os.path.isfile(path):
+    try:
+        url, ttl = audio_store.signed_url(org_id, call_id)
+    except audio_store.AudioNotFound:
         raise HTTPException(status_code=404, detail="No audio for this call.")
-    return FileResponse(path, media_type=_audio_media_type(path))
+    except audio_store.AudioStoreError:
+        raise HTTPException(status_code=503, detail="Audio storage is unavailable.")
+    applog.event(log, "audio_signed", call_id=call_id, expires_in=ttl)
+    return {"url": url, "expires_in": ttl}
 
 
 @app.post("/api/calls/{call_id}/retranscribe")
@@ -2319,55 +2303,55 @@ def retranscribe_call(call_id: int, request: Request):
         row = transcribe.get_call(c, call_id, org_id=org_id)
     if not row:
         raise HTTPException(status_code=404, detail="No stored audio for this call.")
-    path = os.path.join(AUDIO_DIR, f"{call_id}.mp3")
-    if not os.path.isfile(path):
+    try:
+        with audio_store.download_to_temp(org_id, call_id) as path:
+            hear_tmp = f"{path}.{uuid.uuid4().hex}.hear.wav"
+            size = os.path.getsize(path)
+            try:
+                pyai_id = transcribe.new_pyai_call_id()
+                applog.event(
+                    log, "retranscribe_started",
+                    call_id=call_id, size_bytes=size,
+                )
+                job_id, result, mode = transcribe.transcribe_with_fallback(
+                    path, hear_tmp, call_id=pyai_id,
+                )
+                with _db_lock:
+                    with db.connection() as conn:
+                        transcribe.replace_transcript(
+                            conn, call_id, job_id, result,
+                            pyai_call_id=pyai_id, org_id=org_id,
+                        )
+                audit, _rh = _load_or_compute_audit(call_id, org_id, refresh=True)
+                applog.event(
+                    log, "retranscribe_completed",
+                    call_id=call_id, mode=mode, job_id=job_id,
+                    segments=len(result.get("segments") or []),
+                    score=audit.get("score") if isinstance(audit, dict) else None,
+                )
+                return {
+                    "call_id": call_id,
+                    "job_id": job_id,
+                    "mode": mode,
+                    "segments": len((audit or {}).get("segments") or []),
+                    "score": (audit or {}).get("score"),
+                }
+            finally:
+                if os.path.exists(hear_tmp):
+                    os.remove(hear_tmp)
+    except audio_store.AudioNotFound:
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"No stored audio for call {call_id}. "
-                "Re-upload the file after this Hear fix is deployed."
-            ),
+            detail="No stored audio for this call. Re-upload the file.",
         )
-    hear_tmp = f"{path}.{uuid.uuid4().hex}.hear.wav"
-    size = os.path.getsize(path)
-    try:
-        pyai_id = transcribe.new_pyai_call_id()
-        applog.event(
-            log, "retranscribe_started",
-            call_id=call_id, size_bytes=size,
-        )
-        job_id, result, mode = transcribe.transcribe_with_fallback(
-            path, hear_tmp, call_id=pyai_id,
-        )
-        with _db_lock:
-            with db.connection() as conn:
-                transcribe.replace_transcript(
-                    conn, call_id, job_id, result,
-                    pyai_call_id=pyai_id, org_id=org_id,
-                )
-        audit, _rh = _load_or_compute_audit(call_id, org_id, refresh=True)
-        applog.event(
-            log, "retranscribe_completed",
-            call_id=call_id, mode=mode, job_id=job_id,
-            segments=len(result.get("segments") or []),
-            score=audit.get("score") if isinstance(audit, dict) else None,
-        )
-        return {
-            "call_id": call_id,
-            "job_id": job_id,
-            "mode": mode,
-            "segments": len((audit or {}).get("segments") or []),
-            "score": (audit or {}).get("score"),
-        }
+    except audio_store.AudioStoreError:
+        raise HTTPException(status_code=503, detail="Audio storage is unavailable.")
     except HTTPException:
         raise
     except (Exception, SystemExit) as e:
         msg = str(e)
         log.error("retranscribe failed for call %s: %s", call_id, msg)
         raise HTTPException(status_code=502, detail="Retranscribe failed.") from e
-    finally:
-        if os.path.exists(hear_tmp):
-            os.remove(hear_tmp)
 
 
 @app.post("/api/upload")
@@ -2400,8 +2384,7 @@ def upload(request: Request, file: UploadFile = File(...)):
             ),
         )
 
-    os.makedirs(AUDIO_DIR, exist_ok=True)
-    tmp = os.path.join(AUDIO_DIR, f"_upload_{uuid.uuid4().hex}")
+    tmp = _temp_audio_path()
     with open(tmp, "wb") as f:
         f.write(data)
 
@@ -2410,9 +2393,11 @@ def upload(request: Request, file: UploadFile = File(...)):
 
     try:
         call_id, _deduped = _ingest_audio_file(tmp, source_name, org_id=org_id)
-        os.replace(tmp, os.path.join(AUDIO_DIR, f"{call_id}.mp3"))
+        _store_playback(tmp, call_id, org_id)
     except HTTPException:
         raise
+    except audio_store.AudioStoreError:
+        raise HTTPException(status_code=503, detail="Audio storage is unavailable.")
     except (Exception, SystemExit) as e:
         msg = str(e)
         applog.event(
@@ -2446,8 +2431,7 @@ def upload_batch(request: Request, file: UploadFile = File(...)):
         )
 
     batch_id = uuid.uuid4().hex
-    batch_dir = os.path.join(AUDIO_DIR, "batches", batch_id)
-    os.makedirs(batch_dir, exist_ok=True)
+    batch_dir = tempfile.mkdtemp(prefix="callproof_batch_")
     zip_path = os.path.join(batch_dir, "batch.zip")
     with open(zip_path, "wb") as f:
         f.write(data)
@@ -2472,7 +2456,7 @@ def upload_batch(request: Request, file: UploadFile = File(...)):
                     call_id, deduped = _ingest_audio_file(
                         item["path"], item["filename"], org_id=org_id,
                     )
-                _store_playback(item["path"], call_id)
+                _store_playback(item["path"], call_id, org_id)
                 return {
                     "index": item["index"],
                     "filename": item["filename"],

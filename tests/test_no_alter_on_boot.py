@@ -84,3 +84,16 @@ def test_seventh_revision_disables_rls_on_org_members():
     assert "ALTER TABLE ORG_MEMBERS DISABLE ROW LEVEL SECURITY" in sql
     assert "ENABLE ROW LEVEL SECURITY" in sql  # downgrade only
 
+
+def test_eighth_revision_private_storage_bucket():
+    rev = ROOT / "alembic" / "versions" / "0008_storage_audio_bucket.py"
+    assert rev.is_file()
+    raw = rev.read_text(encoding="utf-8")
+    sql = raw.upper()
+    assert "CALL-AUDIO" in sql
+    assert "PUBLIC" in sql
+    assert "FALSE" in sql
+    assert "TO_REGCLASS('STORAGE.BUCKETS')" in sql
+    assert "call-audio" in raw
+    assert "0007_org_members_no_rls" in raw
+

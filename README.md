@@ -60,7 +60,8 @@ UI brand in this branch: **Call Loop v3** (React + TypeScript + Vite).
 | `backend/transcribe.py` | PyAI Hear jobs |
 | `backend/qa_engine.py` + `backend/rules_v8.py` + `rubric.json` | Scoring (runtime rubric is `rubric.json`) |
 | `backend/pyai_usage.py` + `backend/cost_estimate.py` | Local usage + $ estimates |
-| `callproof.db` / `audio/` / `logs/` | Data, playback, app logs |
+| Postgres + private Storage | Calls/scorecards; playback at `{org_id}/{call_id}.mp3` |
+| `logs/` | App logs |
 
 ---
 
@@ -334,6 +335,7 @@ Set these as **Environment** variables on the Web Service (not Secret Files, not
 | `DATABASE_URL` | Supabase Postgres URI (password stays in the dashboard). Alias: `SUPABASE_DB_URL`. |
 | `SUPABASE_URL` | Project URL (`https://<ref>.supabase.co`). JWT issuer is `{URL}/auth/v1`. |
 | `SUPABASE_JWT_SECRET` | Project Settings → API JWT secret (HS256). Dashboard-only (`sync: false`). |
+| `SUPABASE_SERVICE_ROLE_KEY` | Project Settings → API **service_role** (server only). Private Storage uploads + signed URLs. Never a `VITE_*` var. |
 
 On the **Static Site** (`callloop-web`), set **build-time** env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL` (the API origin). Vite bakes these in at build; changing them later needs a rebuild.
 
@@ -344,7 +346,7 @@ The UI signs up / logs in with **Supabase Auth**. The session is stored in the b
 - **First authenticated request** (empty `org_members`): owner of the placeholder org `00000000-0000-4000-8000-000000000001` (keeps existing Table Editor rows).
 - **Later signups**: a new org, that user as owner, plus a seeded legacy v8 rubric.
 - Unauthenticated calls to data routes return **401**. `/health` and the JustCall webhook stay public.
-- **Isolation (CL-9):** every read and write uses `org_id` from the verified JWT (`request.state.org_id`). Query params, path, and JSON bodies cannot set it. JustCall webhook/poller use `JUSTCALL_ORG_ID` (or the placeholder org), never a payload field. Code review: `.cursor/rules/org-isolation.mdc`.
+- **Isolation (CL-9):** every read and write uses `org_id` from the verified JWT (`request.state.org_id`). Query params, path, and JSON bodies cannot set it. JustCall webhook/poller use `JUSTCALL_ORG_ID` (or the placeholder org), never a payload field. Playback lives in a **private** Storage bucket at `{org_id}/{call_id}.mp3`; `GET /api/calls/{id}/audio` mints a time-limited signed URL only after that membership check. Code review: `.cursor/rules/org-isolation.mdc`.
 - **RLS (CL-10):** second layer. Alembic `0005_rls` enables RLS on `orgs`, `calls`, `segments`, `audits`, `rubrics`, `api_usage`. The API does `SET LOCAL ROLE callproof_app` (`NOBYPASSRLS`) then `SET LOCAL app.current_org_id` from the JWT org. `DATABASE_URL` may stay the postgres URI (Alembic needs bypass). Do not apply policies by hand in the dashboard. `org_members` is not RLS’d (signup bootstrap).
 
 Local: copy `SUPABASE_URL` / `SUPABASE_JWT_SECRET` into `.env`, and `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` into `frontend/.env`. Enable email auth in the Supabase dashboard.
@@ -364,9 +366,46 @@ The API uses **Postgres** at runtime (`DATABASE_URL` / `SUPABASE_DB_URL`). **Do 
 **Service-role bypass (limited, and verified):** `postgres` / `service_role` skip RLS. Use those connections only for `alembic upgrade` and one-off backfill (`db.connection(bypass_rls=True)`). CL-10 AC: an API `db.connection()` session has `current_user = callproof_app` and `rolbypassrls = false`. Raw `psycopg.connect` as postgres does **not** count. `org_members` is not RLS’d (first-user claim reads it before the org GUC is set).
 
 `0006_rls_role_grant` — `GRANT callproof_app TO CURRENT_USER` so pooler postgres (not superuser) can `SET ROLE`. Idempotent if 0005 already granted it.  
-`0007_org_members_no_rls` — **DISABLE** RLS on `org_members`. Supabase had enabled it with no policies (deny-all for `callproof_app`); signup INSERT failed after SET ROLE.
+`0007_org_members_no_rls` — **DISABLE** RLS on `org_members`. Supabase had enabled it with no policies (deny-all for `callproof_app`); signup INSERT failed after SET ROLE.  
+`0008_storage_audio_bucket` — private `call-audio` bucket in `storage.buckets` when that schema exists (no-op on vanilla CI Postgres). Runtime also `ensure_bucket()`. Objects are `{org_id}/{call_id}.mp3`. No public/authenticated read policies — the API mints signed URLs with the service role.
 
 Placeholder org: `00000000-0000-4000-8000-000000000001`. Legacy rubric id: `00000000-0000-4000-8000-000000000011`.
+
+### Wiping data (do not skip the rubric seed)
+
+`alembic upgrade head` seeds the placeholder org (0001) and one **"Default (legacy v8)"** row in `rubrics` (0003) from `rubric.json`, id `00000000-0000-4000-8000-000000000011`. Alembic does **not** run those inserts again if `alembic_version` is already at head.
+
+If you delete rows in the Table Editor (or `TRUNCATE` `rubrics` / `audits` / `calls`) and leave the schema:
+
+- Uploads still work (`calls` / `segments` have no FK to `rubrics`).
+- Opening a scorecard inserts into `audits` with that default `rubric_id` and fails:
+
+  `ForeignKeyViolation: audits_rubric_id_fkey — Key is not present in table "rubrics"`.
+
+First login **claims** the placeholder org and does **not** re-run 0003. Later signups seed a rubric only for **new** orgs. A wipe of `rubrics` for the placeholder org is a hole.
+
+**Do not** paste a hand-copied JSON blob into SQL. The definition is `rubric.json`. After a wipe, either:
+
+1. Redeploy / restart the API (it re-seeds the default rubric on login and before the default audit write), or
+2. From the repo, with `DATABASE_URL` in `.env` (never paste the URI):
+
+```bash
+unset DATABASE_URL
+source .venv/bin/activate
+python -c "
+from backend.audit_store import seed_legacy_rubric
+from backend.config import load_env
+from backend.db import connection
+from backend.org_ids import DEFAULT_ORG_ID, DEFAULT_RUBRIC_ID, org_scope
+load_env()
+with org_scope(DEFAULT_ORG_ID):
+    with connection() as conn:
+        seed_legacy_rubric(conn, org_id=DEFAULT_ORG_ID, rubric_id=DEFAULT_RUBRIC_ID)
+print('seeded default rubric')
+"
+```
+
+A **full** database reset (drop schema / new Supabase project) is different: `alembic upgrade head` seeds org + rubric again.
 
 New calls and audits write to Postgres (that org). Local `callproof.db` is unused. Do not mutate a seeded rubric in place; bump `version` and insert a new row.
 
@@ -390,13 +429,41 @@ alembic upgrade head
 
 `render.yaml` sets **Pre-Deploy Command** `alembic upgrade head` so Render applies migrations on deploy, not when uvicorn loads.
 
-Confirm in **Table Editor**: `orgs`, `calls`, `segments`, `audits`, `api_usage`, `rubrics`, `org_members`.
+### Isolation proof (CL-11)
+
+`tests/test_cross_org_isolation.py` creates **two orgs** with a call, segment, audit, rubric, and usage row in each, then asserts Org A sees **zero** Org B rows on every RLS table and cannot fetch Org B’s call **by id** (SQL and `GET /api/calls/{id}/audit` / `/audio` / `POST /flag` → **404**, not 403). Tests use `db.connection()` (`callproof_app`), not a raw postgres connect.
+
+GitHub Actions (`.github/workflows/ci.yml`) stands up Postgres, runs `alembic upgrade head`, then `pytest`. A breach fails the build. Locally, with `DATABASE_URL` in `.env`:
+
+```bash
+unset DATABASE_URL
+source .venv/bin/activate
+alembic upgrade head
+pytest tests/test_cross_org_isolation.py -q
+```
+
+Without `DATABASE_URL`, those tests skip (except in CI, where missing `DATABASE_URL` fails).
+
+Confirm in **Table Editor**: `orgs`, `calls`, `segments`, `audits`, `api_usage`, `rubrics`, `org_members`. Storage: private bucket `call-audio` (not public).
+
+### Call audio (private Storage)
+
+Uploads, JustCall, and batch ingest write `{org_id}/{call_id}.mp3` to the **private** `call-audio` bucket (service role, after JWT org check). Playback: `GET /api/calls/{id}/audio` returns `{ url, expires_in }` — a time-limited signed URL. The bucket is not public; the frontend does not send the JWT to Storage.
+
+Backfill leftover local files (does not delete them):
+
+```bash
+python -m backend.audio_backfill
+# or: python -m backend.audio_backfill /path/to/legacy-recordings
+```
+
+Needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Runtime no longer uses a local `audio/` directory.
 
 `DATABASE_URL` on **callloop-prodwork** is an Environment variable (not a Secret File).
 
 New workspace: Dashboard → **New → Blueprint** and point at this repo’s `render.yaml`, or recreate a Web Service with the table above. Paste secrets in the dashboard (`sync: false` in the Blueprint).
 
-**Not in this AC:** SQLite on a mounted disk (free instances have no persistent volume). Uploaded calls are lost on sleep/redeploy until a paid disk is attached.
+**Not in this AC:** SQLite on a mounted disk (free instances have no persistent volume). Call rows live in Postgres; recordings live in Storage.
 
 ---
 
@@ -419,8 +486,7 @@ New workspace: Dashboard → **New → Blueprint** and point at this repo’s `r
 | `.env` | Secrets (local only) |
 | `frontend/.env` | Optional `VITE_API_URL`; `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` for login |
 | `logs/callproof.log` | Backend event log |
-| `callproof.db` | Calls, segments, audits, usage |
-| `audio/` | Playback copies |
+| `callproof.db` | Unused locally (runtime is Postgres) |
 | `rubric.json` | Runtime scoring rubric (v8 shape) |
 | `backend/` | Python API package |
 
