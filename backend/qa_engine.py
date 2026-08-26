@@ -903,7 +903,7 @@ LABEL = {"pass": "PASS", "partial": "PARTIAL", "fail": "FAIL",
 
 def main():
     if not ANTHROPIC_API_KEY:
-        sys.exit("ERROR: ANTHROPIC_API_KEY not found in .env")
+        sys.exit("ERROR: ANTHROPIC_API_KEY not found in the host environment")
     arg_id = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else None
     agent_override = sys.argv[2] if len(sys.argv) > 2 else None
 

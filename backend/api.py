@@ -1,17 +1,14 @@
 """
-CallProof - FastAPI backend (v3, with logging + auto sandbox key).
+CallProof - FastAPI backend (v3, with logging).
 
 Every request logs what it does. Crucially, /audit logs whether it served from
 CACHE (stable score) or recomputed (MISS) - so you can see, per request, why a
 score is or isn't changing.
 
-On first run with no PYAI_API_KEY in the environment, the server automatically
-mints a free PyAI sandbox key (POST /v1/sandbox/keys — no auth, no card) and
-writes it to .env so it survives restarts until expiry.
-
-Note: sandbox keys only include hear:transcribe (not transcribe:jobs / recap:*).
-CallProof QA needs speaker-labelled async Hear jobs — use a live key for the
-full stack. Sandbox minting is a bootstrap aid, not a production substitute.
+App-owned credentials (PYAI_API_KEY, ANTHROPIC_API_KEY, SUPABASE_SERVICE_ROLE_KEY)
+come from the host environment. This process does not write them to .env or
+Postgres. CallProof QA needs a live PyAI key with transcribe:jobs for diarized
+Hear jobs — sandbox keys are hear:transcribe only.
 """
 
 from __future__ import annotations
@@ -48,7 +45,6 @@ from . import env_keys
 from . import error_notify
 from . import justcall
 from .config import cors_origins, load_env, skip_startup
-from .paths import ENV_FILE
 
 load_env()
 applog.setup_logging()
@@ -75,8 +71,6 @@ MAX_BATCH_ZIP_BYTES = MAX_UPLOAD_BYTES * MAX_BULK_FILES
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm", ".mpeg", ".mpga", ".aac"}
 _db_lock = threading.Lock()
 _justcall_poller_started = False
-
-PYAI_SANDBOX_MINT_URL = "https://api.pyai.com/v1/sandbox/keys"
 
 app = FastAPI(title="CallProof API")
 
@@ -208,116 +202,16 @@ def _apply_pyai_key(api_key: str):
     pyai_recap.set_api_key(api_key)
 
 
-# ── Auto sandbox key mint ─────────────────────────────────────────────────────
-def _mint_sandbox_key():
-    """
-    If PYAI_API_KEY is not set, hit POST /v1/sandbox/keys (no auth needed)
-    to get a free pyai_test_... key. Writes it to .env so it persists across
-    restarts until expiry. Called once at startup.
-    """
-    try:
-        resp = httpx.post(
-            PYAI_SANDBOX_MINT_URL,
-            json={"label": "callproof"},
-            timeout=10,
-        )
-        if resp.status_code == 404:
-            log.warning(
-                "sandbox key minting is disabled on this PyAI deployment.\n"
-                "   ➤ Add a live PYAI_API_KEY to .env manually and restart."
-            )
-            return None
-
-        if resp.status_code in (429, 529):
-            detail = ""
-            try:
-                body = resp.json()
-                detail = body.get("detail") or body.get("title") or ""
-            except Exception:
-                detail = (resp.text or "")[:200]
-            log.warning(
-                "sandbox key minting failed (HTTP %s)%s\n"
-                "   ➤ This network has hit PyAI's sandbox-key limit.\n"
-                "   ➤ Change to a different internet connection (e.g. phone hotspot) and retry,\n"
-                "   ➤ or add a live PYAI_API_KEY from https://console.pyai.com to .env and restart.",
-                resp.status_code,
-                f": {detail}" if detail else "",
-            )
-            return None
-
-        if resp.status_code != 201:
-            log.warning(
-                "sandbox key minting failed (HTTP %s): %s\n"
-                "   ➤ Add a live PYAI_API_KEY to .env manually and restart.",
-                resp.status_code,
-                resp.text[:200],
-            )
-            return None
-
-        data = resp.json()
-        api_key = data.get("api_key")
-        expires = data.get("expires_at")  # Unix epoch ms
-
-        if not api_key:
-            log.warning("sandbox key response had no api_key field")
-            return None
-
-        expiry_str = "unknown"
-        if expires:
-            try:
-                expiry_str = datetime.fromtimestamp(
-                    expires / 1000, tz=timezone.utc
-                ).strftime("%Y-%m-%d %H:%M UTC")
-            except Exception:
-                pass
-
-        _write_key_to_env(api_key)
-        _apply_pyai_key(api_key)
-
-        scopes = data.get("scopes") or []
-        log.info(
-            "PyAI sandbox key minted (expires %s; scopes: %s). "
-            "Sandbox keys cannot run diarized Hear jobs or Recap — "
-            "replace with a live key in .env for the full CallProof stack.",
-            expiry_str,
-            ", ".join(scopes) if scopes else "unknown",
-        )
-        return api_key
-
-    except httpx.RequestError as e:
-        log.warning(
-            "could not reach PyAI to mint sandbox key: %s\n"
-            "   ➤ Check your internet connection, or add PYAI_API_KEY to .env.",
-            e,
-        )
-        return None
-
-
-def _write_key_to_env(api_key: str, *, overwrite: bool = False):
-    """
-    Upsert PYAI_API_KEY in .env. Creates the file if it doesn't exist.
-    Sandbox minting uses overwrite=False so a live key is never clobbered.
-    """
-    try:
-        env_keys.upsert_env_value(
-            ENV_FILE, "PYAI_API_KEY", api_key, overwrite=overwrite,
-        )
-    except OSError as e:
-        log.warning("could not write sandbox key to .env: %s", e)
-
-
 # ── Startup ───────────────────────────────────────────────────────────────────
 def _startup():
     pyai_key = (os.environ.get("PYAI_API_KEY") or "").strip()
     if not pyai_key:
-        log.info("No PYAI_API_KEY found — minting a free sandbox key...")
-        minted = _mint_sandbox_key()
-        if not minted:
-            log.warning(
-                "No PYAI_API_KEY available. Uploads will fail until you add one."
-            )
+        log.warning(
+            "PYAI_API_KEY is not set.\n"
+            "   ➤ Set it on the host (Render env, or a gitignored local .env).\n"
+            "   ➤ This process does not write secrets to .env or the database."
+        )
     else:
-        # Ensure both client modules see the same key (import order / blank reload).
         _apply_pyai_key(pyai_key)
         kind = "sandbox" if pyai_key.startswith("pyai_test_") else "configured"
         log.info("PYAI_API_KEY present (%s key)", kind)
@@ -330,8 +224,7 @@ def _startup():
     if not (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
         log.warning(
             "ANTHROPIC_API_KEY is not set.\n"
-            "   ➤ The QA engine needs this.\n"
-            "   ➤ Get one at https://console.anthropic.com and add to .env"
+            "   ➤ The QA engine needs this on the host environment."
         )
 
     transcribe.init_db()
@@ -339,7 +232,7 @@ def _startup():
         log.warning(
             "SUPABASE_SERVICE_ROLE_KEY is not set.\n"
             "   ➤ Uploads and playback need private Storage.\n"
-            "   ➤ Add the service role key from Project Settings → API to .env"
+            "   ➤ Set the service role key on the host (never a VITE_* var)."
         )
     pyai_usage.init_usage_db()
     error_notify.log_ready()
@@ -863,13 +756,22 @@ def _require_loopback(request: Request) -> None:
 
 @app.post("/api/keys")
 def update_keys(body: KeyUpdate, request: Request):
-    """
-    Replace PyAI, Claude, and/or JustCall keys at runtime and persist them in .env.
-    Never returns the submitted secret. Localhost only.
+    """Apply JustCall credentials for this process. App-owned keys are host env only.
+
+    Never writes .env or the database. Never returns the submitted secret.
+    Localhost only.
     """
     _require_loopback(request)
     pyai_raw = (body.pyai_api_key or "").strip()
     claude_raw = (body.anthropic_api_key or "").strip()
+    if pyai_raw or claude_raw:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "PyAI and Anthropic keys are host environment variables "
+                "(PYAI_API_KEY, ANTHROPIC_API_KEY). They cannot be set from the API."
+            ),
+        )
     jc_key_raw = (body.justcall_api_key or "").strip()
     jc_secret_raw = (body.justcall_api_secret or "").strip()
     jc_partial = bool(jc_key_raw) ^ bool(jc_secret_raw)
@@ -878,41 +780,22 @@ def update_keys(body: KeyUpdate, request: Request):
             status_code=400,
             detail="JustCall needs both the API key and the API secret.",
         )
-    if not pyai_raw and not claude_raw and not jc_key_raw:
+    if not jc_key_raw:
         raise HTTPException(
             status_code=400,
-            detail="Provide a PyAI key, a Claude key, and/or JustCall key + secret.",
+            detail="Provide JustCall key + secret, or set app keys on the host.",
         )
 
     updated: list[str] = []
     try:
-        if pyai_raw:
-            key = env_keys.normalize_pyai_key(pyai_raw)
-            env_keys.upsert_env_value(ENV_FILE, "PYAI_API_KEY", key, overwrite=True)
-            _apply_pyai_key(key)
-            updated.append("pyai")
-        if claude_raw:
-            key = env_keys.normalize_anthropic_key(claude_raw)
-            env_keys.upsert_env_value(ENV_FILE, "ANTHROPIC_API_KEY", key, overwrite=True)
-            qa.set_api_key(key)
-            updated.append("claude")
-        if jc_key_raw and jc_secret_raw:
-            jc_key = env_keys.normalize_justcall_key(jc_key_raw)
-            jc_secret = env_keys.normalize_justcall_secret(jc_secret_raw)
-            env_keys.upsert_env_value(ENV_FILE, "JUSTCALL_API_KEY", jc_key, overwrite=True)
-            env_keys.upsert_env_value(
-                ENV_FILE, "JUSTCALL_API_SECRET", jc_secret, overwrite=True,
-            )
-            justcall.set_credentials(jc_key, jc_secret)
-            updated.append("justcall")
-            _start_justcall_poller()
+        jc_key = env_keys.normalize_justcall_key(jc_key_raw)
+        jc_secret = env_keys.normalize_justcall_secret(jc_secret_raw)
+        justcall.set_credentials(jc_key, jc_secret)
+        updated.append("justcall")
+        _start_justcall_poller()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    except OSError:
-        raise HTTPException(status_code=500, detail="Could not save the key.") from None
 
-    if "pyai" in updated:
-        _pyai_me_clear()
     applog.event(log, "keys_updated", providers=",".join(updated))
     pyai = (transcribe.PYAI_API_KEY or "").strip()
     claude = (qa.ANTHROPIC_API_KEY or "").strip()

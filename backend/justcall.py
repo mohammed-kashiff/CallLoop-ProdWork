@@ -65,7 +65,7 @@ def _require_configured() -> None:
     if not configured():
         raise RuntimeError(
             "JustCall is not configured. Set JUSTCALL_API_KEY and "
-            "JUSTCALL_API_SECRET in .env (from JustCall → APIs and Webhooks)."
+            "JUSTCALL_API_SECRET on the host (from JustCall → APIs and Webhooks)."
         )
 
 

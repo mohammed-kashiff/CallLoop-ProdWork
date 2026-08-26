@@ -68,14 +68,14 @@ def test_status_never_echoes_secrets(monkeypatch):
     assert ":" not in str(body.get("configured"))
 
 
-def test_update_justcall_keys_persist_and_do_not_echo(tmp_path, monkeypatch):
+def test_update_justcall_keys_apply_and_do_not_echo(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from backend.api import app
+    from backend import justcall
 
     env_path = tmp_path / ".env"
     env_path.write_text("AUDIT_MODE=hybrid\n", encoding="utf-8")
-    monkeypatch.setattr("backend.api.ENV_FILE", str(env_path))
     monkeypatch.delenv("JUSTCALL_API_KEY", raising=False)
     monkeypatch.delenv("JUSTCALL_API_SECRET", raising=False)
     key = "jc_key_" + ("a" * 12)
@@ -96,9 +96,10 @@ def test_update_justcall_keys_persist_and_do_not_echo(tmp_path, monkeypatch):
     assert "justcall" in body["updated"]
     assert body["justcall"]["configured"] is True
     assert body["justcall"]["suffix"] == key[-4:]
+    assert justcall.configured()
     saved = env_path.read_text(encoding="utf-8")
-    assert f"JUSTCALL_API_KEY={key}" in saved
-    assert f"JUSTCALL_API_SECRET={secret}" in saved
+    assert "JUSTCALL_API_KEY" not in saved
+    assert "JUSTCALL_API_SECRET" not in saved
     monkeypatch.delenv("JUSTCALL_API_KEY", raising=False)
     monkeypatch.delenv("JUSTCALL_API_SECRET", raising=False)
 

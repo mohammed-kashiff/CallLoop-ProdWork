@@ -1,15 +1,10 @@
-"""Upsert allowlisted keys in the repo-root .env. Never log secret values."""
+"""Validate allowlisted key formats. Never log secret values.
+
+App-owned credentials (PyAI, Anthropic, Supabase service role) are host
+environment variables. This module does not write .env or the database.
+"""
 
 from __future__ import annotations
-
-import os
-
-ALLOWED_ENV_KEYS = frozenset({
-    "PYAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "JUSTCALL_API_KEY",
-    "JUSTCALL_API_SECRET",
-})
 
 
 def key_suffix(value: str | None) -> str | None:
@@ -64,47 +59,3 @@ def normalize_justcall_secret(raw: str) -> str:
 
 def pyai_kind(key: str) -> str:
     return "sandbox" if (key or "").startswith("pyai_test_") else "live"
-
-
-def upsert_env_value(path: str, name: str, value: str, *, overwrite: bool = True) -> str:
-    """
-    Write NAME=value into an env file.
-    Returns written | kept | created. Does not log `value`.
-    """
-    if name not in ALLOWED_ENV_KEYS:
-        raise ValueError("Unsupported env key.")
-    if "\n" in value or "\r" in value or "=" in name:
-        raise ValueError("Invalid env value.")
-
-    lines: list[str] = []
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
-    new_lines: list[str] = []
-    replaced = False
-    outcome = "created"
-    prefix = f"{name}="
-    for line in lines:
-        if line.startswith(prefix):
-            existing = line.split("=", 1)[1].strip().strip('"').strip("'")
-            if existing and not overwrite:
-                new_lines.append(line)
-                replaced = True
-                outcome = "kept"
-            else:
-                new_lines.append(f"{prefix}{value}\n")
-                replaced = True
-                outcome = "written"
-        else:
-            new_lines.append(line)
-
-    if not replaced:
-        if new_lines and not new_lines[-1].endswith("\n"):
-            new_lines[-1] = new_lines[-1] + "\n"
-        new_lines.append(f"{prefix}{value}\n")
-        outcome = "created"
-
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
-    return outcome

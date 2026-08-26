@@ -1,5 +1,9 @@
-# secrets & environment
+# secrets & environment — never commit. Copy .env.example → .env locally.
 .env
+.env.*
+!.env.example
+frontend/.env
+!frontend/.env.example
 .venv/
 
 # python

@@ -12,7 +12,7 @@ load_dotenv(ENV_FILE)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 if not ANTHROPIC_API_KEY:
-    sys.exit("ERROR: ANTHROPIC_API_KEY not found. Did you add it to .env?")
+    sys.exit("ERROR: ANTHROPIC_API_KEY not found. Set it on the host environment.")
 
 MODEL = "claude-haiku-4-5"
 

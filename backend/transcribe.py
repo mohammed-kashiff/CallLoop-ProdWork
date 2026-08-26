@@ -80,9 +80,8 @@ def set_api_key(api_key: str):
 def _require_api_key():
     if not PYAI_API_KEY:
         raise RuntimeError(
-            "PYAI_API_KEY not configured. Add it to .env, or start the API so it "
-            "can mint a sandbox key (sandbox keys cannot diarize — use a live key "
-            "with transcribe:jobs for CallProof)."
+            "PYAI_API_KEY not configured. Set it on the host environment "
+            "(live key with transcribe:jobs for CallProof)."
         )
 
 
@@ -713,7 +712,7 @@ _SYNC_SCOPE_HELP = (
     "This API key cannot use async Hear jobs (transcribe:jobs). "
     "CallProof needs speaker-labelled segments from POST /v1/transcription/jobs "
     "(diarize/channel). Sandbox keys only include hear:transcribe (text-only sync). "
-    "Add a live PYAI_API_KEY with transcribe:jobs to .env and restart."
+    "Set a live PYAI_API_KEY with transcribe:jobs on the host and restart."
 )
 
 
@@ -1049,7 +1048,7 @@ def identity_for(src):
 def main(argv: list[str] | None = None):
     argv = list(sys.argv if argv is None else argv)
     if not PYAI_API_KEY:
-        sys.exit("ERROR: PYAI_API_KEY not found. Is .env in the repo root?")
+        sys.exit("ERROR: PYAI_API_KEY not found. Set it on the host environment.")
     src = (argv[1] if len(argv) > 1 else "").strip() or (os.getenv("CALLPROOF_CLI_AUDIO") or "").strip()
     if not src:
         sys.exit(

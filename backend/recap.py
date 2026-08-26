@@ -34,7 +34,7 @@ HEADERS = {"Authorization": f"Bearer {PYAI_API_KEY}"} if PYAI_API_KEY else {}
 SANDBOX_RECAP_ERROR = (
     "Recap is unavailable on a sandbox PyAI key. "
     "Create a live API key at https://console.pyai.com and set PYAI_API_KEY "
-    "in your .env, then restart and re-run the audit."
+    "on the host, then restart and re-run the audit."
 )
 
 

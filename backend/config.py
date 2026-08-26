@@ -17,13 +17,13 @@ _DEFAULT_CORS = (
 
 
 def load_env() -> str:
-    """Load the repo-root .env. Safe to call more than once."""
+    """Load a gitignored local host env file if present. Safe to call more than once."""
     load_dotenv(ENV_FILE)
     return ENV_FILE
 
 
 def skip_startup() -> bool:
-    """Tests set CALLPROOF_SKIP_STARTUP=1 to import the app without minting keys."""
+    """Tests set CALLPROOF_SKIP_STARTUP=1 to import the app without provider bootstrap."""
     return (os.getenv("CALLPROOF_SKIP_STARTUP") or "").strip().lower() in (
         "1",
         "true",

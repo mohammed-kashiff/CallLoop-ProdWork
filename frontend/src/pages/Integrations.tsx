@@ -65,7 +65,9 @@ export function Integrations() {
       if (!r.ok) throw new Error(await readError(r, 'Could not save JustCall credentials.'))
       setApiKey('')
       setApiSecret('')
-      setNote('JustCall connected. Click Sync now to pull completed calls.')
+      setNote(
+        'JustCall connected for this process. Set JUSTCALL_API_KEY and JUSTCALL_API_SECRET on the host to keep them after restart. Click Sync now to pull completed calls.',
+      )
       await load()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not save JustCall credentials.')

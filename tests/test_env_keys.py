@@ -1,4 +1,4 @@
-"""Env key upsert and validation. Never stores real secrets in tests."""
+"""Env key format checks. Never stores real secrets in tests."""
 
 from __future__ import annotations
 
@@ -30,27 +30,6 @@ def test_normalize_anthropic_key_rejects_junk():
     assert ok.startswith("sk-ant-")
 
 
-def test_upsert_overwrites_and_does_not_leak_path_value(tmp_path):
-    path = tmp_path / ".env"
-    path.write_text("PYAI_API_KEY=pyai_test_oldvaluexxxxxxxxx\nAUDIT_MODE=hybrid\n", encoding="utf-8")
-    new = "pyai_live_" + ("y" * 16)
-    outcome = env_keys.upsert_env_value(str(path), "PYAI_API_KEY", new, overwrite=True)
-    assert outcome == "written"
-    text = path.read_text(encoding="utf-8")
-    assert new in text
-    assert "pyai_test_oldvaluexxxxxxxxx" not in text
-    assert "AUDIT_MODE=hybrid" in text
-
-
-def test_upsert_keeps_existing_when_overwrite_false(tmp_path):
-    path = tmp_path / ".env"
-    path.write_text("PYAI_API_KEY=pyai_live_keepmepleasexxxx\n", encoding="utf-8")
-    env_keys.upsert_env_value(
-        str(path), "PYAI_API_KEY", "pyai_test_" + ("z" * 16), overwrite=False,
-    )
-    assert "pyai_live_keepmepleasexxxx" in path.read_text(encoding="utf-8")
-
-
 def test_normalize_justcall_tokens():
     key = env_keys.normalize_justcall_key("jc_key_abcdefgh")
     secret = env_keys.normalize_justcall_secret("jc_secret_ijklmnop")
@@ -70,25 +49,37 @@ def test_normalize_justcall_rejects_spaces_and_colons():
     assert env_keys.key_suffix("") is None
 
 
-def test_update_keys_persists_and_does_not_echo_secret(tmp_path, monkeypatch):
+def test_env_keys_does_not_write_files():
+    assert not hasattr(env_keys, "upsert_env_value")
+
+
+def test_update_keys_rejects_app_owned_secrets(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from backend.api import app
+    from tests.conftest import authorize
 
     env_path = tmp_path / ".env"
     env_path.write_text("AUDIT_MODE=hybrid\n", encoding="utf-8")
-    monkeypatch.setattr("backend.api.ENV_FILE", str(env_path))
     live = "pyai_live_" + ("k" * 16)
     client = TestClient(app)
-    from tests.conftest import authorize
-
     authorize(client, monkeypatch)
     r = client.post("/api/keys", json={"pyai_api_key": live})
-    assert r.status_code == 200, r.text
-    body = r.json()
+    assert r.status_code == 400, r.text
     assert live not in r.text
-    assert body["ok"] is True
-    assert body["pyai"]["label"] == "Live"
-    assert body["pyai"]["suffix"] == live[-4:]
-    saved = env_path.read_text(encoding="utf-8")
-    assert f"PYAI_API_KEY={live}" in saved
+    assert "host environment" in r.json()["detail"].lower()
+    assert "PYAI_API_KEY=" not in env_path.read_text(encoding="utf-8")
+
+
+def test_update_keys_rejects_anthropic(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+    from tests.conftest import authorize
+
+    fake = "sk-ant-" + ("z" * 16)
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.post("/api/keys", json={"anthropic_api_key": fake})
+    assert r.status_code == 400
+    assert fake not in r.text

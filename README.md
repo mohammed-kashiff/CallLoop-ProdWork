@@ -69,18 +69,13 @@ UI brand in this branch: **Call Loop v3** (React + TypeScript + Vite).
 
 | | Sandbox (`pyai_test_…`) | Live (`pyai_live_…`) |
 |--|-------------------------|----------------------|
-| How you get it | Auto-minted on first API start if `.env` has no key, **or** set manually | [console.pyai.com](https://console.pyai.com) |
+| How you get it | Set `PYAI_API_KEY` on the host (`pyai_test_…`) | [console.pyai.com](https://console.pyai.com) |
 | Typical scopes | `hear:transcribe` (sync text) | `transcribe:jobs` (+ Recap when enabled) |
 | CallProof full QA | **Limited** — diarized async jobs / Recap often fail | **Required** for production-like scoring |
 
-Sandbox is fine to **boot the stack and explore the UI**. For real transcription + scorecards, put a **live** `PYAI_API_KEY` in `.env`.
+Sandbox is fine to **boot the stack and explore the UI**. For real transcription + scorecards, set a **live** `PYAI_API_KEY` on the host (Render Environment, or a gitignored local `.env` you create from `.env.example`).
 
-You always need an **`ANTHROPIC_API_KEY`** for Claude scoring — paste your real key from the Anthropic console (do not commit it).
-
-> **Sandbox key minting returns 429?**  
-> Your network has hit PyAI's sandbox key limit (rate limited per IP/network).  
-> Switch to a different internet connection (e.g. phone hotspot) and restart,  
-> or add a live `PYAI_API_KEY` from [console.pyai.com](https://console.pyai.com) to `.env` manually.
+You always need **`ANTHROPIC_API_KEY`** for Claude scoring (Anthropic console). Do not commit it. The API does not write these keys to `.env` or the database.
 
 ---
 
@@ -136,41 +131,29 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Create env file:
+Create a **gitignored** local env file (this is host config for your machine, not part of the repo):
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` (any editor — on macOS you can use `open -e .env`). Minimum for Claude scoring:
+Edit `.env` and set the **names** below. Leave values empty in git; fill them only in that local file or on Render.
 
-```bash
-# Required for QA — paste your real Anthropic key (never commit .env)
-ANTHROPIC_API_KEY=
+Required app-owned secrets (host env only):
 
-# Leave blank to auto-mint a PyAI sandbox key on first API start,
-# OR paste a sandbox/live key yourself:
-PYAI_API_KEY=
+| Name | Purpose |
+|------|---------|
+| `PYAI_API_KEY` | Hear transcription |
+| `ANTHROPIC_API_KEY` | Claude scoring |
+| `SUPABASE_SERVICE_ROLE_KEY` | Private Storage uploads and signed URLs |
+| `DATABASE_URL` | Postgres |
+| `SUPABASE_URL` | Auth issuer / Storage |
 
-AUDIT_MODE=hybrid
+Also copy `frontend/.env.example` to `frontend/.env` and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (anon key is public by design). Never put the service role in `VITE_*`.
 
-# Supabase Auth (required for login — never commit real values)
-SUPABASE_URL=
-SUPABASE_JWT_SECRET=
-```
+Optional spend-estimate knobs (already named in `.env.example`): `COST_PYAI_USD_PER_MINUTE`, `COST_PYAI_USD_PER_UNIT`, `COST_CLAUDE_USD_PER_AUDIT`, `COST_CLAUDE_USD_PER_HIT`.
 
-Also copy `frontend/.env.example` to `frontend/.env` and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
-
-Optional spend-estimate knobs (already in `.env.example`):
-
-```bash
-COST_PYAI_USD_PER_MINUTE=0.01
-COST_PYAI_USD_PER_UNIT=0.01
-COST_CLAUDE_USD_PER_AUDIT=0.06
-COST_CLAUDE_USD_PER_HIT=0.02
-```
-
-**Never commit `.env`.**
+**Never commit `.env`.** It is gitignored. The app never writes secrets into it.
 
 Start the API (**Terminal 1** — leave it running):
 
@@ -182,14 +165,7 @@ uvicorn backend.api:app --reload --port 8000
 
 `uvicorn api:app --reload --port 8000` still works (root shim). Prefer `backend.api:app` so `--reload` watches the package.
 
-On first start with an empty `PYAI_API_KEY`, the API tries to mint a free sandbox key and write it into `.env`. Watch the terminal for:
-
-- `No PYAI_API_KEY found — minting a free sandbox key...`
-- or `PYAI_API_KEY present (sandbox key)` / `(configured key)`
-
-> **If you see `sandbox key minting failed (HTTP 429)`:**  
-> Your network has hit PyAI's sandbox key limit. Switch to a phone hotspot  
-> and restart uvicorn, or add a live key to `.env` manually (see Section G).
+If `PYAI_API_KEY` or `ANTHROPIC_API_KEY` is missing, the API logs a warning and uploads/QA fail until you set them on the host and restart.
 
 API base: **http://127.0.0.1:8000**
 
@@ -216,7 +192,7 @@ UI: **http://127.0.0.1:5173**
 
 Open that URL in your browser.
 
-Click the **Sandbox / Live** chip in the sidebar (or the same label in the top bar) to paste a live PyAI key and/or a Claude key. They are saved to `.env` and take effect immediately — the chip switches to **Live** when the PyAI key starts with `pyai_live_`.
+The **Sandbox / Live** chip shows whether `PYAI_API_KEY` on the host is a test or live key. PyAI, Anthropic, and the Supabase service role are **not** pasted in the UI.
 
 ---
 
@@ -271,11 +247,7 @@ Then start API and UI again.
 ### G. Optional: use a live PyAI key (full transcription)
 
 1. Create a live key at [console.pyai.com](https://console.pyai.com) with `transcribe:jobs`.
-2. Put it in `.env`:
-
-```bash
-PYAI_API_KEY=pyai_live_your_key_here
-```
+2. Set `PYAI_API_KEY` on the host (gitignored local `.env`, or Render Environment).
 
 3. Restart uvicorn (Ctrl+C in Terminal 1, then start again).
 
@@ -286,7 +258,7 @@ PYAI_API_KEY=pyai_live_your_key_here
 Completed JustCall calls are downloaded, transcribed with Hear, scored with Claude, and listed under **Integrations**.
 
 1. In JustCall → **Settings → APIs and Webhooks**, copy the API key and secret.
-2. On **Integrations**, paste both and click **Save and connect** (also available in the API keys panel).
+2. Set `JUSTCALL_API_KEY` and `JUSTCALL_API_SECRET` on the host. **Integrations** can apply them to this process only; they do not persist in the repo.
 3. Click **Sync now**. Finished calls appear on that page. New ones are pulled automatically after that.
 
 You do not need a webhook or ngrok on this laptop.
@@ -483,8 +455,8 @@ New workspace: Dashboard → **New → Blueprint** and point at this repo’s `r
 
 | Path | Purpose |
 |------|---------|
-| `.env` | Secrets (local only) |
-| `frontend/.env` | Optional `VITE_API_URL`; `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` for login |
+| `.env` (gitignored) | Local host secrets — never committed |
+| `frontend/.env` (gitignored) | `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` |
 | `logs/callproof.log` | Backend event log |
 | `callproof.db` | Unused locally (runtime is Postgres) |
 | `rubric.json` | Runtime scoring rubric (v8 shape) |
@@ -494,8 +466,9 @@ New workspace: Dashboard → **New → Blueprint** and point at this repo’s `r
 
 ## Security notes
 
-- Do not commit API keys or `.env`.
-- Sandbox keys are for bootstrap; treat live keys as secrets.
+- App-owned secrets (`PYAI_API_KEY`, `ANTHROPIC_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) live on the **host** (Render Environment, or a gitignored local `.env`). They are not stored in Postgres and the API does not write `.env`.
+- `.env` is gitignored and is not in git history. `.env.example` has empty placeholders only.
+- Do not commit API keys. Do not put the service role in `VITE_*`.
 - Cost figures in the UI are **estimates** from local usage × `COST_*` rates, not provider invoices.
 - HTTP **5xx** and unhandled API crashes can notify via macOS Notification Center (default on this Mac), optional `ERROR_NOTIFY_WEBHOOK_URL`, and default operator email (Mail.app). Notices are redacted; 4xx is not alerted.
 

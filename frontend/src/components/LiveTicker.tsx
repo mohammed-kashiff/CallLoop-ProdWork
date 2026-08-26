@@ -17,7 +17,7 @@ export function LiveTicker() {
 
   return (
     <div className="live-ticker" aria-label="PyAI usage">
-      <button type="button" className="live-pill" onClick={openKeys} title="Change PyAI and Claude keys">
+      <button type="button" className="live-pill" onClick={openKeys} title="Key status (host environment)">
         <span
           className={['live-dot', status?.healthy ? 'is-ok' : ''].filter(Boolean).join(' ')}
           aria-hidden="true"

@@ -171,7 +171,7 @@ def send_message(msg: EmailMessage, *, to_addr: str | None = None) -> dict:
     if not c["host"]:
         raise RuntimeError(
             "Email is not configured. Set SMTP_HOST, SMTP_FROM (or SMTP_USER), "
-            "and STAKEHOLDER_EMAIL in .env."
+            "and STAKEHOLDER_EMAIL on the host."
         )
     dest = (to_addr or c["to_addr"]).strip()
     sender = c["from_addr"]

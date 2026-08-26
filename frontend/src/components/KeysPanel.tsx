@@ -5,8 +5,6 @@ import { usePyaiStatus } from '../context/PyaiStatus'
 export function KeysPanel() {
   const { status, isSandbox, isLive, label, keysOpen, closeKeys, refresh } = usePyaiStatus()
   const titleId = useId()
-  const [pyaiKey, setPyaiKey] = useState('')
-  const [claudeKey, setClaudeKey] = useState('')
   const [justcallKey, setJustcallKey] = useState('')
   const [justcallSecret, setJustcallSecret] = useState('')
   const [justcallSuffix, setJustcallSuffix] = useState<string | null>(null)
@@ -17,8 +15,6 @@ export function KeysPanel() {
 
   useEffect(() => {
     if (!keysOpen) return
-    setPyaiKey('')
-    setClaudeKey('')
     setJustcallKey('')
     setJustcallSecret('')
     setError(null)
@@ -43,52 +39,34 @@ export function KeysPanel() {
 
   if (!keysOpen) return null
 
-  const pyaiHint = status?.pyai_suffix ? `ending ${status.pyai_suffix}` : 'no key saved'
+  const pyaiHint = status?.pyai_suffix ? `ending ${status.pyai_suffix}` : 'not set on this host'
   const claudeHint = status?.claude_configured
-    ? `saved · ending ${status.claude_suffix || '••••'}`
-    : 'not set'
+    ? `on host · ending ${status.claude_suffix || '••••'}`
+    : 'not set on this host'
 
   const onSave = async () => {
-    const pyai = pyaiKey.trim()
-    const claude = claudeKey.trim()
     const jcKey = justcallKey.trim()
     const jcSecret = justcallSecret.trim()
-    if (!pyai && !claude && !jcKey && !jcSecret) {
-      setError('Paste a PyAI key, a Claude key, or JustCall key + secret.')
-      return
-    }
-    if (Boolean(jcKey) !== Boolean(jcSecret)) {
-      setError('JustCall needs both the API key and the API secret.')
+    if (!jcKey || !jcSecret) {
+      setError('Paste both the JustCall API key and the API secret.')
       return
     }
     setSaving(true)
     setError(null)
     setOkNote(null)
     try {
-      const body: {
-        pyai_api_key?: string
-        anthropic_api_key?: string
-        justcall_api_key?: string
-        justcall_api_secret?: string
-      } = {}
-      if (pyai) body.pyai_api_key = pyai
-      if (claude) body.anthropic_api_key = claude
-      if (jcKey && jcSecret) {
-        body.justcall_api_key = jcKey
-        body.justcall_api_secret = jcSecret
-      }
       const r = await apiFetch('/api/keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          justcall_api_key: jcKey,
+          justcall_api_secret: jcSecret,
+        }),
       })
       if (!r.ok) throw new Error(await readError(r, 'Could not save the key.'))
       const data = (await r.json()) as {
-        updated?: string[]
         justcall?: { configured?: boolean; suffix?: string | null }
       }
-      setPyaiKey('')
-      setClaudeKey('')
       setJustcallKey('')
       setJustcallSecret('')
       if (data.justcall) {
@@ -96,16 +74,8 @@ export function KeysPanel() {
         setJustcallSuffix(data.justcall.suffix || null)
       }
       await refresh()
-      const bits = data.updated || []
-      const names = [
-        bits.includes('pyai') ? 'PyAI' : '',
-        bits.includes('claude') ? 'Claude' : '',
-        bits.includes('justcall') ? 'JustCall' : '',
-      ].filter(Boolean)
       setOkNote(
-        names.length
-          ? `${names.join(' and ')} ${names.length === 1 ? 'key' : 'keys'} saved.`
-          : 'Keys saved.',
+        'JustCall connected for this process. Set JUSTCALL_API_KEY and JUSTCALL_API_SECRET on the host to keep them after restart.',
       )
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not save the key.')
@@ -134,8 +104,8 @@ export function KeysPanel() {
         </header>
 
         <p className="keys-lede">
-          Keys stay on this machine in <code>.env</code>. The UI never shows the full secret
-          after save.
+          PyAI, Anthropic, and the Supabase service role are host environment
+          variables. This app does not write them to <code>.env</code> or the database.
         </p>
 
         <section className="keys-block">
@@ -150,18 +120,9 @@ export function KeysPanel() {
               {label}
             </span>
           </div>
-          <p className="keys-meta">Current key {pyaiHint}</p>
-          <label className="keys-field">
-            <span>Replace with a live (or sandbox) PyAI key</span>
-            <input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="pyai_live_…"
-              value={pyaiKey}
-              onChange={(e) => setPyaiKey(e.target.value)}
-            />
-          </label>
+          <p className="keys-meta">
+            {pyaiHint} — set <code>PYAI_API_KEY</code> on the host and restart.
+          </p>
         </section>
 
         <section className="keys-block">
@@ -171,18 +132,9 @@ export function KeysPanel() {
               {status?.claude_configured ? 'Configured' : 'Missing'}
             </span>
           </div>
-          <p className="keys-meta">{claudeHint}</p>
-          <label className="keys-field">
-            <span>Anthropic API key</span>
-            <input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="sk-ant-…"
-              value={claudeKey}
-              onChange={(e) => setClaudeKey(e.target.value)}
-            />
-          </label>
+          <p className="keys-meta">
+            {claudeHint} — set <code>ANTHROPIC_API_KEY</code> on the host and restart.
+          </p>
         </section>
 
         <section className="keys-block">
@@ -194,8 +146,8 @@ export function KeysPanel() {
           </div>
           <p className="keys-meta">
             {justcallOn
-              ? `saved · ending ${justcallSuffix || '••••'}`
-              : 'not set — paste key and secret together'}
+              ? `this process · ending ${justcallSuffix || '••••'}`
+              : 'set JUSTCALL_API_KEY and JUSTCALL_API_SECRET on the host, or paste below for this process only'}
           </p>
           <label className="keys-field">
             <span>API key</span>
@@ -230,7 +182,7 @@ export function KeysPanel() {
 
         <div className="keys-actions">
           <button type="button" className="start-btn" onClick={() => void onSave()} disabled={saving}>
-            {saving ? 'Saving…' : 'Save keys'}
+            {saving ? 'Saving…' : 'Connect JustCall'}
           </button>
         </div>
       </div>
