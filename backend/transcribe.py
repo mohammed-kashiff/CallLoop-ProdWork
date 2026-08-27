@@ -335,8 +335,12 @@ def prepare_hear_upload(src_path, hear_tmp):
 
 # ---------- Database ----------
 def init_db():
-    """Confirm Postgres is reachable. Schema is Alembic-only (no CREATE/ALTER here)."""
-    db.ping()
+    """Confirm Postgres is reachable. Re-seed the placeholder org if wiped."""
+    from .auth import ensure_placeholder_org
+
+    with db.connection() as conn:
+        ensure_placeholder_org(conn)
+        conn.execute("SELECT 1")
 
 
 def sanitize_filename(name: str | None, fallback: str = "recording.mp3") -> str:
@@ -550,6 +554,10 @@ def save_transcript(
     result = normalize_hear_result(result)
     segments = result.get("segments") or []
     safe_name = sanitize_filename(filename) if filename else None
+    if org_id == DEFAULT_ORG_ID:
+        from .auth import ensure_placeholder_org
+
+        ensure_placeholder_org(conn)
     row = conn.execute(
         """
         INSERT INTO calls (

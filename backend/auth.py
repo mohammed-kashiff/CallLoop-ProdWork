@@ -297,6 +297,28 @@ def ensure_membership(
         return Membership(org_id, role, uid)
 
 
+def ensure_placeholder_org(conn) -> None:
+    """Idempotent seed of the DEFAULT_ORG_ID orgs row only.
+
+    Background/webhook/CLI fallbacks insert into calls/usage with that org_id.
+    Migration 0001 seeds it once; a data wipe can remove it. Same idea as
+    _ensure_placeholder_rubric. Not a general org factory — do not pass
+    another id. Do not call from JWT signup/login bootstrap.
+
+    RLS on orgs is id = current_org_id(); GUC is set to the placeholder
+    for this insert. Caller must already be on the default-org fallback
+    path (or re-apply tenant GUCs afterward).
+    """
+    db.apply_tenant_gucs(conn, org_id=DEFAULT_ORG_ID)
+    conn.execute(
+        """
+        INSERT INTO orgs (id, name) VALUES (%s, %s)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (DEFAULT_ORG_ID, "default"),
+    )
+
+
 def _ensure_placeholder_rubric(conn, *, org_id: str, user_id: str) -> None:
     """Re-seed Default (legacy v8) if a data wipe removed it. No-op for other orgs."""
     if org_id != DEFAULT_ORG_ID:

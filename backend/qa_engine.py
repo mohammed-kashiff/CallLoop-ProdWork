@@ -71,6 +71,10 @@ MAX_TOKENS = 2000
 def load_call(call_id=None, *, org_id: str | None = None):
     tenant = org_id or DEFAULT_ORG_ID
     with db.connection() as conn:
+        if tenant == DEFAULT_ORG_ID:
+            from .auth import ensure_placeholder_org
+
+            ensure_placeholder_org(conn)
         if call_id is None:
             row = conn.execute(
                 """

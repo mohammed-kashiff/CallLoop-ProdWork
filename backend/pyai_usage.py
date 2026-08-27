@@ -104,8 +104,13 @@ def record_http_response(
                 break
         units = _parse_units(units_raw)
         created = datetime.now(timezone.utc).isoformat()
+        tenant = bound_org_id() or DEFAULT_ORG_ID
         with _lock:
             with _conn() as c:
+                if tenant == DEFAULT_ORG_ID:
+                    from .auth import ensure_placeholder_org
+
+                    ensure_placeholder_org(c)
                 c.execute(
                     """
                     INSERT INTO api_usage
@@ -113,7 +118,7 @@ def record_http_response(
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        bound_org_id() or DEFAULT_ORG_ID,
+                        tenant,
                         provider,
                         method,
                         path,
@@ -165,6 +170,10 @@ def usage_summary(since_iso: str | None = None, *, org_id: str | None = None) ->
     tenant = org_id or bound_org_id() or DEFAULT_ORG_ID
     with _lock:
         with _conn() as c:
+            if tenant == DEFAULT_ORG_ID:
+                from .auth import ensure_placeholder_org
+
+                ensure_placeholder_org(c)
             rows = c.execute(
                 """
                 SELECT provider, method, path, COUNT(*) AS hits,

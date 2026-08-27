@@ -5,8 +5,8 @@
 > picking up work in this repo, read this file first — it exists so you don't
 > have to reverse-engineer the codebase from scratch.
 >
-> Last written: 2026-08-27, reflecting the repo through `org_members.short_id`
-> (Ticket 3 of the tenancy epic).
+> Last written: 2026-08-27, reflecting the placeholder-org self-heal fix and
+> `docs/adr/001-tenancy-model.md`.
 
 ---
 
@@ -126,6 +126,7 @@ request and scopes every downstream call to that org.
 | `README.md` | Setup/install/deploy instructions — the "how do I run this" doc. |
 | `ARCHITECTURE.md` | This file — the "what is this and how does it fit together" doc. |
 | `docs/postgres-cutover.md` | Rollback runbook for the Postgres-only cutover (app rollback vs. data rollback vs. schema rollback). |
+| `docs/adr/001-tenancy-model.md` | Why shared-schema + RLS was chosen over schema/DB-per-tenant, the `org_members` RLS exception, domain-matching signup, and `DEFAULT_ORG_ID`'s actual remaining purpose. |
 
 ### `backend/` — the FastAPI app
 
@@ -135,7 +136,7 @@ request and scopes every downstream call to that org.
 | `api.py` | **The whole app.** Every HTTP route lives here (see §6 for the route table). |
 | `config.py` | Env loading, CORS origins, `skip_startup()` (test/CI flag to import the app without provider bootstrap). |
 | `paths.py` | Repo-root-relative paths (log dir, rubric path, `.env` path) — independent of process cwd. |
-| `auth.py` | Verifies Supabase JWTs, and `ensure_membership()` — the org-bootstrap logic that decides which org a signed-up user lands in (see §5). |
+| `auth.py` | Verifies Supabase JWTs, `ensure_membership()`, and `ensure_placeholder_org()` — idempotent seed of `DEFAULT_ORG_ID` for webhook/CLI/usage fallbacks only (not signup). |
 | `org_ids.py` | Tenant-id plumbing: `contextvars`-based `bind_org_id`/`bound_org_id`/`org_scope`, `DEFAULT_ORG_ID`/`DEFAULT_RUBRIC_ID` constants (still used by background/webhook fallback paths, **not** by human signup anymore). |
 | `db.py` | Opens Postgres connections, runs `SET LOCAL ROLE callproof_app` + sets the tenant GUCs (`app.current_org_id`, `app.current_user_id`) so RLS applies. `bypass_rls=True` is a narrowly-scoped escape hatch for specific admin/background paths only — see the comment in that file before ever reaching for it. |
 | `db_url.py` | Reads and normalizes `DATABASE_URL`/`SUPABASE_DB_URL`. Never logs it (embeds a password). |
@@ -262,8 +263,6 @@ Every route except the JustCall webhook requires a valid Supabase JWT; the webho
 
 ## 7. Current known gaps (keep this section honest, don't let it go stale)
 
-- `DEFAULT_ORG_ID`'s seeded `orgs` row has no self-healing if the `orgs` table is wiped without re-running migration `0001` — background/webhook fallback paths that depend on it would break. Not yet fixed.
-- `docs/adr/001-tenancy-model.md` (an architecture decision record for the tenancy approach) doesn't exist yet.
 - Admin UI over `org_directory` is an open decision — the view is for direct SQL, not a product page. `short_id` is sequential (100000+) by design, not random.
 - `applog.py`'s secret-redaction filter is attached to the file log handler only — console/stdout output is not covered by the same filter.
 
