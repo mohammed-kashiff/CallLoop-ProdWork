@@ -10,7 +10,7 @@ frontend/.env
 __pycache__/
 *.pyc
 
-# data (regenerated locally; recordings are in Storage)
+# leftover local file if present; the API does not open SQLite
 callproof.db
 # leftover local recordings (backfill into Storage, then delete)
 audio/

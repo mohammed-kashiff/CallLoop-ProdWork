@@ -88,6 +88,7 @@ Use **two terminal tabs**. Run commands from the **repository root** (this folde
 - Git  
 - Python **3.11+** (3.12 fine)  
 - Node.js **20+** and npm  
+- **Postgres** via `DATABASE_URL` (Supabase project or local Postgres). There is no SQLite fallback.  
 - Internet (PyAI + Anthropic)  
 - Optional: system **ffmpeg** if browser/server Hear transcodes fail on your machine (`imageio-ffmpeg` is already a Python dependency for many paths)
 
@@ -146,7 +147,7 @@ Required app-owned secrets (host env only):
 | `PYAI_API_KEY` | Hear transcription |
 | `ANTHROPIC_API_KEY` | Claude scoring |
 | `SUPABASE_SERVICE_ROLE_KEY` | Private Storage uploads and signed URLs |
-| `DATABASE_URL` | Postgres |
+| `DATABASE_URL` | Postgres (required; no SQLite fallback) |
 | `SUPABASE_URL` | Auth issuer / Storage |
 
 Also copy `frontend/.env.example` to `frontend/.env` and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (anon key is public by design). Never put the service role in `VITE_*`.
@@ -154,6 +155,14 @@ Also copy `frontend/.env.example` to `frontend/.env` and set `VITE_SUPABASE_URL`
 Optional spend-estimate knobs (already named in `.env.example`): `COST_PYAI_USD_PER_MINUTE`, `COST_PYAI_USD_PER_UNIT`, `COST_CLAUDE_USD_PER_AUDIT`, `COST_CLAUDE_USD_PER_HIT`.
 
 **Never commit `.env`.** It is gitignored. The app never writes secrets into it.
+
+Apply schema **before** the first API start (and after pulling new `alembic/versions/` files):
+
+```bash
+unset DATABASE_URL
+source .venv/bin/activate
+alembic upgrade head
+```
 
 Start the API (**Terminal 1** — leave it running):
 
@@ -165,7 +174,9 @@ uvicorn backend.api:app --reload --port 8000
 
 `uvicorn api:app --reload --port 8000` still works (root shim). Prefer `backend.api:app` so `--reload` watches the package.
 
-If `PYAI_API_KEY` or `ANTHROPIC_API_KEY` is missing, the API logs a warning and uploads/QA fail until you set them on the host and restart.
+If `PYAI_API_KEY` or `ANTHROPIC_API_KEY` is missing, the API logs a warning and uploads/QA fail until you set them on the host and restart. If `DATABASE_URL` is missing, the process **does not start** (no SQLite fallback).
+
+Postgres cutover, host disks, and rollback: [docs/postgres-cutover.md](docs/postgres-cutover.md).
 
 API base: **http://127.0.0.1:8000**
 
@@ -385,7 +396,7 @@ print('seeded default rubric')
 
 A **full** database reset (drop schema / new Supabase project) is different: `alembic upgrade head` seeds org + rubric again.
 
-New calls and audits write to Postgres (that org). Local `callproof.db` is unused. Do not mutate a seeded rubric in place; bump `version` and insert a new row.
+New calls and audits write to Postgres (that org). Do not mutate a seeded rubric in place; bump `version` and insert a new row.
 
 **Apply** (explicit step, not on API import). Prefer session pooler `aws-0-us-west-2.pooler.supabase.com:5432` if `db.<ref>.supabase.co` does not resolve:
 
@@ -441,7 +452,7 @@ Needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Runtime no longer uses a l
 
 New workspace: Dashboard → **New → Blueprint** and point at this repo’s `render.yaml`, or recreate a Web Service with the table above. Paste secrets in the dashboard (`sync: false` in the Blueprint).
 
-**Not in this AC:** SQLite on a mounted disk (free instances have no persistent volume). Call rows live in Postgres; recordings live in Storage.
+**SQLite is not used.** `render.yaml` has no `disks:` key. Do not mount a volume for `callproof.db`. Call rows live in Postgres; recordings live in Storage. Rollback (app SHA, Supabase PITR, clone-only `alembic downgrade`): [docs/postgres-cutover.md](docs/postgres-cutover.md).
 
 ### Error tracking (Sentry)
 
@@ -470,7 +481,7 @@ The API initialises the official FastAPI Sentry SDK when `SENTRY_DSN` is set. Ev
 | `.env` (gitignored) | Local host secrets — never committed |
 | `frontend/.env` (gitignored) | `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` |
 | `logs/callproof.log` | Backend event log |
-| `callproof.db` | Unused locally (runtime is Postgres) |
+| `docs/postgres-cutover.md` | Postgres-only runtime, local `alembic`, rollback |
 | `rubric.json` | Runtime scoring rubric (v8 shape) |
 | `backend/` | Python API package |
 

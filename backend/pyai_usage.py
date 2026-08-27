@@ -26,9 +26,9 @@ def _conn():
     return db.connection()
 
 
-def init_usage_db(db_path: str | None = None) -> None:
-    """No-op: api_usage is created by Alembic. Signature kept for call-site compatibility."""
-    del db_path
+def init_usage_db() -> None:
+    """No-op: api_usage is created by Alembic."""
+    return
 
 
 def _utc_today_start() -> str:

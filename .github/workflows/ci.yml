@@ -42,5 +42,9 @@ jobs:
         run: pip install -r requirements.txt
       - name: Migrate
         run: alembic upgrade head
+      - name: Test schema rollback then restore
+        run: |
+          alembic downgrade -1
+          alembic upgrade head
       - name: Test
         run: pytest -q --tb=short

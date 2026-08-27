@@ -1,5 +1,7 @@
-# Repeatable Render Web Service for the CallProof API.
+# Repeatable Render Web Service for the Call Loop API.
 # Secrets are dashboard-only (sync: false). Do not put key values here.
+# No persistent disk: Postgres is DATABASE_URL, audio is Storage. Do not add
+# a `disks:` mount for SQLite or local files.
 #
 # Existing service: callloop-prodwork (https://callloop-prodwork.onrender.com)
 # Recreate: Dashboard → New → Blueprint, or match the commands below on a Web Service.

@@ -1,4 +1,4 @@
-"""api_usage with org_id (CL-5; matches SQLite usage table).
+"""api_usage with org_id (CL-5).
 
 Revision ID: 0002_api_usage
 Revises: 0001_orgs_calls

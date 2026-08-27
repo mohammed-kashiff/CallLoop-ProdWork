@@ -24,8 +24,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Existing audit rows are dropped, not copied. Runtime is still SQLite;
-    # Postgres audits from 0001 are unused. Re-score after the API moves to PG.
+    # Existing audit rows are dropped, not copied. Written during the
+    # SQLite→Postgres move; runtime is Postgres-only now.
     op.execute("DROP TABLE IF EXISTS audits")
 
     op.execute(

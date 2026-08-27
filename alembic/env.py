@@ -46,7 +46,7 @@ def run_migrations_online() -> None:
     if not database_url():
         raise RuntimeError(
             "DATABASE_URL (or SUPABASE_DB_URL) is not set. "
-            "Paste the Supabase URI into the environment — not into git."
+            "Postgres is required. There is no SQLite fallback."
         )
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),

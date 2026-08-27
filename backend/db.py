@@ -1,5 +1,6 @@
 """Postgres connections for the API. Schema is Alembic-only — no DDL here.
 
+Postgres is required. There is no SQLite fallback and no local database file.
 Never log the connection URL (it embeds a password). Placeholders are %s.
 prepare_threshold=0 so PgBouncer/Supabase poolers accept the session.
 """
@@ -27,7 +28,7 @@ def require_database_url() -> str:
     if not raw:
         raise RuntimeError(
             "DATABASE_URL (or SUPABASE_DB_URL) is not set. "
-            "Postgres is required at runtime; SQLite is no longer used."
+            "Postgres is required. There is no SQLite fallback."
         )
     return psycopg_url(raw)
 

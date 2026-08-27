@@ -7,7 +7,6 @@ from pathlib import Path
 # backend/paths.py → backend/ → repo root
 ROOT = Path(__file__).resolve().parent.parent
 
-DB_PATH = str(ROOT / "callproof.db")
 LOG_DIR = str(ROOT / "logs")
 LOG_FILE = str(ROOT / "logs" / "callproof.log")
 RUBRIC_PATH = str(ROOT / "rubric.json")

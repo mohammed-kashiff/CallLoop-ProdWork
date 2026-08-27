@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from backend.config import cors_origins
-from backend.paths import DB_PATH, ENV_FILE, LOG_FILE, ROOT, RUBRIC_PATH
+from backend.paths import ENV_FILE, LOG_FILE, ROOT, RUBRIC_PATH
 
 
 EXPECTED_ROUTES = {
@@ -48,7 +48,6 @@ AUDIT_CONTRACT_KEYS = {
 
 def test_repo_paths_are_under_repo_root():
     assert (ROOT / "backend" / "api.py").is_file()
-    assert Path(DB_PATH) == ROOT / "callproof.db"
     assert Path(LOG_FILE) == ROOT / "logs" / "callproof.log"
     assert Path(RUBRIC_PATH) == ROOT / "rubric.json"
     assert Path(ENV_FILE) == ROOT / ".env"
@@ -56,12 +55,10 @@ def test_repo_paths_are_under_repo_root():
 
 def test_paths_stable_if_cwd_changes(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    from backend.paths import DB_PATH as db_again
     from backend.paths import RUBRIC_PATH as rubric_again
     from backend.paths import ROOT as root_again
 
     assert root_again == ROOT
-    assert Path(db_again) == ROOT / "callproof.db"
     assert Path(rubric_again).is_file()
 
 
