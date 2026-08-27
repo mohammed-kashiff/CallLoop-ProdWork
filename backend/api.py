@@ -204,6 +204,7 @@ class ProvisionUserBody(BaseModel):
     last_name: str
     org_mode: str
     org_id: str | None = None
+    org_name: str | None = None
 
 
 class AdminFeatureBody(BaseModel):
@@ -222,6 +223,7 @@ def provision_user(request: Request, body: ProvisionUserBody):
         last_name=body.last_name,
         org_mode=body.org_mode,
         org_id=body.org_id,
+        org_name=body.org_name,
     )
 
 

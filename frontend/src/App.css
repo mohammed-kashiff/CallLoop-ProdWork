@@ -2902,6 +2902,76 @@ html[data-color-mode='dark'] .claude-cord-plug {
   justify-self: start;
 }
 
+.admin-provision {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+  margin: 0 0 1.25rem;
+}
+
+.admin-provision h2 {
+  margin: 0 0 0.3rem;
+  font-size: 1.05rem;
+}
+
+.admin-provision-hint {
+  margin: 0 0 0.8rem;
+  font-size: 0.8rem;
+  opacity: 0.75;
+  max-width: 40rem;
+}
+
+.admin-provision-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.7rem;
+  align-items: end;
+}
+
+.admin-provision-form label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.admin-provision-form input {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+}
+
+.admin-provision-result {
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.admin-provision-warning {
+  font-weight: 700;
+  color: var(--fail);
+}
+
+.admin-provision-secret {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+
+.admin-provision-secret code {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  background: var(--paper);
+  font-size: 0.85rem;
+  user-select: all;
+}
+
 .admin-search {
   display: grid;
   gap: 0.35rem;

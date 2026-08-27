@@ -120,6 +120,67 @@ def test_new_org_creates_one_org_and_owner(monkeypatch):
     assert "/auth/v1/admin/users" in posted.calls[0]["url"]
 
 
+def test_new_org_uses_admin_provided_name(monkeypatch):
+    uid, _posted = _auth_ok(monkeypatch)
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        out = provision_user(
+            email="pat.new@gmail.com",
+            first_name="Pat",
+            last_name="New",
+            org_mode="new",
+            org_name="  Acme Inc  ",
+        )
+    assert out["org_name"] == "Acme Inc"
+    assert conn.inserted_orgs[0][1] == "Acme Inc"
+    assert uid == out["user_id"]
+
+
+def test_new_org_falls_back_to_workspace_name_when_org_name_omitted(monkeypatch):
+    _auth_ok(monkeypatch)
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        out = provision_user(
+            email="pat.new@gmail.com",
+            first_name="Pat",
+            last_name="New",
+            org_mode="new",
+        )
+    assert out["org_name"] == "pat.new's workspace"
+    assert conn.inserted_orgs[0][1] == "pat.new's workspace"
+
+
+def test_new_org_blank_org_name_falls_back_too(monkeypatch):
+    _auth_ok(monkeypatch)
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        out = provision_user(
+            email="pat.new@gmail.com",
+            first_name="Pat",
+            last_name="New",
+            org_mode="new",
+            org_name="   ",
+        )
+    assert out["org_name"] == "pat.new's workspace"
+
+
+def test_existing_org_ignores_org_name(monkeypatch):
+    uid, _posted = _auth_ok(monkeypatch)
+    conn = _FakeConn(orgs=[{"id": EXISTING_ORG, "name": "Acme"}])
+    with _fake_db(monkeypatch, conn):
+        out = provision_user(
+            email="member@gmail.com",
+            first_name="Mo",
+            last_name="Lee",
+            org_mode="existing",
+            org_id=EXISTING_ORG,
+            org_name="Ignored Name",
+        )
+    assert conn.inserted_orgs == []
+    assert out["org_name"] == "Acme"
+    assert uid == out["user_id"]
+
+
 def test_existing_org_creates_zero_orgs_and_member(monkeypatch):
     uid, _posted = _auth_ok(monkeypatch)
     conn = _FakeConn(orgs=[{"id": EXISTING_ORG, "name": "Acme"}])
@@ -186,6 +247,30 @@ def test_admin_can_provision_new_org_over_http(monkeypatch):
     assert body["temporary_password"]
     assert len(conn.inserted_orgs) == 1
     assert conn.inserted_members[0][2] == "owner"
+
+
+def test_admin_can_set_org_name_over_http(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    _auth_ok(monkeypatch)
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        from backend.api import app
+
+        client = TestClient(app)
+        authorize(client, monkeypatch)
+        r = client.post(
+            "/api/admin/provision-user",
+            json={
+                "email": "trial@gmail.com",
+                "first_name": "Trial",
+                "last_name": "User",
+                "org_mode": "new",
+                "org_name": "Trial Org",
+            },
+        )
+    assert r.status_code == 200
+    assert r.json()["org_name"] == "Trial Org"
+    assert conn.inserted_orgs[0][1] == "Trial Org"
 
 
 def test_jwt_email_not_on_allowlist_does_not_call_supabase(monkeypatch):

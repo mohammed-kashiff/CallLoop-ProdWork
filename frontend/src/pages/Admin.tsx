@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch, fmtUsd, readError } from '../lib/api'
 import { TRIAL_FLAGS, type FeatureMap } from '../lib/features'
 import { useAuth } from '../context/AuthContext'
+
+type ProvisionResult = {
+  email: string
+  org_name: string
+  temporary_password: string
+}
 
 type DirectoryRow = {
   user_id: string
@@ -45,6 +51,15 @@ export function Admin() {
   const [usage, setUsage] = useState<UsagePayload | null>(null)
   const [busy, setBusy] = useState(false)
 
+  const [pEmail, setPEmail] = useState('')
+  const [pFirst, setPFirst] = useState('')
+  const [pLast, setPLast] = useState('')
+  const [pOrgName, setPOrgName] = useState('')
+  const [provisioning, setProvisioning] = useState(false)
+  const [provisionError, setProvisionError] = useState<string | null>(null)
+  const [provisionResult, setProvisionResult] = useState<ProvisionResult | null>(null)
+  const [copied, setCopied] = useState(false)
+
   const search = useCallback(async (needle: string) => {
     const r = await apiFetch(`/api/admin/directory?q=${encodeURIComponent(needle)}`)
     if (!r.ok) throw new Error(await readError(r, 'Could not search the directory.'))
@@ -61,6 +76,49 @@ export function Admin() {
     }, 250)
     return () => window.clearTimeout(t)
   }, [q, isPlatformAdmin, search])
+
+  const provisionUser = async (e: FormEvent) => {
+    e.preventDefault()
+    setProvisionError(null)
+    setProvisionResult(null)
+    setCopied(false)
+    setProvisioning(true)
+    try {
+      const r = await apiFetch('/api/admin/provision-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: pEmail.trim(),
+          first_name: pFirst.trim(),
+          last_name: pLast.trim(),
+          org_mode: 'new',
+          org_name: pOrgName.trim(),
+        }),
+      })
+      if (!r.ok) throw new Error(await readError(r, 'Could not provision that user.'))
+      const data = (await r.json()) as ProvisionResult
+      setProvisionResult(data)
+      setPEmail('')
+      setPFirst('')
+      setPLast('')
+      setPOrgName('')
+      search(q).catch(() => {})
+    } catch (err: unknown) {
+      setProvisionError(err instanceof Error ? err.message : 'Could not provision that user.')
+    } finally {
+      setProvisioning(false)
+    }
+  }
+
+  const copyPassword = async () => {
+    if (!provisionResult) return
+    try {
+      await navigator.clipboard.writeText(provisionResult.temporary_password)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
 
   const loadOrg = async (row: DirectoryRow) => {
     setSelected(row)
@@ -117,6 +175,80 @@ export function Admin() {
           <h1>Admin</h1>
         </div>
       </header>
+
+      <section className="admin-provision">
+        <h2>Provision user</h2>
+        <p className="admin-provision-hint">
+          Creates a login and a new org, named as you choose. The password is
+          generated and shown once here — copy it and share it with the
+          person alongside their email.
+        </p>
+        <form className="admin-provision-form" onSubmit={(e) => void provisionUser(e)}>
+          <label>
+            Email
+            <input
+              type="email"
+              value={pEmail}
+              onChange={(e) => setPEmail(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            First name
+            <input
+              type="text"
+              value={pFirst}
+              onChange={(e) => setPFirst(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Last name
+            <input
+              type="text"
+              value={pLast}
+              onChange={(e) => setPLast(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Org name
+            <input
+              type="text"
+              value={pOrgName}
+              onChange={(e) => setPOrgName(e.target.value)}
+              required
+            />
+          </label>
+          <button type="submit" className="start-btn" disabled={provisioning}>
+            {provisioning ? 'Creating…' : 'Create'}
+          </button>
+        </form>
+
+        {provisionError ? (
+          <p className="upload-error" role="alert">
+            {provisionError}
+          </p>
+        ) : null}
+
+        {provisionResult ? (
+          <div className="admin-provision-result" role="status">
+            <p>
+              <strong>{provisionResult.email}</strong> created in{' '}
+              <strong>{provisionResult.org_name}</strong>.
+            </p>
+            <p className="admin-provision-warning">
+              This password is shown once — copy it now.
+            </p>
+            <div className="admin-provision-secret">
+              <code>{provisionResult.temporary_password}</code>
+              <button type="button" className="ghost-btn" onClick={() => void copyPassword()}>
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </section>
 
       <label className="admin-search">
         Search directory

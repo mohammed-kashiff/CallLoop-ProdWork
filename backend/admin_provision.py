@@ -41,6 +41,7 @@ def provision_user(
     last_name: str,
     org_mode: str,
     org_id: str | None = None,
+    org_name: str | None = None,
 ) -> dict:
     email_s = (email or "").strip().lower()
     first = auth._optional_name(first_name)
@@ -73,17 +74,19 @@ def provision_user(
         first_name=first,
         last_name=last,
     )
+    requested_name = (org_name or "").strip()[:120] or None
     try:
         if mode == "new":
-            out_org_id, org_name, role = _insert_new_org(
+            out_org_id, out_org_name, role = _insert_new_org(
                 user_id=user_id,
                 email=email_s,
                 first_name=first,
                 last_name=last,
+                org_name=requested_name,
             )
         else:
             assert target_org is not None
-            out_org_id, org_name, role = _insert_existing_member(
+            out_org_id, out_org_name, role = _insert_existing_member(
                 org_id=target_org,
                 org_name=existing_name or "",
                 user_id=user_id,
@@ -109,7 +112,7 @@ def provision_user(
         "email": email_s,
         "user_id": user_id,
         "org_id": out_org_id,
-        "org_name": org_name,
+        "org_name": out_org_name,
         "temporary_password": password,
     }
 
@@ -199,11 +202,12 @@ def _insert_new_org(
     email: str,
     first_name: str,
     last_name: str,
+    org_name: str | None = None,
 ) -> tuple[str, str, str]:
     org_id = str(uuid.uuid4())
     if org_id == DEFAULT_ORG_ID:
         org_id = str(uuid.uuid4())
-    org_name = auth._workspace_name(email)
+    org_name = org_name or auth._workspace_name(email)
     with db.connection() as conn:
         db.apply_tenant_gucs(conn, org_id=org_id, user_id=user_id)
         conn.execute(

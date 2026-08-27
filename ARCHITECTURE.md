@@ -5,8 +5,10 @@
 > picking up work in this repo, read this file first — it exists so you don't
 > have to reverse-engineer the codebase from scratch.
 >
-> Last written: 2026-08-28, reflecting manual Gmail/personal-email user
-> provisioning (`backend/admin_provision.py`, AC-3 of the Admin Controls epic).
+> Last written: 2026-08-28, reflecting the full Admin Controls trial run
+> (AC-2 through AC-6): the admin gate, provisioning (now with an admin-chosen
+> org name and a form to drive it), per-org feature flags, and the admin
+> panel UI itself.
 
 ---
 
@@ -137,7 +139,9 @@ request and scopes every downstream call to that org.
 | `config.py` | Env loading, CORS origins, `skip_startup()` (test/CI flag to import the app without provider bootstrap). |
 | `paths.py` | Repo-root-relative paths (log dir, rubric path, `.env` path) — independent of process cwd. |
 | `auth.py` | Verifies Supabase JWTs, `ensure_membership()`, `ensure_placeholder_org()` — idempotent seed of `DEFAULT_ORG_ID` for webhook/CLI/usage fallbacks only (not signup) — and `require_platform_admin()`, the internal admin-console gate (see §5). |
-| `admin_provision.py` | AC-3: creates a Supabase Auth user (generated password, `email_confirm: true`) plus an `org_members` row — new org (`owner`) or an existing org by id (`member`). Rolls back the auth user if the org/membership insert fails. Callers must already have passed `require_platform_admin`; the module itself doesn't re-check. Password is returned once in the response, never logged (enforced by a static test). |
+| `admin_provision.py` | AC-3/AC-6: creates a Supabase Auth user (generated password, `email_confirm: true`) plus an `org_members` row — new org (`owner`, named by the admin if given, else auto-derived from the email) or an existing org by id (`member`). Rolls back the auth user if the org/membership insert fails. Callers must already have passed `require_platform_admin`; the module itself doesn't re-check. Password is returned once in the response, never logged (enforced by a static test). |
+| `org_features.py` | AC-4/AC-5: `features_for_org()` (read, org-scoped, defaults missing keys to enabled) and `set_feature()` (upsert, admin-gated caller). `FEATURE_KEYS` is the trial-run flag list — add a key here without a migration. |
+| `admin_console.py` | AC-5: directory search (via the `admin_search_directory` SQL function, never `org_directory` directly), org usage/cost lookup (`org_scope()` redirects `pyai_usage.usage_summary()`'s ambient RLS scoping to the *queried* org), and the feature-write entrypoint the admin panel calls. |
 | `org_ids.py` | Tenant-id plumbing: `contextvars`-based `bind_org_id`/`bound_org_id`/`org_scope`, `DEFAULT_ORG_ID`/`DEFAULT_RUBRIC_ID` constants (still used by background/webhook fallback paths, **not** by human signup anymore). |
 | `db.py` | Opens Postgres connections, runs `SET LOCAL ROLE callproof_app` + sets the tenant GUCs (`app.current_org_id`, `app.current_user_id`) so RLS applies. `bypass_rls=True` is a narrowly-scoped escape hatch for specific admin/background paths only — see the comment in that file before ever reaching for it. |
 | `db_url.py` | Reads and normalizes `DATABASE_URL`/`SUPABASE_DB_URL`. Never logs it (embeds a password). |
@@ -181,10 +185,10 @@ Schema changes only ever happen here — never as ad-hoc SQL in `backend/`.
 
 | Folder | Purpose |
 |---|---|
-| `pages/` | One file per route/screen: `Login.tsx`, `Home.tsx`, `FlaggedForReview.tsx`, `ChurnRisk.tsx`, `Training.tsx`, `Integrations.tsx`, `AgentsPulse.tsx`, `Feedbacks.tsx`, `Neighbourhood.tsx`, `Pyai.tsx`. |
-| `components/` | Reusable UI pieces — call playback (`TranscriptPlayer`, `CallWaveform`), layout (`AppLayout`, `Sidebar`), status widgets (`UsageMeter`, `PyaiBadge`, `LiveTicker`), the JustCall keys form (`KeysPanel`). |
-| `context/` | React context providers: `AuthContext` (Supabase session), `AuditContext`, `PyaiStatus`, `ColorMode`, `UsageEnv`. |
-| `lib/` | `supabase.ts` (client init), `api.ts` (backend fetch wrapper), `mapAudit.ts`, `format.ts`, `zipAudio.ts`, `speakerText.ts`. |
+| `pages/` | One file per route/screen: `Login.tsx`, `Home.tsx`, `FlaggedForReview.tsx`, `ChurnRisk.tsx`, `Training.tsx`, `Integrations.tsx`, `AgentsPulse.tsx`, `Feedbacks.tsx`, `Neighbourhood.tsx`, `Pyai.tsx`, `Admin.tsx` (platform-admin only — directory search, usage/cost, flag toggles, and the "Provision user" form; redirects everyone else to `/`, real enforcement is server-side). |
+| `components/` | Reusable UI pieces — call playback (`TranscriptPlayer`, `CallWaveform`), layout (`AppLayout`, `Sidebar`), status widgets (`UsageMeter`, `PyaiBadge`, `LiveTicker`), the JustCall keys form (`KeysPanel`). `Sidebar`/`UsageMeter`/`PyaiBadge` all read `AuthContext`'s `features` map to hide themselves per-org. |
+| `context/` | React context providers: `AuthContext` (Supabase session, plus `/api/me`'s `features` and `isPlatformAdmin`), `AuditContext`, `PyaiStatus`, `ColorMode`, `UsageEnv`. |
+| `lib/` | `supabase.ts` (client init), `api.ts` (backend fetch wrapper), `mapAudit.ts`, `format.ts`, `zipAudio.ts`, `speakerText.ts`, `features.ts` (`flagEnabled()` — missing key defaults to shown — and `TRIAL_FLAGS`; deliberately holds no admin-email list, that lives server-side only). |
 
 ---
 
@@ -239,7 +243,10 @@ sequenceDiagram
 |---|---|---|
 | GET | `/` | Health check |
 | GET | `/api/me` | Current user/org/role |
-| POST | `/api/admin/provision-user` | **Platform-admin only.** Create a login + org membership for a personal-email (Gmail, etc.) signup; returns a one-time generated password. Gated by `require_platform_admin` — 403 for everyone else, checked before any Supabase call. |
+| POST | `/api/admin/provision-user` | **Platform-admin only.** Create a login + org membership for a personal-email (Gmail, etc.) signup, org named by the admin; returns a one-time generated password. Gated by `require_platform_admin` — 403 for everyone else, checked before any Supabase call. |
+| GET | `/api/admin/directory` | **Platform-admin only.** Search `org_directory` (email/name/org id/user id/short id substring) via the `admin_search_directory` SQL function — `org_directory` itself is never granted to the app role. |
+| GET | `/api/admin/usage` | **Platform-admin only.** All-time PyAI/Anthropic call, poll, and estimated-cost totals for one *queried* org — not the caller's own. |
+| POST | `/api/admin/features` | **Platform-admin only.** Upsert one `org_features` row for a target org. |
 | GET | `/api/pyai/status` | PyAI connectivity/quota status |
 | POST | `/api/keys` | Update host-configured API keys |
 | GET | `/api/dev/logs` | Tail recent log lines (dev/debug) |
@@ -267,7 +274,9 @@ Every route except the JustCall webhook requires a valid Supabase JWT; the webho
 
 ## 7. Current known gaps (keep this section honest, don't let it go stale)
 
-- Admin console is partially built — AC-2 (authorization gate) and AC-3 (manual Gmail/personal-email provisioning) are live. AC-4 (`org_features` table + `/api/me` flags) and AC-5 (the admin panel UI — directory search over `org_directory`, usage/cost rollup, flag toggles) are ticketed in the `AC` Jira project but not yet implemented; there's no UI for provisioning yet either, only the `/api/admin/provision-user` endpoint itself. `short_id` is sequential (100000+) by design, not random.
+- Admin Controls epic (AC-2 through AC-6) is fully live: authorization gate, manual provisioning (with an admin-chosen org name), per-org feature flags, and the admin panel UI itself, including the provisioning form. `short_id` is sequential (100000+) by design, not random.
+- `admin_console.py`'s `search_directory()` swallows any lookup failure silently (`except Exception: return {"rows": []}`, no log line) — same class of gap `org_features.py`'s `features_for_org()` had before it got a `log.debug` line. Worth the same fix; low priority since it only affects the admin's own view, not tenant data.
+- A second platform admin is added by editing `PLATFORM_ADMIN_EMAILS` on Render — there's no self-service "add another admin" UI, and that's deliberate for now (see §5's note on why this isn't modeled as an "Admins" org).
 - `applog.py`'s secret-redaction filter is attached to the file log handler only — console/stdout output is not covered by the same filter.
 
 ---
