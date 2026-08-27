@@ -5,8 +5,8 @@
 > picking up work in this repo, read this file first — it exists so you don't
 > have to reverse-engineer the codebase from scratch.
 >
-> Last written: 2026-08-27, reflecting the repo through signup first/last name
-> (`org_members` + admin-only `org_directory`; Ticket 2 of the tenancy epic).
+> Last written: 2026-08-27, reflecting the repo through `org_members.short_id`
+> (Ticket 3 of the tenancy epic).
 
 ---
 
@@ -173,6 +173,7 @@ Schema changes only ever happen here — never as ad-hoc SQL in `backend/`.
 | `0009_org_vault_justcall` | `org_credentials` index table (org_id, provider, key suffix only) — the actual secrets live in Supabase Vault. |
 | `0010_orgs_domain_column` | `orgs.domain` (nullable, unique) + a `SECURITY DEFINER` SQL function `org_id_for_domain()` used to resolve a same-company signup race without opening an RLS-bypassing connection from application code. |
 | `0011_org_members_names_and_directory_view` | `org_members.first_name` / `last_name` (nullable, no backfill). `org_directory` view (email + names + org) is **admin SQL only** — not granted to `callproof_app`, not served by the API. |
+| `0012_org_members_short_id` | `org_members.short_id` unique integer from sequence starting at 100000 (`DEFAULT nextval`). **GRANT USAGE, SELECT** on the sequence to `callproof_app` is required for inserts. `org_directory` also selects `short_id`. |
 
 ### `frontend/src/`
 
@@ -263,7 +264,7 @@ Every route except the JustCall webhook requires a valid Supabase JWT; the webho
 
 - `DEFAULT_ORG_ID`'s seeded `orgs` row has no self-healing if the `orgs` table is wiped without re-running migration `0001` — background/webhook fallback paths that depend on it would break. Not yet fixed.
 - `docs/adr/001-tenancy-model.md` (an architecture decision record for the tenancy approach) doesn't exist yet.
-- Admin UI over `org_directory` is an open decision — the view is for direct SQL, not a product page.
+- Admin UI over `org_directory` is an open decision — the view is for direct SQL, not a product page. `short_id` is sequential (100000+) by design, not random.
 - `applog.py`'s secret-redaction filter is attached to the file log handler only — console/stdout output is not covered by the same filter.
 
 ---

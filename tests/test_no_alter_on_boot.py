@@ -123,3 +123,17 @@ def test_eleventh_revision_names_and_directory_view():
     assert "REVOKE ALL ON ORG_DIRECTORY FROM CALLPROOF_APP" in sql
     assert "0010_orgs_domain" in raw
 
+
+def test_twelfth_revision_short_id_sequence_granted_to_app():
+    rev = ROOT / "alembic" / "versions" / "0012_org_members_short_id.py"
+    assert rev.is_file()
+    raw = rev.read_text(encoding="utf-8")
+    sql = raw.upper()
+    assert "CREATE SEQUENCE ORG_MEMBERS_SHORT_ID_SEQ START 100000" in sql
+    assert "ADD COLUMN SHORT_ID INTEGER UNIQUE" in sql
+    assert "GRANT USAGE, SELECT ON SEQUENCE ORG_MEMBERS_SHORT_ID_SEQ TO CALLPROOF_APP" in sql
+    assert "WHERE SHORT_ID IS NULL" in sql
+    assert "OM.SHORT_ID" in sql
+    assert "0011_org_members_names" in raw
+    assert "GRANT SELECT ON ORG_DIRECTORY TO CALLPROOF_APP" not in sql
+
