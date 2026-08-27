@@ -165,8 +165,8 @@ def _in_cooldown(key: str) -> bool:
     now = time.monotonic()
     interval = min_interval_seconds()
     with _lock:
-        last = _last_sent.get(key, 0.0)
-        if now - last < interval:
+        last = _last_sent.get(key)
+        if last is not None and now - last < interval:
             return True
         _last_sent[key] = now
         return False
