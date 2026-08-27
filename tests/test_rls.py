@@ -69,6 +69,7 @@ def test_api_handlers_do_not_bypass_rls():
         "api.py",
         "auth.py",
         "admin_provision.py",
+        "org_features.py",
         "transcribe.py",
         "qa_engine.py",
         "audit_store.py",

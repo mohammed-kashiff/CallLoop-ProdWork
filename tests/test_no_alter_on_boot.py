@@ -124,6 +124,27 @@ def test_eleventh_revision_names_and_directory_view():
     assert "0010_orgs_domain" in raw
 
 
+def test_thirteenth_revision_org_features_select_only():
+    rev = ROOT / "alembic" / "versions" / "0013_org_features.py"
+    assert rev.is_file()
+    raw = rev.read_text(encoding="utf-8")
+    sql = raw.upper()
+    assert "CREATE TABLE ORG_FEATURES" in sql
+    assert "PRIMARY KEY (ORG_ID, FEATURE_KEY)" in sql
+    assert "GRANT SELECT, INSERT, UPDATE, DELETE ON ORG_FEATURES TO CALLPROOF_APP" in sql
+    assert "ENABLE ROW LEVEL SECURITY" in sql
+    assert "CREATE POLICY ORG_FEATURES_SELECT" in sql
+    assert "CREATE POLICY ORG_FEATURES_INSERT" not in sql
+    assert "CREATE POLICY ORG_FEATURES_UPDATE" not in sql
+    assert "CREATE POLICY ORG_FEATURES_DELETE" not in sql
+    assert "U.CREATED_AT AS FIRST_SEEN" in sql
+    assert "U.LAST_SIGN_IN_AT" in sql
+    assert "REVOKE ALL ON ORG_DIRECTORY FROM CALLPROOF_APP" in sql
+    assert "GRANT SELECT ON ORG_DIRECTORY TO CALLPROOF_APP" not in sql
+    assert "0012_org_members_short_id" in raw
+    assert "bypass_rls" not in raw
+
+
 def test_twelfth_revision_short_id_sequence_granted_to_app():
     rev = ROOT / "alembic" / "versions" / "0012_org_members_short_id.py"
     assert rev.is_file()

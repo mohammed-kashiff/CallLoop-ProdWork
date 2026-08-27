@@ -46,6 +46,8 @@ AUDIT_CONTRACT_KEYS = {
     "churn",
 }
 
+ME_CONTRACT_KEYS = {"user_id", "org_id", "role", "features"}
+
 
 def test_repo_paths_are_under_repo_root():
     assert (ROOT / "backend" / "api.py").is_file()
@@ -80,6 +82,31 @@ def test_app_imports_and_exposes_current_routes():
     paths = {getattr(route, "path", None) for route in app.routes}
     missing = EXPECTED_ROUTES - paths
     assert not missing, f"missing routes: {sorted(missing)}"
+
+
+def test_me_keeps_existing_keys_and_adds_features(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+    from tests.conftest import authorize
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    monkeypatch.setattr(
+        "backend.org_features.features_for_org",
+        lambda org_id: {
+            "usage_bar": True,
+            "secondary_nav": True,
+            "powered_by_badge": True,
+            "billed_usage_panel": True,
+        },
+    )
+    r = client.get("/api/me")
+    assert r.status_code == 200
+    body = r.json()
+    assert ME_CONTRACT_KEYS <= set(body)
+    assert isinstance(body["features"], dict)
+    assert body["features"]["usage_bar"] is True
 
 
 def test_health_returns_200_without_external_calls():

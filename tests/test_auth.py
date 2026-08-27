@@ -131,12 +131,23 @@ def test_me_returns_membership_from_jwt(monkeypatch):
 
     client = TestClient(app)
     uid = authorize(client, monkeypatch)
+    monkeypatch.setattr(
+        "backend.org_features.features_for_org",
+        lambda org_id: {
+            "usage_bar": True,
+            "secondary_nav": True,
+            "powered_by_badge": True,
+            "billed_usage_panel": True,
+        },
+    )
     r = client.get("/api/me")
     assert r.status_code == 200
     body = r.json()
     assert body["user_id"] == uid
     assert body["org_id"] == DEFAULT_ORG_ID
     assert body["role"] == "owner"
+    assert "features" in body
+    assert isinstance(body["features"], dict)
 
 
 def test_justcall_webhook_stays_public():

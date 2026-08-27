@@ -45,6 +45,7 @@ from . import db
 from . import env_keys
 from . import error_notify
 from . import justcall
+from . import org_features
 from . import org_vault
 from . import sentry_report
 from .config import cors_origins, load_env, skip_startup
@@ -188,6 +189,7 @@ def me(request: Request):
         "user_id": getattr(request.state, "user_id", None),
         "org_id": org_id,
         "role": getattr(request.state, "role", None),
+        "features": org_features.features_for_org(org_id),
     }
 
 
