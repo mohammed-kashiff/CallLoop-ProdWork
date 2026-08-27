@@ -15,6 +15,9 @@ EXPECTED_ROUTES = {
     "/healthz",
     "/api/me",
     "/api/admin/provision-user",
+    "/api/admin/directory",
+    "/api/admin/usage",
+    "/api/admin/features",
     "/api/pyai/status",
     "/api/keys",
     "/api/dev/logs",
@@ -46,7 +49,7 @@ AUDIT_CONTRACT_KEYS = {
     "churn",
 }
 
-ME_CONTRACT_KEYS = {"user_id", "org_id", "role", "features"}
+ME_CONTRACT_KEYS = {"user_id", "org_id", "role", "features", "is_platform_admin"}
 
 
 def test_repo_paths_are_under_repo_root():
@@ -92,13 +95,15 @@ def test_me_keeps_existing_keys_and_adds_features(monkeypatch):
 
     client = TestClient(app)
     authorize(client, monkeypatch)
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
     monkeypatch.setattr(
         "backend.org_features.features_for_org",
         lambda org_id: {
-            "usage_bar": True,
-            "secondary_nav": True,
-            "powered_by_badge": True,
-            "billed_usage_panel": True,
+            "show_usage_bar": True,
+            "show_neighbourhood_nav": True,
+            "show_growth_tools_nav": True,
+            "show_powered_by_pyai": True,
+            "show_billed_usage_panel": True,
         },
     )
     r = client.get("/api/me")
@@ -106,7 +111,29 @@ def test_me_keeps_existing_keys_and_adds_features(monkeypatch):
     body = r.json()
     assert ME_CONTRACT_KEYS <= set(body)
     assert isinstance(body["features"], dict)
-    assert body["features"]["usage_bar"] is True
+    assert body["features"]["show_usage_bar"] is True
+    assert body["is_platform_admin"] is False
+
+
+def test_me_is_platform_admin_true_only_for_allowlisted_jwt(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+    from tests.conftest import authorize
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    monkeypatch.setattr(
+        "backend.org_features.features_for_org",
+        lambda org_id: {"show_usage_bar": True},
+    )
+    r = client.get("/api/me")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["is_platform_admin"] is True
+    assert "tester@example.com" not in r.text
+    assert "PLATFORM_ADMIN_EMAILS" not in r.text
 
 
 def test_health_returns_200_without_external_calls():

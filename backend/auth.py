@@ -417,13 +417,18 @@ def org_id_from_request(request: Request) -> str:
     return org
 
 
-def require_platform_admin(request: Request) -> None:
-    """Allowlist of JWT emails. Empty PLATFORM_ADMIN_EMAILS denies everyone."""
+def is_platform_admin(request: Request) -> bool:
+    """True iff the verified JWT email is on PLATFORM_ADMIN_EMAILS. Fail closed."""
     allowed = {
         e.strip().lower()
         for e in (os.getenv("PLATFORM_ADMIN_EMAILS") or "").split(",")
         if e.strip()
     }
     email = (getattr(request.state, "email", None) or "").strip().lower()
-    if not email or email not in allowed:
+    return bool(email and email in allowed)
+
+
+def require_platform_admin(request: Request) -> None:
+    """Allowlist of JWT emails. Empty PLATFORM_ADMIN_EMAILS denies everyone."""
+    if not is_platform_admin(request):
         raise HTTPException(status_code=403, detail="Not authorized.")

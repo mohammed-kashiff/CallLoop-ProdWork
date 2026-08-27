@@ -6,6 +6,7 @@ import { AuthProvider } from './context/AuthContext'
 import { ColorModeProvider } from './context/ColorMode'
 import { PyaiStatusProvider } from './context/PyaiStatus'
 import { UsageEnvProvider } from './context/UsageEnv'
+import { Admin } from './pages/Admin'
 import { AgentsPulse } from './pages/AgentsPulse'
 import { ChurnRisk } from './pages/ChurnRisk'
 import { Feedbacks } from './pages/Feedbacks'
@@ -48,6 +49,7 @@ function App() {
                     <Route path="churn-risk" element={<ChurnRisk />} />
                     <Route path="integrations" element={<Integrations />} />
                     <Route path="training" element={<Training />} />
+                    <Route path="admin" element={<Admin />} />
                     <Route path="pyai" element={<Pyai />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Route>

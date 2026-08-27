@@ -9,6 +9,7 @@ import {
 } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { apiFetch } from '../lib/api'
+import type { FeatureMap } from '../lib/features'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 
 type AuthContextValue = {
@@ -16,6 +17,10 @@ type AuthContextValue = {
   loading: boolean
   session: Session | null
   accessToken: string | null
+  email: string | null
+  features: FeatureMap
+  isPlatformAdmin: boolean
+  refreshMe: () => Promise<void>
   signOut: () => Promise<void>
 }
 
@@ -24,6 +29,31 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(supabaseConfigured)
   const [session, setSession] = useState<Session | null>(null)
+  const [features, setFeatures] = useState<FeatureMap>({})
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false)
+
+  const email = session?.user?.email ?? null
+
+  const refreshMe = useCallback(async () => {
+    if (!session) {
+      setFeatures({})
+      setIsPlatformAdmin(false)
+      return
+    }
+    const r = await apiFetch('/api/me')
+    if (!r.ok) {
+      setIsPlatformAdmin(false)
+      return
+    }
+    const data = (await r.json()) as {
+      features?: FeatureMap
+      is_platform_admin?: boolean
+    }
+    if (data.features && typeof data.features === 'object') {
+      setFeatures(data.features)
+    }
+    setIsPlatformAdmin(data.is_platform_admin === true)
+  }, [session])
 
   useEffect(() => {
     if (!supabase) {
@@ -48,12 +78,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (!session) return
-    void apiFetch('/api/me')
-  }, [session])
+    void refreshMe()
+  }, [refreshMe])
 
   const signOut = useCallback(async () => {
     if (supabase) await supabase.auth.signOut()
+    setFeatures({})
+    setIsPlatformAdmin(false)
   }, [])
 
   const value = useMemo(
@@ -62,9 +93,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       session,
       accessToken: session?.access_token ?? null,
+      email,
+      features,
+      isPlatformAdmin,
+      refreshMe,
       signOut,
     }),
-    [loading, session, signOut],
+    [loading, session, email, features, isPlatformAdmin, refreshMe, signOut],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

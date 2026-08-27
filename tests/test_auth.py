@@ -131,13 +131,15 @@ def test_me_returns_membership_from_jwt(monkeypatch):
 
     client = TestClient(app)
     uid = authorize(client, monkeypatch)
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
     monkeypatch.setattr(
         "backend.org_features.features_for_org",
         lambda org_id: {
-            "usage_bar": True,
-            "secondary_nav": True,
-            "powered_by_badge": True,
-            "billed_usage_panel": True,
+            "show_usage_bar": True,
+            "show_neighbourhood_nav": True,
+            "show_growth_tools_nav": True,
+            "show_powered_by_pyai": True,
+            "show_billed_usage_panel": True,
         },
     )
     r = client.get("/api/me")
@@ -148,6 +150,7 @@ def test_me_returns_membership_from_jwt(monkeypatch):
     assert body["role"] == "owner"
     assert "features" in body
     assert isinstance(body["features"], dict)
+    assert body["is_platform_admin"] is False
 
 
 def test_justcall_webhook_stays_public():

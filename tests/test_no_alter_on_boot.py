@@ -145,6 +145,19 @@ def test_thirteenth_revision_org_features_select_only():
     assert "bypass_rls" not in raw
 
 
+def test_fourteenth_revision_write_policies_and_directory_fn():
+    rev = ROOT / "alembic" / "versions" / "0014_org_features_write.py"
+    assert rev.is_file()
+    raw = rev.read_text(encoding="utf-8")
+    sql = raw.upper()
+    assert "CREATE POLICY ORG_FEATURES_INSERT" in sql
+    assert "CREATE POLICY ORG_FEATURES_UPDATE" in sql
+    assert "ADMIN_SEARCH_DIRECTORY" in sql
+    assert "SECURITY DEFINER" in sql
+    assert "GRANT SELECT ON ORG_DIRECTORY TO CALLPROOF_APP" not in sql
+    assert "0013_org_features" in raw
+
+
 def test_twelfth_revision_short_id_sequence_granted_to_app():
     rev = ROOT / "alembic" / "versions" / "0012_org_members_short_id.py"
     assert rev.is_file()

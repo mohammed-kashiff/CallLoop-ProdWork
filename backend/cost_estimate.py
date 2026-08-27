@@ -114,3 +114,27 @@ def today_from_usage(usage: dict[str, Any] | None) -> dict[str, Any]:
         },
         "label": f"Today ~${total:.2f}",
     }
+
+
+def estimate_usage_cost(summary: dict[str, Any] | None) -> dict[str, float]:
+    """All-time (or windowed) USD estimate from usage_summary() aggregates."""
+    r = rates()
+    usage = summary or {}
+    by = usage.get("by_provider") or {}
+    pyai_u = by.get("pyai") or {}
+    claude_u = by.get("anthropic") or {}
+
+    units = float(pyai_u.get("units") or 0)
+    actions = int(pyai_u.get("actions") or 0)
+    claude_hits = int(claude_u.get("hits") or 0)
+
+    if units > 0:
+        pyai = _round_usd(units * r["pyai_usd_per_unit"])
+    else:
+        pyai = _round_usd(actions * r["pyai_usd_per_minute"])
+    claude = _round_usd(claude_hits * r["claude_usd_per_hit"])
+    return {
+        "pyai_usd": pyai,
+        "claude_usd": claude,
+        "total_usd": _round_usd(pyai + claude),
+    }

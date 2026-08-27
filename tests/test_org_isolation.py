@@ -55,12 +55,10 @@ def test_api_never_reads_client_org_id():
     assert "DEFAULT_ORG_ID" not in text
     assert "org_id_from_request" in text
 
-    # Admin-only exception: provision_user is gated by require_platform_admin
-    # before body.org_id is ever read — the caller is choosing a TARGET org
-    # for someone else, not scoping their own request. Do not add any other
-    # org_id-from-client pattern outside this one route.
-    start = text.index("def provision_user")
-    end = text.index("\n\n\n", start)
+    # Platform-admin exception: /api/admin/* is gated by require_platform_admin
+    # before a TARGET org_id is read. Do not copy this into tenant routes.
+    start = text.index("# --- platform admin")
+    end = text.index("# --- end platform admin")
     admin_region = text[start:end]
     outside = text[:start] + text[end:]
 
@@ -72,6 +70,7 @@ def test_api_never_reads_client_org_id():
 
     assert "require_platform_admin" in admin_region
     assert "body.org_id" in admin_region
+    assert admin_region.count("require_platform_admin") >= 4
 
 
 def test_data_sql_filters_org_id():

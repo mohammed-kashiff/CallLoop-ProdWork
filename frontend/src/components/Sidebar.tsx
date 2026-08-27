@@ -3,6 +3,8 @@ import { BrandLogo } from './BrandLogo'
 import { PyaiBadge } from './PyaiBadge'
 import { UsageMeter } from './UsageMeter'
 import { useAudit } from '../context/AuditContext'
+import { useAuth } from '../context/AuthContext'
+import { flagEnabled } from '../lib/features'
 
 const HOME = { to: '/', label: 'Home', end: true, icon: 'home' } as const
 
@@ -158,8 +160,11 @@ interface SidebarProps {
 export function Sidebar({ open, onNavigate }: SidebarProps) {
   const { pathname } = useLocation()
   const { flaggedCount } = useAudit()
+  const { features, isPlatformAdmin } = useAuth()
   const onHome = pathname === '/'
   const pulseOpen = pathname.startsWith('/agents-pulse')
+  const showNeighbourhood = flagEnabled(features, 'show_neighbourhood_nav')
+  const showGrowth = flagEnabled(features, 'show_growth_tools_nav')
 
   return (
     <>
@@ -198,6 +203,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
             <NavIcon name={HOME.icon} />
             {HOME.label}
           </NavLink>
+          {showNeighbourhood ? (
           <NavLink
             to="/neighbourhood"
             className={({ isActive }) =>
@@ -210,6 +216,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
             <NavIcon name="neighbourhood" />
             Neighbourhood
           </NavLink>
+          ) : null}
         </nav>
 
         <p className="nav-group">Loop</p>
@@ -246,21 +253,34 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               </NavLink>
             ) : null}
           </div>
-          {LOOP_NAV.map((item) => (
+          {showGrowth
+            ? LOOP_NAV.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) =>
+                    ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+                  }
+                  onClick={onNavigate}
+                >
+                  <NavIcon name={item.icon} />
+                  {item.label}
+                  {'soon' in item && item.soon ? <span className="nav-soon">Soon</span> : null}
+                </NavLink>
+              ))
+            : null}
+          {isPlatformAdmin ? (
             <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
+              to="/admin"
               className={({ isActive }) =>
                 ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
               }
               onClick={onNavigate}
             >
-              <NavIcon name={item.icon} />
-              {item.label}
-              {'soon' in item && item.soon ? <span className="nav-soon">Soon</span> : null}
+              Admin
             </NavLink>
-          ))}
+          ) : null}
         </nav>
         <div className="sidebar-footer">
           <PyaiBadge onNavigate={onNavigate} />

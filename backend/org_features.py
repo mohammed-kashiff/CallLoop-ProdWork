@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 
+from fastapi import HTTPException
+
 from . import db
 from .org_ids import parse_org_id
 
@@ -18,10 +20,11 @@ log = logging.getLogger("callproof.org_features")
 
 # Trial-run dashboard switches. Insert other keys without a schema change.
 FEATURE_KEYS = (
-    "usage_bar",
-    "secondary_nav",
-    "powered_by_badge",
-    "billed_usage_panel",
+    "show_usage_bar",
+    "show_neighbourhood_nav",
+    "show_growth_tools_nav",
+    "show_powered_by_pyai",
+    "show_billed_usage_panel",
 )
 
 
@@ -55,3 +58,25 @@ def features_for_org(org_id: str) -> dict[str, bool]:
             continue
         flags[key] = bool(row.get("enabled"))
     return flags
+
+
+def set_feature(org_id: str, feature_key: str, enabled: bool) -> dict[str, bool]:
+    """Upsert one flag for the target org. Caller must already be a platform admin."""
+    oid = parse_org_id(org_id)
+    key = (feature_key or "").strip()
+    if not oid:
+        raise HTTPException(status_code=400, detail="org_id is required.")
+    if key not in FEATURE_KEYS:
+        raise HTTPException(status_code=400, detail="Unknown feature_key.")
+    with db.connection() as conn:
+        db.apply_tenant_gucs(conn, org_id=oid)
+        conn.execute(
+            """
+            INSERT INTO org_features (org_id, feature_key, enabled, updated_at)
+            VALUES (%s, %s, %s, now())
+            ON CONFLICT (org_id, feature_key) DO UPDATE
+            SET enabled = EXCLUDED.enabled, updated_at = now()
+            """,
+            (oid, key, bool(enabled)),
+        )
+    return features_for_org(oid)

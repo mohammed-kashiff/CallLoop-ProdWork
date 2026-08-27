@@ -1,6 +1,10 @@
 import { NavLink } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import { flagEnabled } from '../lib/features'
 
 export function PyaiBadge({ onNavigate }: { onNavigate?: () => void }) {
+  const { features } = useAuth()
+  if (!flagEnabled(features, 'show_powered_by_pyai')) return null
   return (
     <NavLink
       to="/pyai"

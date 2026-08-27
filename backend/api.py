@@ -36,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from . import admin_console
 from . import admin_provision
 from . import applog
 from . import audit_store
@@ -190,7 +191,11 @@ def me(request: Request):
         "org_id": org_id,
         "role": getattr(request.state, "role", None),
         "features": org_features.features_for_org(org_id),
+        "is_platform_admin": auth.is_platform_admin(request),
     }
+
+
+# --- platform admin: target org from query/body, not the caller's JWT ---
 
 
 class ProvisionUserBody(BaseModel):
@@ -199,6 +204,12 @@ class ProvisionUserBody(BaseModel):
     last_name: str
     org_mode: str
     org_id: str | None = None
+
+
+class AdminFeatureBody(BaseModel):
+    org_id: str
+    feature_key: str
+    enabled: bool
 
 
 @app.post("/api/admin/provision-user")
@@ -212,6 +223,27 @@ def provision_user(request: Request, body: ProvisionUserBody):
         org_mode=body.org_mode,
         org_id=body.org_id,
     )
+
+
+@app.get("/api/admin/directory")
+def admin_directory(request: Request, q: str = ""):
+    auth.require_platform_admin(request)
+    return admin_console.search_directory(q)
+
+
+@app.get("/api/admin/usage")
+def admin_usage(request: Request, org_id: str | None = None):
+    auth.require_platform_admin(request)
+    return admin_console.usage_for_org(org_id)
+
+
+@app.post("/api/admin/features")
+def admin_features(request: Request, body: AdminFeatureBody):
+    auth.require_platform_admin(request)
+    return admin_console.set_feature(body.org_id, body.feature_key, body.enabled)
+
+
+# --- end platform admin ---
 
 
 def _conn():

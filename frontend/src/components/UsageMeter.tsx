@@ -1,7 +1,11 @@
 import { usePyaiStatus } from '../context/PyaiStatus'
+import { useAuth } from '../context/AuthContext'
+import { flagEnabled } from '../lib/features'
 
 export function UsageMeter() {
+  const { features } = useAuth()
   const { status, isSandbox, label, openKeys } = usePyaiStatus()
+  if (!flagEnabled(features, 'show_usage_bar')) return null
   const title = label || 'PyAI'
   const missing =
     !status ||
@@ -33,7 +37,7 @@ export function UsageMeter() {
           </span>
           <span>Unlimited</span>
         </div>
-      ) : (
+      ) : flagEnabled(features, 'show_billed_usage_panel') ? (
         <div className="usage-live-copy">
           <span>
             {missing
@@ -43,7 +47,7 @@ export function UsageMeter() {
               : 'Billed usage'}
           </span>
         </div>
-      )}
+      ) : null}
       <span className="usage-hint">Click to replace keys</span>
     </button>
   )

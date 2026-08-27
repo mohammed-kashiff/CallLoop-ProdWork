@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from starlette.requests import Request as StarletteRequest
 
-from backend.auth import JwtAuthMiddleware, require_platform_admin
+from backend.auth import JwtAuthMiddleware, is_platform_admin, require_platform_admin
 from tests.conftest import authorize, mint_access_token
 
 
@@ -91,3 +91,39 @@ def test_require_platform_admin_empty_env_on_bare_request(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         require_platform_admin(request)
     assert exc.value.status_code == 403
+
+
+def test_is_platform_admin_is_false_when_allowlist_empty(monkeypatch):
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
+    request = StarletteRequest(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/api/me",
+            "raw_path": b"/api/me",
+            "query_string": b"",
+            "headers": [],
+            "client": ("testclient", 50000),
+            "server": ("test", 80),
+        }
+    )
+    request.state.email = "anyone@example.com"
+    assert is_platform_admin(request) is False
+
+
+def test_frontend_does_not_embed_admin_allowlist():
+    from backend.paths import ROOT
+
+    hits: list[str] = []
+    for path in (ROOT / "frontend" / "src").rglob("*"):
+        if path.suffix not in {".ts", ".tsx", ".js", ".jsx"}:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "VITE_PLATFORM_ADMIN" in text:
+            hits.append(str(path.relative_to(ROOT)))
+    example = (ROOT / "frontend" / ".env.example").read_text(encoding="utf-8")
+    assert "VITE_PLATFORM_ADMIN" not in example
+    assert hits == []
