@@ -110,3 +110,16 @@ def test_ninth_revision_org_vault_justcall():
     assert "API_KEY" not in sql
     assert "API_SECRET" not in sql
 
+
+def test_eleventh_revision_names_and_directory_view():
+    rev = ROOT / "alembic" / "versions" / "0011_org_members_names_and_directory_view.py"
+    assert rev.is_file()
+    raw = rev.read_text(encoding="utf-8")
+    sql = raw.upper()
+    assert "ADD COLUMN FIRST_NAME TEXT" in sql
+    assert "ADD COLUMN LAST_NAME TEXT" in sql
+    assert "CREATE VIEW ORG_DIRECTORY" in sql
+    assert "JOIN AUTH.USERS" in sql
+    assert "REVOKE ALL ON ORG_DIRECTORY FROM CALLPROOF_APP" in sql
+    assert "0010_orgs_domain" in raw
+

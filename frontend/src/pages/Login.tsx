@@ -13,6 +13,8 @@ export function Login() {
   const [modeForm, setModeForm] = useState<'login' | 'signup'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
   const [busy, setBusy] = useState(false)
@@ -29,13 +31,23 @@ export function Login() {
       setError('Auth is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.')
       return
     }
+    const first = firstName.trim()
+    const last = lastName.trim()
+    if (modeForm === 'signup' && (!first || !last)) {
+      setError('First and last name are required.')
+      return
+    }
     setBusy(true)
     try {
       if (modeForm === 'login') {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password })
         if (err) setError(err.message)
       } else {
-        const { data, error: err } = await supabase.auth.signUp({ email, password })
+        const { data, error: err } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { first_name: first, last_name: last } },
+        })
         if (err) setError(err.message)
         else if (!data.session) setInfo('Check your email to confirm your account, then log in.')
       }
@@ -53,10 +65,36 @@ export function Login() {
         <h1>{modeForm === 'login' ? 'Log in' : 'Create account'}</h1>
         <p className="auth-lead">
           {supabaseConfigured
-            ? 'Your workspace is created on first sign-up. Later accounts get their own org.'
+            ? 'People with the same company email share a workspace. Gmail, Outlook, and similar inboxes each get their own.'
             : 'Supabase URL and anon key are missing in this build.'}
         </p>
         <form className="auth-form" onSubmit={onSubmit}>
+          {modeForm === 'signup' ? (
+            <>
+              <label>
+                First name
+                <input
+                  type="text"
+                  autoComplete="given-name"
+                  value={firstName}
+                  onChange={(ev) => setFirstName(ev.target.value)}
+                  required
+                  maxLength={80}
+                />
+              </label>
+              <label>
+                Last name
+                <input
+                  type="text"
+                  autoComplete="family-name"
+                  value={lastName}
+                  onChange={(ev) => setLastName(ev.target.value)}
+                  required
+                  maxLength={80}
+                />
+              </label>
+            </>
+          ) : null}
           <label>
             Email
             <input

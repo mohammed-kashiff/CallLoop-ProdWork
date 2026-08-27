@@ -47,7 +47,9 @@ def authorize(client, monkeypatch, *, sub: str | None = None, org_id: str | None
     tenant = org_id or DEFAULT_ORG_ID
     monkeypatch.setattr(
         "backend.auth.ensure_membership",
-        lambda user_id, email=None: Membership(tenant, "owner", str(user_id)),
+        lambda user_id, email=None, first_name=None, last_name=None: Membership(
+            tenant, "owner", str(user_id)
+        ),
     )
     client.headers["Authorization"] = f"Bearer {mint_access_token(sub=uid)}"
     return uid

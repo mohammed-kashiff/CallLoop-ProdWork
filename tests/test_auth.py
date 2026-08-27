@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from backend.auth import AuthError, ensure_membership, verify_access_token
 from backend.org_ids import DEFAULT_ORG_ID
+from backend.paths import ROOT
 from tests.conftest import authorize, mint_access_token
 
 
@@ -198,7 +199,7 @@ def test_ensure_membership_same_domain_race(monkeypatch):
     assert m.role == "member"
     assert m.user_id == uid
     assert len(conn.inserted_orgs) == 1
-    assert conn.inserted_members == [(existing_org, uid, "member")]
+    assert conn.inserted_members[0][:3] == (existing_org, uid, "member")
 
 
 def test_ensure_membership_later_user_new_domain_gets_new_org(monkeypatch):
@@ -215,3 +216,58 @@ def test_ensure_membership_later_user_new_domain_gets_new_org(monkeypatch):
     assert conn.inserted_orgs[0][1] == "example.com"
     assert conn.inserted_orgs[0][2] == "example.com"
     assert conn.inserted_members[0][1] == uid
+
+
+def test_ensure_membership_insert_persists_names(monkeypatch):
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        uid = str(uuid.uuid4())
+        ensure_membership(uid, "ada@acme.com", "  Ada  ", "Lovelace")
+
+    row = conn.inserted_members[0]
+    assert row[2] == "owner"
+    assert row[3] == "Ada"
+    assert row[4] == "Lovelace"
+
+
+def test_ensure_membership_existing_member_does_not_refresh_names(monkeypatch):
+    uid = str(uuid.uuid4())
+    org_id = str(uuid.uuid4())
+    conn = _FakeConn(
+        existing=[{"org_id": org_id, "user_id": uid, "role": "owner"}]
+    )
+    with _fake_db(monkeypatch, conn):
+        m = ensure_membership(uid, "ada@acme.com", "Ada", "Lovelace")
+
+    assert m.org_id == org_id
+    assert conn.inserted_members == []
+
+
+def test_login_signup_sends_name_metadata():
+    text = (ROOT / "frontend" / "src" / "pages" / "Login.tsx").read_text(encoding="utf-8")
+    assert "modeForm === 'signup'" in text
+    assert "first_name: first" in text
+    assert "last_name: last" in text
+    assert "options: { data: { first_name: first, last_name: last } }" in text
+    assert "Gmail, Outlook" in text
+    assert "Later accounts get their own org" not in text
+
+
+def test_org_directory_is_not_an_api_and_not_granted_to_app():
+    rev = ROOT / "alembic" / "versions" / "0011_org_members_names_and_directory_view.py"
+    raw = rev.read_text(encoding="utf-8")
+    sql = raw.upper()
+    assert "CREATE VIEW ORG_DIRECTORY" in sql
+    assert "U.EMAIL" in sql
+    assert "OM.FIRST_NAME" in sql
+    assert "OM.LAST_NAME" in sql
+    assert "OM.ROLE" in sql
+    assert "OM.ORG_ID" in sql
+    assert "ORG_NAME" in sql
+    assert "OM.CREATED_AT" in sql
+    assert "REVOKE ALL ON ORG_DIRECTORY FROM CALLPROOF_APP" in sql
+    assert "GRANT SELECT ON ORG_DIRECTORY TO CALLPROOF_APP" not in sql
+    api = (ROOT / "backend" / "api.py").read_text(encoding="utf-8")
+    auth = (ROOT / "backend" / "auth.py").read_text(encoding="utf-8")
+    assert "org_directory" not in api
+    assert "org_directory" not in auth

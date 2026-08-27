@@ -164,11 +164,28 @@ def _signup_domain(email: str | None) -> str | None:
     return domain
 
 
-def ensure_membership(user_id: str, email: str | None = None) -> Membership:
+def _optional_name(value: object) -> str | None:
+    """JWT / form names: strip, empty → None. Cap length. Not refreshed on login."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    return text[:80]
+
+
+def ensure_membership(
+    user_id: str,
+    email: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+) -> Membership:
     """One membership per user at launch.
 
     New signups join by email domain, or get a personal org for public
     providers (gmail, outlook, …). Human signup never claims DEFAULT_ORG_ID.
+    first_name/last_name are written only on the new-member INSERT, not on
+    later logins (MVP: names are captured once).
     """
     uid = str(uuid.UUID(str(user_id)))
     with db.connection() as conn:
@@ -246,10 +263,18 @@ def ensure_membership(user_id: str, email: str | None = None) -> Membership:
         try:
             conn.execute(
                 """
-                INSERT INTO org_members (org_id, user_id, role)
-                VALUES (%s, %s, %s)
+                INSERT INTO org_members (
+                    org_id, user_id, role, first_name, last_name
+                )
+                VALUES (%s, %s, %s, %s, %s)
                 """,
-                (org_id, uid, role),
+                (
+                    org_id,
+                    uid,
+                    role,
+                    _optional_name(first_name),
+                    _optional_name(last_name),
+                ),
             )
         except UniqueViolation:
             conn.rollback()
@@ -330,6 +355,10 @@ class JwtAuthMiddleware:
             sub = str(claims["sub"])
             email = claims.get("email")
             email_s = email.strip() if isinstance(email, str) else None
+            raw_meta = claims.get("user_metadata") or {}
+            user_meta = raw_meta if isinstance(raw_meta, dict) else {}
+            first_name = _optional_name(user_meta.get("first_name"))
+            last_name = _optional_name(user_meta.get("last_name"))
         except AuthConfigError:
             response = _auth_failure(request, 503, "Auth is not configured")
             await response(scope, receive, send)
@@ -341,7 +370,7 @@ class JwtAuthMiddleware:
         user_token = bind_user_id(sub)
         org_token = None
         try:
-            membership = ensure_membership(sub, email_s)
+            membership = ensure_membership(sub, email_s, first_name, last_name)
             request.state.user_id = membership.user_id
             request.state.org_id = membership.org_id
             request.state.role = membership.role
