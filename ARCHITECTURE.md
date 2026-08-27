@@ -120,7 +120,7 @@ request and scopes every downstream call to that org.
 | `test_claude.py` | Standalone manual smoke test for Anthropic connectivity — `python test_claude.py`. Not part of the pytest suite. |
 | `rubric.json` | The runtime scoring rubric (legacy v8 shape), seeded into every new org's `rubrics` table. |
 | `requirements.txt` | Backend Python dependencies. |
-| `render.yaml` | Render Blueprint — recreates the `callloop-prodwork` service exactly (env vars, build/start commands, no persistent disk). |
+| `render.yaml` | Render Blueprint — recreates the `callloop-prodwork` service exactly (env vars, build/start commands, no persistent disk). **Start Command** runs `alembic upgrade head` then uvicorn (free plan never runs Pre-Deploy). |
 | `pytest.ini` | Pytest configuration. |
 | `.env.example` | Documents every required env var name with no real values. Copy to `.env` (gitignored) locally. |
 | `README.md` | Setup/install/deploy instructions — the "how do I run this" doc. |

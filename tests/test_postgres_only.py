@@ -59,7 +59,7 @@ def test_render_yaml_has_no_volume_disk():
     assert "\ndisks:" not in text
     assert not text.startswith("disks:")
     assert "DATABASE_URL" in text
-    assert "alembic upgrade head" in text
+    assert "alembic upgrade head && uvicorn backend.api:app" in text
 
 
 def test_ci_practises_alembic_downgrade_on_clone():

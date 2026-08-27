@@ -416,7 +416,7 @@ alembic revision -m "short_description"
 alembic upgrade head
 ```
 
-`render.yaml` sets **Pre-Deploy Command** `alembic upgrade head` so Render applies migrations on deploy, not when uvicorn loads.
+`render.yaml` **Start Command** is `alembic upgrade head && uvicorn backend.api:app --host 0.0.0.0 --port $PORT`. Free Render does not run Pre-Deploy (no step, no warning), so migrations must live on Start. Pre-Deploy can stay for a later paid plan; `upgrade head` is idempotent. On an **existing** service, paste that Start Command in the dashboard — Blueprint yaml does not always rewrite it.
 
 ### Isolation proof (CL-11)
 

@@ -3,6 +3,10 @@
 # No persistent disk: Postgres is DATABASE_URL, audio is Storage. Do not add
 # a `disks:` mount for SQLite or local files.
 #
+# Free plan does not run Pre-Deploy at all (no step, no warning). Migrations
+# therefore run in startCommand, which every plan executes. Keep preDeploy
+# for a later paid plan — `upgrade head` is idempotent if both run.
+#
 # Existing service: callloop-prodwork (https://callloop-prodwork.onrender.com)
 # Recreate: Dashboard → New → Blueprint, or match the commands below on a Web Service.
 # Deploy: git push callloop-prodwork CallLoop-build
@@ -15,7 +19,7 @@ services:
     branch: CallLoop-build
     buildCommand: pip install -r requirements.txt
     preDeployCommand: alembic upgrade head
-    startCommand: uvicorn backend.api:app --host 0.0.0.0 --port $PORT
+    startCommand: alembic upgrade head && uvicorn backend.api:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL

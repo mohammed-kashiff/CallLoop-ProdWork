@@ -2,7 +2,7 @@
 
 The API talks to **Postgres** only (`DATABASE_URL` or `SUPABASE_DB_URL`). There is no SQLite fallback, no `callproof.db` path in the process, and no Render disk for a database file.
 
-Calls, scorecards, and usage live in Postgres. Recordings live in private Storage (`call-audio`). Schema changes go through Alembic (`alembic upgrade head` on Render Pre-Deploy).
+Calls, scorecards, and usage live in Postgres. Recordings live in private Storage (`call-audio`). Schema changes go through Alembic (`alembic upgrade head` in the Render **Start Command** — free plans skip Pre-Deploy).
 
 ## Local development
 
@@ -26,7 +26,7 @@ Full install steps: [README.md](../README.md) (Install & run).
 
 `render.yaml` has **no** `disks:` key. Do not add a persistent volume for SQLite or local files.
 
-Dashboard check on **callloop-prodwork**: Settings must not list a disk mounted for `callproof.db`. `DATABASE_URL` is an Environment variable (not a Secret File). Pre-Deploy Command is `alembic upgrade head`.
+Dashboard check on **callloop-prodwork**: Settings must not list a disk mounted for `callproof.db`. `DATABASE_URL` is an Environment variable (not a Secret File). **Start Command** is `alembic upgrade head && uvicorn backend.api:app --host 0.0.0.0 --port $PORT` (free Render ignores Pre-Deploy).
 
 ## Rollback (write this down before a deploy)
 
@@ -68,7 +68,7 @@ If production schema must go back one revision: restore a backup from **before**
 - [ ] `DATABASE_URL` set on Render (session pooler preferred).
 - [ ] `render.yaml` has no `disks:`.
 - [ ] Dashboard has no leftover SQLite volume.
-- [ ] Pre-Deploy is `alembic upgrade head`.
+- [ ] Start Command is `alembic upgrade head && uvicorn …` (do not rely on Pre-Deploy on free).
 - [ ] `GET /health` returns 200 after deploy.
 - [ ] App rollback SHA is known (previous green deploy).
 - [ ] Supabase backup / PITR is enabled before the deploy.
