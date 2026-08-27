@@ -46,3 +46,5 @@ services:
         sync: false
       - key: SENTRY_ENVIRONMENT
         value: production
+      - key: PLATFORM_ADMIN_EMAILS
+        sync: false

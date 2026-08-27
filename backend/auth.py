@@ -396,6 +396,7 @@ class JwtAuthMiddleware:
             request.state.user_id = membership.user_id
             request.state.org_id = membership.org_id
             request.state.role = membership.role
+            request.state.email = email_s
             org_token = bind_org_id(membership.org_id)
             await self.app(scope, receive, send)
         finally:
@@ -414,3 +415,15 @@ def org_id_from_request(request: Request) -> str:
     if not org:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return org
+
+
+def require_platform_admin(request: Request) -> None:
+    """Allowlist of JWT emails. Empty PLATFORM_ADMIN_EMAILS denies everyone."""
+    allowed = {
+        e.strip().lower()
+        for e in (os.getenv("PLATFORM_ADMIN_EMAILS") or "").split(",")
+        if e.strip()
+    }
+    email = (getattr(request.state, "email", None) or "").strip().lower()
+    if not email or email not in allowed:
+        raise HTTPException(status_code=403, detail="Not authorized.")

@@ -25,6 +25,7 @@ def mint_access_token(
     exp_delta: int = 3600,
     aud: str = "authenticated",
     secret: str | None = None,
+    email: str = "tester@example.com",
 ) -> str:
     now = int(time.time())
     payload = {
@@ -32,7 +33,7 @@ def mint_access_token(
         "aud": aud,
         "iss": f"{TEST_SUPABASE_URL}/auth/v1",
         "exp": now + exp_delta,
-        "email": "tester@example.com",
+        "email": email,
         "role": "authenticated",
     }
     return jwt.encode(payload, secret or TEST_JWT_SECRET, algorithm="HS256")
