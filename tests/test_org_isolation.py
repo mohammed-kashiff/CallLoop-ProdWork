@@ -54,11 +54,24 @@ def test_api_never_reads_client_org_id():
     text = (BACKEND / "api.py").read_text(encoding="utf-8")
     assert "DEFAULT_ORG_ID" not in text
     assert "org_id_from_request" in text
-    lowered = text.lower()
+
+    # Admin-only exception: provision_user is gated by require_platform_admin
+    # before body.org_id is ever read — the caller is choosing a TARGET org
+    # for someone else, not scoping their own request. Do not add any other
+    # org_id-from-client pattern outside this one route.
+    start = text.index("def provision_user")
+    end = text.index("\n\n\n", start)
+    admin_region = text[start:end]
+    outside = text[:start] + text[end:]
+
+    lowered = outside.lower()
     assert 'query_params.get("org_id")' not in lowered
     assert "query_params['org_id']" not in lowered
     assert "body.org_id" not in lowered
     assert "org_id: str = query" not in lowered
+
+    assert "require_platform_admin" in admin_region
+    assert "body.org_id" in admin_region
 
 
 def test_data_sql_filters_org_id():

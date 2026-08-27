@@ -5,8 +5,8 @@
 > picking up work in this repo, read this file first — it exists so you don't
 > have to reverse-engineer the codebase from scratch.
 >
-> Last written: 2026-08-27, reflecting the placeholder-org self-heal fix and
-> `docs/adr/001-tenancy-model.md`.
+> Last written: 2026-08-28, reflecting manual Gmail/personal-email user
+> provisioning (`backend/admin_provision.py`, AC-3 of the Admin Controls epic).
 
 ---
 
@@ -136,7 +136,8 @@ request and scopes every downstream call to that org.
 | `api.py` | **The whole app.** Every HTTP route lives here (see §6 for the route table). |
 | `config.py` | Env loading, CORS origins, `skip_startup()` (test/CI flag to import the app without provider bootstrap). |
 | `paths.py` | Repo-root-relative paths (log dir, rubric path, `.env` path) — independent of process cwd. |
-| `auth.py` | Verifies Supabase JWTs, `ensure_membership()`, and `ensure_placeholder_org()` — idempotent seed of `DEFAULT_ORG_ID` for webhook/CLI/usage fallbacks only (not signup). |
+| `auth.py` | Verifies Supabase JWTs, `ensure_membership()`, `ensure_placeholder_org()` — idempotent seed of `DEFAULT_ORG_ID` for webhook/CLI/usage fallbacks only (not signup) — and `require_platform_admin()`, the internal admin-console gate (see §5). |
+| `admin_provision.py` | AC-3: creates a Supabase Auth user (generated password, `email_confirm: true`) plus an `org_members` row — new org (`owner`) or an existing org by id (`member`). Rolls back the auth user if the org/membership insert fails. Callers must already have passed `require_platform_admin`; the module itself doesn't re-check. Password is returned once in the response, never logged (enforced by a static test). |
 | `org_ids.py` | Tenant-id plumbing: `contextvars`-based `bind_org_id`/`bound_org_id`/`org_scope`, `DEFAULT_ORG_ID`/`DEFAULT_RUBRIC_ID` constants (still used by background/webhook fallback paths, **not** by human signup anymore). |
 | `db.py` | Opens Postgres connections, runs `SET LOCAL ROLE callproof_app` + sets the tenant GUCs (`app.current_org_id`, `app.current_user_id`) so RLS applies. `bypass_rls=True` is a narrowly-scoped escape hatch for specific admin/background paths only — see the comment in that file before ever reaching for it. |
 | `db_url.py` | Reads and normalizes `DATABASE_URL`/`SUPABASE_DB_URL`. Never logs it (embeds a password). |
@@ -228,6 +229,8 @@ sequenceDiagram
 - Public providers (gmail.com, outlook.com, yahoo.com, etc.) → always get their own new org. This is deliberate — auto-matching on a shared public domain would put unrelated strangers in the same tenant.
 - `DEFAULT_ORG_ID` (the seeded `"default"` org) is **never** assigned to a human signup anymore — it still exists for non-signup fallback paths (JustCall webhook host-fallback, background QA/usage jobs with no bound org).
 
+**Platform-admin access is a separate, orthogonal mechanism — not a third tenant-isolation layer.** `require_platform_admin()` (`backend/auth.py`) checks the verified JWT's email against a `PLATFORM_ADMIN_EMAILS` allowlist (comma-separated env var, empty means nobody — fails closed). It has nothing to do with `org_id`, RLS, or `org_members`: being a platform admin doesn't grant cross-org data access by itself, and it's deliberately not modeled as membership in an "Admins" org, since `org_members` only allows one org per user (`UNIQUE (user_id)`) and that would collide with an admin also having their own regular account. Every `/api/admin/*` route (Admin Controls epic, `AC-` in Jira) calls this first, same inline-helper convention as `_org(request)` on regular routes.
+
 ---
 
 ## 6. Internal API surface (`backend/api.py`)
@@ -236,6 +239,7 @@ sequenceDiagram
 |---|---|---|
 | GET | `/` | Health check |
 | GET | `/api/me` | Current user/org/role |
+| POST | `/api/admin/provision-user` | **Platform-admin only.** Create a login + org membership for a personal-email (Gmail, etc.) signup; returns a one-time generated password. Gated by `require_platform_admin` — 403 for everyone else, checked before any Supabase call. |
 | GET | `/api/pyai/status` | PyAI connectivity/quota status |
 | POST | `/api/keys` | Update host-configured API keys |
 | GET | `/api/dev/logs` | Tail recent log lines (dev/debug) |
@@ -257,13 +261,13 @@ sequenceDiagram
 | POST | `/api/upload` | Upload a single audio file for transcription + scoring |
 | POST | `/api/upload-batch` | Upload a zip of audio files, processed in parallel |
 
-Every route except the JustCall webhook requires a valid Supabase JWT; the webhook authenticates via JustCall's own signature header instead.
+Every route except the JustCall webhook requires a valid Supabase JWT; the webhook authenticates via JustCall's own signature header instead. `/api/admin/*` routes require a valid JWT *and* pass `require_platform_admin` on top — a normal authenticated user gets 403, not tenant-scoped data.
 
 ---
 
 ## 7. Current known gaps (keep this section honest, don't let it go stale)
 
-- Admin UI over `org_directory` is an open decision — the view is for direct SQL, not a product page. `short_id` is sequential (100000+) by design, not random.
+- Admin console is partially built — AC-2 (authorization gate) and AC-3 (manual Gmail/personal-email provisioning) are live. AC-4 (`org_features` table + `/api/me` flags) and AC-5 (the admin panel UI — directory search over `org_directory`, usage/cost rollup, flag toggles) are ticketed in the `AC` Jira project but not yet implemented; there's no UI for provisioning yet either, only the `/api/admin/provision-user` endpoint itself. `short_id` is sequential (100000+) by design, not random.
 - `applog.py`'s secret-redaction filter is attached to the file log handler only — console/stdout output is not covered by the same filter.
 
 ---

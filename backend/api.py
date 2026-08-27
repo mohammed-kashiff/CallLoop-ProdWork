@@ -36,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from . import admin_provision
 from . import applog
 from . import audit_store
 from . import audio_store
@@ -188,6 +189,27 @@ def me(request: Request):
         "org_id": org_id,
         "role": getattr(request.state, "role", None),
     }
+
+
+class ProvisionUserBody(BaseModel):
+    email: str
+    first_name: str
+    last_name: str
+    org_mode: str
+    org_id: str | None = None
+
+
+@app.post("/api/admin/provision-user")
+def provision_user(request: Request, body: ProvisionUserBody):
+    """Create a login + org membership. Password is returned once, never logged."""
+    auth.require_platform_admin(request)
+    return admin_provision.provision_user(
+        email=body.email,
+        first_name=body.first_name,
+        last_name=body.last_name,
+        org_mode=body.org_mode,
+        org_id=body.org_id,
+    )
 
 
 def _conn():
