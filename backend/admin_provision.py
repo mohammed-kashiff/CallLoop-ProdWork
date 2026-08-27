@@ -75,15 +75,29 @@ def provision_user(
         last_name=last,
     )
     requested_name = (org_name or "").strip()[:120] or None
+    created = True
     try:
         if mode == "new":
-            out_org_id, out_org_name, role = _insert_new_org(
-                user_id=user_id,
-                email=email_s,
-                first_name=first,
-                last_name=last,
-                org_name=requested_name,
-            )
+            final_name = requested_name or auth._workspace_name(email_s)
+            matched_org = _lookup_org_id_by_name(final_name)
+            if matched_org:
+                matched_name = _lookup_org_name(matched_org) or final_name
+                out_org_id, out_org_name, role = _insert_existing_member(
+                    org_id=matched_org,
+                    org_name=matched_name,
+                    user_id=user_id,
+                    first_name=first,
+                    last_name=last,
+                )
+                created = False
+            else:
+                out_org_id, out_org_name, role = _insert_new_org(
+                    user_id=user_id,
+                    email=email_s,
+                    first_name=first,
+                    last_name=last,
+                    org_name=final_name,
+                )
         else:
             assert target_org is not None
             out_org_id, out_org_name, role = _insert_existing_member(
@@ -93,6 +107,7 @@ def provision_user(
                 first_name=first,
                 last_name=last,
             )
+            created = False
     except HTTPException:
         _delete_auth_user(user_id)
         raise
@@ -107,12 +122,14 @@ def provision_user(
         org_id=out_org_id,
         user_id=user_id,
         role=role,
+        created_org=created,
     )
     return {
         "email": email_s,
         "user_id": user_id,
         "org_id": out_org_id,
         "org_name": out_org_name,
+        "created": created,
         "temporary_password": password,
     }
 
@@ -182,6 +199,19 @@ def _delete_auth_user(user_id: str) -> None:
             level=logging.ERROR,
             user_id=user_id,
         )
+
+
+def _lookup_org_id_by_name(name: str) -> str | None:
+    """Exact, case-insensitive, trimmed match via org_id_for_name() (SECURITY
+    DEFINER) — orgs has RLS and the target id isn't known in advance, same
+    reason org_id_for_domain() exists for signup. Never bypass_rls."""
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT public.org_id_for_name(%s) AS id",
+            (name,),
+        ).fetchone()
+    found = row.get("id") if row else None
+    return parse_org_id(found) if found else None
 
 
 def _lookup_org_name(org_id: str) -> str | None:

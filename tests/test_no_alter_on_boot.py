@@ -158,6 +158,21 @@ def test_fourteenth_revision_write_policies_and_directory_fn():
     assert "0013_org_features" in raw
 
 
+def test_fifteenth_revision_org_id_for_name_excludes_default_org():
+    rev = ROOT / "alembic" / "versions" / "0015_org_id_for_name.py"
+    assert rev.is_file()
+    raw = rev.read_text(encoding="utf-8")
+    sql = raw.upper()
+    assert "CREATE FUNCTION PUBLIC.ORG_ID_FOR_NAME" in sql
+    assert "SECURITY DEFINER" in sql
+    assert "LOWER(BTRIM(NAME))" in sql
+    assert "ORDER BY CREATED_AT ASC" in sql
+    assert "GRANT EXECUTE ON FUNCTION PUBLIC.ORG_ID_FOR_NAME(TEXT) TO CALLPROOF_APP" in sql
+    assert "bypass_rls" not in raw
+    assert "DEFAULT_ORG_ID" in raw
+    assert "0014_org_features_write" in raw
+
+
 def test_twelfth_revision_short_id_sequence_granted_to_app():
     rev = ROOT / "alembic" / "versions" / "0012_org_members_short_id.py"
     assert rev.is_file()

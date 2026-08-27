@@ -39,6 +39,15 @@ class _FakeConn:
                 if str(org["id"]) == str(oid):
                     return _Row({"id": org["id"], "name": org["name"]})
             return _Row(None)
+        if "ORG_ID_FOR_NAME" in norm:
+            needle = (params[0] if params else "").strip().lower()
+            matches = sorted(
+                (o for o in self.orgs if str(o["name"]).strip().lower() == needle),
+                key=lambda o: o.get("created_at", 0),
+            )
+            if matches and str(matches[0]["id"]) != DEFAULT_ORG_ID:
+                return _Row({"id": matches[0]["id"]})
+            return _Row({"id": None})
         if "INSERT INTO ORGS" in norm:
             self.inserted_orgs.append(params)
             self.orgs.append({"id": params[0], "name": params[1]})
@@ -162,6 +171,73 @@ def test_new_org_blank_org_name_falls_back_too(monkeypatch):
             org_name="   ",
         )
     assert out["org_name"] == "pat.new's workspace"
+
+
+def test_second_user_with_same_org_name_joins_instead_of_duplicating(monkeypatch):
+    first_org = str(uuid.uuid4())
+    _auth_ok(monkeypatch)
+    conn = _FakeConn(orgs=[{"id": first_org, "name": "The First Men", "created_at": 1}])
+    with _fake_db(monkeypatch, conn):
+        out = provision_user(
+            email="second@gmail.com",
+            first_name="Sam",
+            last_name="Two",
+            org_mode="new",
+            org_name="The First Men",
+        )
+    assert conn.inserted_orgs == []
+    assert out["org_id"] == first_org
+    assert out["org_name"] == "The First Men"
+    assert out["created"] is False
+    assert conn.inserted_members[0][0] == first_org
+    assert conn.inserted_members[0][2] == "member"
+
+
+def test_matching_org_name_is_case_insensitive_and_trimmed(monkeypatch):
+    first_org = str(uuid.uuid4())
+    _auth_ok(monkeypatch)
+    conn = _FakeConn(orgs=[{"id": first_org, "name": "The First Men", "created_at": 1}])
+    with _fake_db(monkeypatch, conn):
+        out = provision_user(
+            email="second@gmail.com",
+            first_name="Sam",
+            last_name="Two",
+            org_mode="new",
+            org_name="  the FIRST men  ",
+        )
+    assert out["org_id"] == first_org
+    assert out["created"] is False
+
+
+def test_new_org_response_flags_created_true(monkeypatch):
+    _auth_ok(monkeypatch)
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        out = provision_user(
+            email="fresh@gmail.com",
+            first_name="Fresh",
+            last_name="One",
+            org_mode="new",
+            org_name="Brand New Org",
+        )
+    assert out["created"] is True
+    assert len(conn.inserted_orgs) == 1
+
+
+def test_name_matching_never_lands_in_default_org(monkeypatch):
+    _auth_ok(monkeypatch)
+    conn = _FakeConn(orgs=[{"id": DEFAULT_ORG_ID, "name": "default", "created_at": 0}])
+    with _fake_db(monkeypatch, conn):
+        out = provision_user(
+            email="new@gmail.com",
+            first_name="New",
+            last_name="Person",
+            org_mode="new",
+            org_name="default",
+        )
+    assert out["org_id"] != DEFAULT_ORG_ID
+    assert out["created"] is True
+    assert len(conn.inserted_orgs) == 1
 
 
 def test_existing_org_ignores_org_name(monkeypatch):

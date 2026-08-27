@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext'
 type ProvisionResult = {
   email: string
   org_name: string
+  created: boolean
   temporary_password: string
 }
 
@@ -234,7 +235,8 @@ export function Admin() {
         {provisionResult ? (
           <div className="admin-provision-result" role="status">
             <p>
-              <strong>{provisionResult.email}</strong> created in{' '}
+              <strong>{provisionResult.email}</strong>{' '}
+              {provisionResult.created ? 'created' : 'added to the existing org'} in{' '}
               <strong>{provisionResult.org_name}</strong>.
             </p>
             <p className="admin-provision-warning">

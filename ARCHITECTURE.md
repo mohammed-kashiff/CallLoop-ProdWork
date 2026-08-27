@@ -6,9 +6,9 @@
 > have to reverse-engineer the codebase from scratch.
 >
 > Last written: 2026-08-28, reflecting the full Admin Controls trial run
-> (AC-2 through AC-6): the admin gate, provisioning (now with an admin-chosen
-> org name and a form to drive it), per-org feature flags, and the admin
-> panel UI itself.
+> (AC-2 through AC-7): the admin gate, provisioning (admin-chosen org name,
+> a form to drive it, and same-name orgs now merge instead of duplicating),
+> per-org feature flags, and the admin panel UI itself.
 
 ---
 
@@ -139,7 +139,7 @@ request and scopes every downstream call to that org.
 | `config.py` | Env loading, CORS origins, `skip_startup()` (test/CI flag to import the app without provider bootstrap). |
 | `paths.py` | Repo-root-relative paths (log dir, rubric path, `.env` path) — independent of process cwd. |
 | `auth.py` | Verifies Supabase JWTs, `ensure_membership()`, `ensure_placeholder_org()` — idempotent seed of `DEFAULT_ORG_ID` for webhook/CLI/usage fallbacks only (not signup) — and `require_platform_admin()`, the internal admin-console gate (see §5). |
-| `admin_provision.py` | AC-3/AC-6: creates a Supabase Auth user (generated password, `email_confirm: true`) plus an `org_members` row — new org (`owner`, named by the admin if given, else auto-derived from the email) or an existing org by id (`member`). Rolls back the auth user if the org/membership insert fails. Callers must already have passed `require_platform_admin`; the module itself doesn't re-check. Password is returned once in the response, never logged (enforced by a static test). |
+| `admin_provision.py` | AC-3/AC-6/AC-7: creates a Supabase Auth user (generated password, `email_confirm: true`) plus an `org_members` row. `org_mode="new"` resolves a final org name (admin-given or auto-derived), looks it up via `org_id_for_name()` — a match joins that org as `member`; no match creates a new org as `owner`. `org_mode="existing"` targets an org id directly, unaffected by name matching. Rolls back the auth user if the org/membership insert fails. Response includes `created: bool` so the caller knows which happened. Callers must already have passed `require_platform_admin`; the module itself doesn't re-check. Password is returned once, never logged (enforced by a static test). |
 | `org_features.py` | AC-4/AC-5: `features_for_org()` (read, org-scoped, defaults missing keys to enabled) and `set_feature()` (upsert, admin-gated caller). `FEATURE_KEYS` is the trial-run flag list — add a key here without a migration. |
 | `admin_console.py` | AC-5: directory search (via the `admin_search_directory` SQL function, never `org_directory` directly), org usage/cost lookup (`org_scope()` redirects `pyai_usage.usage_summary()`'s ambient RLS scoping to the *queried* org), and the feature-write entrypoint the admin panel calls. |
 | `org_ids.py` | Tenant-id plumbing: `contextvars`-based `bind_org_id`/`bound_org_id`/`org_scope`, `DEFAULT_ORG_ID`/`DEFAULT_RUBRIC_ID` constants (still used by background/webhook fallback paths, **not** by human signup anymore). |
@@ -274,7 +274,8 @@ Every route except the JustCall webhook requires a valid Supabase JWT; the webho
 
 ## 7. Current known gaps (keep this section honest, don't let it go stale)
 
-- Admin Controls epic (AC-2 through AC-6) is fully live: authorization gate, manual provisioning (with an admin-chosen org name), per-org feature flags, and the admin panel UI itself, including the provisioning form. `short_id` is sequential (100000+) by design, not random.
+- Admin Controls epic (AC-2 through AC-7) is fully live: authorization gate, manual provisioning (admin-chosen org name, same-name orgs merge rather than duplicate), per-org feature flags, and the admin panel UI itself. `short_id` is sequential (100000+) by design, not random.
+- Org-name matching for provisioning (`org_id_for_name()`) is exact, case-insensitive, and trimmed — not fuzzy. "Acme Inc" and "Acme Inc." are different orgs on purpose; there's no UI yet to merge two orgs that were already accidentally split by a naming mismatch (would need a manual `UPDATE org_members SET org_id = ...` today).
 - `admin_console.py`'s `search_directory()` swallows any lookup failure silently (`except Exception: return {"rows": []}`, no log line) — same class of gap `org_features.py`'s `features_for_org()` had before it got a `log.debug` line. Worth the same fix; low priority since it only affects the admin's own view, not tenant data.
 - A second platform admin is added by editing `PLATFORM_ADMIN_EMAILS` on Render — there's no self-service "add another admin" UI, and that's deliberate for now (see §5's note on why this isn't modeled as an "Admins" org).
 - `applog.py`'s secret-redaction filter is attached to the file log handler only — console/stdout output is not covered by the same filter.
