@@ -72,6 +72,15 @@ def init_sentry(*, transport=None) -> bool:
     return True
 
 
+def capture_exception(exc: BaseException | None = None) -> None:
+    """Send a handled failure (upload/batch). No-op if Sentry is not initialised."""
+    if not _initialized:
+        return
+    import sentry_sdk
+
+    sentry_sdk.capture_exception(exc)
+
+
 def before_send(event: dict[str, Any] | None, hint: dict[str, Any] | None) -> dict[str, Any] | None:
     """Drop 4xx, attach org_id, strip bodies/PII/secrets. Never log the event."""
     if not event:

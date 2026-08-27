@@ -2159,6 +2159,9 @@ def _upload_error_status(msg: str) -> HTTPException:
             detail="Daily transcription cap reached (resets 00:00 UTC). "
                    "Try a fresh key or later.",
         )
+    # Missing host key mentions transcribe:jobs in the copy — that is 502, not 403.
+    if "PYAI_API_KEY not configured" in msg:
+        return HTTPException(status_code=502, detail=msg)
     if "transcribe:jobs" in msg or "speaker-labelled" in msg:
         return HTTPException(status_code=403, detail=msg)
     return HTTPException(status_code=502, detail=f"Transcription failed: {msg}")
@@ -2368,6 +2371,7 @@ def upload(request: Request, file: UploadFile = File(...)):
             error=msg,
         )
         log.error("upload/transcription failed: %s", msg)
+        sentry_report.capture_exception(e)
         raise _upload_error_status(msg)
     finally:
         if os.path.exists(tmp):
@@ -2432,6 +2436,7 @@ def upload_batch(request: Request, file: UploadFile = File(...)):
                     filename=item["filename"],
                     error=msg,
                 )
+                sentry_report.capture_exception(e)
                 return {
                     "index": item["index"],
                     "filename": item["filename"],

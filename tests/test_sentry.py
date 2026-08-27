@@ -65,6 +65,19 @@ def test_before_send_strips_body_and_authorization():
     assert "pyai_live_" not in blob
 
 
+def test_missing_pyai_key_is_not_treated_as_http_403():
+    from backend.api import _upload_error_status
+
+    msg = (
+        "PYAI_API_KEY not configured. Set it on the host environment "
+        "(live key with transcribe:jobs for CallProof)."
+    )
+    err = _upload_error_status(msg)
+    assert err.status_code == 502
+    hint = {"exc_info": (type(err), err, None)}
+    assert before_send({"message": "x"}, hint) is not None
+
+
 def test_before_send_tags_bound_org():
     event = {"message": "x"}
     with org_scope(DEFAULT_ORG_ID):
