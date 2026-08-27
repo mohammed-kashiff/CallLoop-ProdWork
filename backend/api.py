@@ -45,10 +45,12 @@ from . import env_keys
 from . import error_notify
 from . import justcall
 from . import org_vault
+from . import sentry_report
 from .config import cors_origins, load_env, skip_startup
 
 load_env()
 applog.setup_logging()
+sentry_report.init_sentry()
 
 from . import cost_estimate
 from . import email_notify

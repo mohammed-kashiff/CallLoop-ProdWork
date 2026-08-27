@@ -311,6 +311,8 @@ Set these as **Environment** variables on the Web Service (not Secret Files, not
 | `SUPABASE_URL` | Project URL (`https://<ref>.supabase.co`). JWT issuer is `{URL}/auth/v1`. |
 | `SUPABASE_JWT_SECRET` | Project Settings → API JWT secret (HS256). Dashboard-only (`sync: false`). |
 | `SUPABASE_SERVICE_ROLE_KEY` | Project Settings → API **service_role** (server only). Private Storage uploads + signed URLs. Never a `VITE_*` var. |
+| `SENTRY_DSN` | Sentry project DSN (error tracking). Dashboard-only. Empty disables the SDK. |
+| `SENTRY_ENVIRONMENT` | `production` on Render (also inferred when `RENDER` is set). |
 
 On the **Static Site** (`callloop-web`), set **build-time** env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL` (the API origin). Vite bakes these in at build; changing them later needs a rebuild.
 
@@ -440,6 +442,12 @@ Needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Runtime no longer uses a l
 New workspace: Dashboard → **New → Blueprint** and point at this repo’s `render.yaml`, or recreate a Web Service with the table above. Paste secrets in the dashboard (`sync: false` in the Blueprint).
 
 **Not in this AC:** SQLite on a mounted disk (free instances have no persistent volume). Call rows live in Postgres; recordings live in Storage.
+
+### Error tracking (Sentry)
+
+The API initialises the official FastAPI Sentry SDK when `SENTRY_DSN` is set. Events are tagged with `environment` (`production` on Render) and `org_id` (JWT/worker UUID only). Request bodies, `Authorization`, cookies, emails, and API keys are stripped. 4xx is not sent.
+
+**Alerts (Sentry UI, not this repo):** Alerts → Create Alert → “An issue is created” → notify a Slack channel or inbox someone actually reads. Local `ERROR_NOTIFY_*` is laptop-only and is not a substitute on Render.
 
 ---
 

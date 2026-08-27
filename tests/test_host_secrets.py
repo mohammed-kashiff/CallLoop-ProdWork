@@ -44,6 +44,7 @@ def test_readme_lists_required_env_names_without_values():
         "PYAI_API_KEY",
         "ANTHROPIC_API_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
+        "SENTRY_DSN",
     ):
         assert name in readme
     assert "PYAI_API_KEY=pyai_live_your_key_here" not in readme
