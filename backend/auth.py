@@ -124,6 +124,25 @@ def verify_access_token(token: str) -> dict:
     return claims
 
 
+# Public mailbox providers. Matching on these would put strangers in one org.
+_PUBLIC_EMAIL_DOMAINS = frozenset({
+    "gmail.com",
+    "googlemail.com",
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "msn.com",
+    "yahoo.com",
+    "ymail.com",
+    "icloud.com",
+    "me.com",
+    "aol.com",
+    "protonmail.com",
+    "proton.me",
+    "gmx.com",
+})
+
+
 def _workspace_name(email: str | None) -> str:
     raw = (email or "").strip()
     local = raw.split("@", 1)[0].strip() if raw else ""
@@ -132,8 +151,25 @@ def _workspace_name(email: str | None) -> str:
     return "Workspace"
 
 
+def _signup_domain(email: str | None) -> str | None:
+    """Company domain for auto-join, or None if missing/malformed."""
+    raw = (email or "").strip()
+    if not raw or "@" not in raw:
+        return None
+    local, domain = raw.rsplit("@", 1)
+    local = local.strip()
+    domain = domain.lower().strip()
+    if not local or not domain:
+        return None
+    return domain
+
+
 def ensure_membership(user_id: str, email: str | None = None) -> Membership:
-    """One membership per user at launch. First user claims DEFAULT_ORG_ID."""
+    """One membership per user at launch.
+
+    New signups join by email domain, or get a personal org for public
+    providers (gmail, outlook, …). Human signup never claims DEFAULT_ORG_ID.
+    """
     uid = str(uuid.UUID(str(user_id)))
     with db.connection() as conn:
         db.apply_tenant_gucs(conn, user_id=uid)
@@ -164,16 +200,43 @@ def ensure_membership(user_id: str, email: str | None = None) -> Membership:
             _ensure_placeholder_rubric(conn, org_id=org_id, user_id=uid)
             return Membership(org_id, str(row["role"]), uid)
 
-        existing = conn.execute("SELECT 1 FROM org_members LIMIT 1").fetchone()
-        if existing is None:
-            org_id = DEFAULT_ORG_ID
-        else:
+        domain = _signup_domain(email)
+        created = False
+        if domain is None or domain in _PUBLIC_EMAIL_DOMAINS:
             org_id = str(uuid.uuid4())
             db.apply_tenant_gucs(conn, org_id=org_id, user_id=uid)
             conn.execute(
                 "INSERT INTO orgs (id, name) VALUES (%s, %s)",
                 (org_id, _workspace_name(email)),
             )
+            created = True
+        else:
+            org_id = str(uuid.uuid4())
+            db.apply_tenant_gucs(conn, org_id=org_id, user_id=uid)
+            inserted = conn.execute(
+                """
+                INSERT INTO orgs (id, name, domain)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (domain) DO NOTHING
+                RETURNING id
+                """,
+                (org_id, domain, domain),
+            ).fetchone()
+            if inserted:
+                org_id = str(inserted["id"])
+                created = True
+            else:
+                found = conn.execute(
+                    "SELECT public.org_id_for_domain(%s) AS id",
+                    (domain,),
+                ).fetchone()
+                if not found or not found["id"]:
+                    raise RuntimeError("domain conflict without an existing org")
+                org_id = str(found["id"])
+                db.apply_tenant_gucs(conn, org_id=org_id, user_id=uid)
+
+        role = "owner" if created else "member"
+        if created:
             audit_store.seed_legacy_rubric(
                 conn, org_id=org_id, rubric_id=str(uuid.uuid4()),
             )
@@ -184,9 +247,9 @@ def ensure_membership(user_id: str, email: str | None = None) -> Membership:
             conn.execute(
                 """
                 INSERT INTO org_members (org_id, user_id, role)
-                VALUES (%s, %s, 'owner')
+                VALUES (%s, %s, %s)
                 """,
-                (org_id, uid),
+                (org_id, uid, role),
             )
         except UniqueViolation:
             conn.rollback()
@@ -206,7 +269,7 @@ def ensure_membership(user_id: str, email: str | None = None) -> Membership:
             )
             return Membership(str(row["org_id"]), str(row["role"]), uid)
 
-        return Membership(org_id, "owner", uid)
+        return Membership(org_id, role, uid)
 
 
 def _ensure_placeholder_rubric(conn, *, org_id: str, user_id: str) -> None:
