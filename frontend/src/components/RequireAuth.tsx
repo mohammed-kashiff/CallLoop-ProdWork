@@ -2,7 +2,7 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 export function RequireAuth() {
-  const { configured, loading, session } = useAuth()
+  const { configured, loading, session, passwordRecovery } = useAuth()
   const location = useLocation()
 
   if (!configured) {
@@ -14,6 +14,9 @@ export function RequireAuth() {
         <p className="auth-lead">Loading session…</p>
       </div>
     )
+  }
+  if (passwordRecovery) {
+    return <Navigate to="/reset-password" replace />
   }
   if (!session) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />

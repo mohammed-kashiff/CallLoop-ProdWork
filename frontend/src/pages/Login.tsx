@@ -9,7 +9,7 @@ const RESET_SENT =
   'If that email is registered, we sent a reset link. Check your inbox.'
 
 export function Login() {
-  const { session, loading } = useAuth()
+  const { session, loading, passwordRecovery } = useAuth()
   const { mode } = useColorMode()
   const location = useLocation()
   const from = (location.state as { from?: string } | null)?.from || '/'
@@ -24,6 +24,9 @@ export function Login() {
   )
   const [busy, setBusy] = useState(false)
 
+  if (!loading && passwordRecovery) {
+    return <Navigate to="/reset-password" replace />
+  }
   if (!loading && session) {
     return <Navigate to={from} replace />
   }

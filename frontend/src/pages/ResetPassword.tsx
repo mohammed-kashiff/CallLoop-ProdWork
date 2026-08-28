@@ -2,9 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BrandLogo } from '../components/BrandLogo'
 import { useColorMode } from '../context/ColorMode'
-import { supabase, supabaseConfigured } from '../lib/supabase'
+import { supabase, supabaseConfigured, markPasswordRecovery, clearPasswordRecovery, hasPasswordRecoveryHint } from '../lib/supabase'
 
-const RECOVERY_HINT = 'callloop_pw_recovery'
 const INVALID_COPY =
   'This reset link is invalid or has expired. Request a new one from the login page.'
 
@@ -31,7 +30,7 @@ function captureRecoveryHint(params: URLSearchParams): void {
     params.get('token_hash') ||
     params.get('type') === 'recovery'
   ) {
-    sessionStorage.setItem(RECOVERY_HINT, '1')
+    markPasswordRecovery()
   }
 }
 
@@ -82,18 +81,18 @@ export function ResetPassword() {
     const { data: sub } = client.auth.onAuthStateChange((event, next) => {
       if (cancelled) return
       if (event === 'PASSWORD_RECOVERY') {
-        sessionStorage.setItem(RECOVERY_HINT, '1')
+        markPasswordRecovery()
         setGate('ready')
         return
       }
-      if (next && sessionStorage.getItem(RECOVERY_HINT) === '1') {
+      if (next && hasPasswordRecoveryHint()) {
         setGate('ready')
       }
     })
 
     void client.auth.getSession().then(({ data }) => {
       if (cancelled) return
-      const hinted = sessionStorage.getItem(RECOVERY_HINT) === '1'
+      const hinted = hasPasswordRecoveryHint()
       if (data.session && hinted) {
         setGate('ready')
         return
@@ -152,7 +151,7 @@ export function ResetPassword() {
         }
         return
       }
-      sessionStorage.removeItem(RECOVERY_HINT)
+      clearPasswordRecovery()
       await supabase.auth.signOut()
       navigate('/login', {
         replace: true,

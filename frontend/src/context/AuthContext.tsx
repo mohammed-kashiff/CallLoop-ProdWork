@@ -10,7 +10,7 @@ import {
 import type { Session } from '@supabase/supabase-js'
 import { apiFetch } from '../lib/api'
 import type { FeatureMap } from '../lib/features'
-import { supabase, supabaseConfigured } from '../lib/supabase'
+import { supabase, supabaseConfigured, hasPasswordRecoveryHint, markPasswordRecovery, clearPasswordRecovery } from '../lib/supabase'
 
 type AuthContextValue = {
   configured: boolean
@@ -20,6 +20,7 @@ type AuthContextValue = {
   email: string | null
   features: FeatureMap
   isPlatformAdmin: boolean
+  passwordRecovery: boolean
   refreshMe: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -31,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [features, setFeatures] = useState<FeatureMap>({})
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false)
+  const [passwordRecovery, setPasswordRecovery] = useState(hasPasswordRecoveryHint)
 
   const email = session?.user?.email ?? null
 
@@ -67,7 +69,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false)
       }
     })
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, next) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        markPasswordRecovery()
+        setPasswordRecovery(true)
+      }
+      if (event === 'SIGNED_OUT') {
+        clearPasswordRecovery()
+        setPasswordRecovery(false)
+      }
       setSession(next)
       setLoading(false)
     })
@@ -82,6 +92,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshMe])
 
   const signOut = useCallback(async () => {
+    clearPasswordRecovery()
+    setPasswordRecovery(false)
     if (supabase) await supabase.auth.signOut()
     setFeatures({})
     setIsPlatformAdmin(false)
@@ -96,10 +108,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email,
       features,
       isPlatformAdmin,
+      passwordRecovery,
       refreshMe,
       signOut,
     }),
-    [loading, session, email, features, isPlatformAdmin, refreshMe, signOut],
+    [loading, session, email, features, isPlatformAdmin, passwordRecovery, refreshMe, signOut],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
