@@ -5,10 +5,11 @@
 > picking up work in this repo, read this file first — it exists so you don't
 > have to reverse-engineer the codebase from scratch.
 >
-> Last written: 2026-08-28, reflecting the full Admin Controls trial run
-> (AC-2 through AC-7): the admin gate, provisioning (admin-chosen org name,
-> a form to drive it, and same-name orgs now merge instead of duplicating),
-> per-org feature flags, and the admin panel UI itself.
+> Last written: 2026-08-29. Since the last pass: self-serve password reset
+> (CL-29) and an admin-triggered reset that never reveals the new password
+> (AC-9), and org names are now shown in the app itself — every member sees
+> their own org's name in the sidebar (CL-31), not just admins in the
+> directory search.
 
 ---
 
@@ -180,14 +181,17 @@ Schema changes only ever happen here — never as ad-hoc SQL in `backend/`.
 | `0010_orgs_domain_column` | `orgs.domain` (nullable, unique) + a `SECURITY DEFINER` SQL function `org_id_for_domain()` used to resolve a same-company signup race without opening an RLS-bypassing connection from application code. |
 | `0011_org_members_names_and_directory_view` | `org_members.first_name` / `last_name` (nullable, no backfill). `org_directory` view (email + names + org) is **admin SQL only** — not granted to `callproof_app`, not served by the API. |
 | `0012_org_members_short_id` | `org_members.short_id` unique integer from sequence starting at 100000 (`DEFAULT nextval`). **GRANT USAGE, SELECT** on the sequence to `callproof_app` is required for inserts. `org_directory` also selects `short_id`. |
+| `0013_org_features` | `org_features` table (AC-4) — per-org flag overrides, missing rows default to enabled. Also adds `org_members.first_seen` / `last_sign_in` for the admin directory. |
+| `0014_org_features_write` | Write-side policies for `org_features` (AC-5) plus the `admin_search_directory` `SECURITY DEFINER` SQL function the admin panel's directory search goes through instead of selecting `org_directory` directly. |
+| `0015_org_id_for_name` | `org_id_for_name()` `SECURITY DEFINER` function (AC-7) — lets admin provisioning join an existing same-name org instead of creating a duplicate, without an RLS-bypassing connection. |
 
 ### `frontend/src/`
 
 | Folder | Purpose |
 |---|---|
-| `pages/` | One file per route/screen: `Login.tsx`, `Home.tsx`, `FlaggedForReview.tsx`, `ChurnRisk.tsx`, `Training.tsx`, `Integrations.tsx`, `AgentsPulse.tsx`, `Feedbacks.tsx`, `Neighbourhood.tsx`, `Pyai.tsx`, `Admin.tsx` (platform-admin only — directory search, usage/cost, flag toggles, and the "Provision user" form; redirects everyone else to `/`, real enforcement is server-side). |
-| `components/` | Reusable UI pieces — call playback (`TranscriptPlayer`, `CallWaveform`), layout (`AppLayout`, `Sidebar`), status widgets (`UsageMeter`, `PyaiBadge`, `LiveTicker`), the JustCall keys form (`KeysPanel`). `Sidebar`/`UsageMeter`/`PyaiBadge` all read `AuthContext`'s `features` map to hide themselves per-org. |
-| `context/` | React context providers: `AuthContext` (Supabase session, plus `/api/me`'s `features` and `isPlatformAdmin`), `AuditContext`, `PyaiStatus`, `ColorMode`, `UsageEnv`. |
+| `pages/` | One file per route/screen: `Login.tsx` (also handles "Forgot password?", CL-29), `ResetPassword.tsx` (the set-new-password landing page a reset email links to, CL-29 — gated on Supabase's `PASSWORD_RECOVERY` auth event, not just the URL having a token), `Home.tsx`, `FlaggedForReview.tsx`, `ChurnRisk.tsx`, `Training.tsx`, `Integrations.tsx`, `AgentsPulse.tsx`, `Feedbacks.tsx`, `Neighbourhood.tsx`, `Pyai.tsx`, `Admin.tsx` (platform-admin only — directory search, usage/cost, flag toggles, and the "Provision user" form; redirects everyone else to `/`, real enforcement is server-side). |
+| `components/` | Reusable UI pieces — call playback (`TranscriptPlayer`, `CallWaveform`), layout (`AppLayout`, `Sidebar`), status widgets (`UsageMeter`, `PyaiBadge`, `LiveTicker`), the JustCall keys form (`KeysPanel`). `Sidebar`/`UsageMeter`/`PyaiBadge` all read `AuthContext`'s `features` map to hide themselves per-org; `Sidebar` also renders the caller's own org name under the tagline (CL-31). |
+| `context/` | React context providers: `AuthContext` (Supabase session, plus `/api/me`'s `features`, `isPlatformAdmin`, and `orgName`), `AuditContext`, `PyaiStatus`, `ColorMode`, `UsageEnv`. |
 | `lib/` | `supabase.ts` (client init), `api.ts` (backend fetch wrapper), `mapAudit.ts`, `format.ts`, `zipAudio.ts`, `speakerText.ts`, `features.ts` (`flagEnabled()` — missing key defaults to shown — and `TRIAL_FLAGS`; deliberately holds no admin-email list, that lives server-side only). |
 
 ---
@@ -241,12 +245,14 @@ sequenceDiagram
 
 | Method | Path | Purpose |
 |---|---|---|
+| GET | `/health`, `/healthz` | Liveness for hosts (Render) — no downstream calls |
 | GET | `/` | Health check |
-| GET | `/api/me` | Current user/org/role |
+| GET | `/api/me` | Current user/org/role/features, plus `org_name` (CL-31) resolved from `orgs.name` for the caller's own org — RLS-scoped, never another org's |
 | POST | `/api/admin/provision-user` | **Platform-admin only.** Create a login + org membership for a personal-email (Gmail, etc.) signup, org named by the admin; returns a one-time generated password. Gated by `require_platform_admin` — 403 for everyone else, checked before any Supabase call. |
 | GET | `/api/admin/directory` | **Platform-admin only.** Search `org_directory` (email/name/org id/user id/short id substring) via the `admin_search_directory` SQL function — `org_directory` itself is never granted to the app role. |
 | GET | `/api/admin/usage` | **Platform-admin only.** All-time PyAI/Anthropic call, poll, and estimated-cost totals for one *queried* org — not the caller's own. |
 | POST | `/api/admin/features` | **Platform-admin only.** Upsert one `org_features` row for a target org. |
+| POST | `/api/admin/log-password-reset-request` | **Platform-admin only.** (AC-9) Writes an audit log line for an admin-triggered reset email — never logs the password, never calls Supabase's admin/service-role API itself. |
 | GET | `/api/pyai/status` | PyAI connectivity/quota status |
 | POST | `/api/keys` | Update host-configured API keys |
 | GET | `/api/dev/logs` | Tail recent log lines (dev/debug) |
@@ -275,7 +281,7 @@ Every route except the JustCall webhook requires a valid Supabase JWT; the webho
 ## 7. Current known gaps (keep this section honest, don't let it go stale)
 
 - Admin Controls epic (AC-2 through AC-7) is fully live: authorization gate, manual provisioning (admin-chosen org name, same-name orgs merge rather than duplicate), per-org feature flags, and the admin panel UI itself. `short_id` is sequential (100000+) by design, not random.
-- Org-name matching for provisioning (`org_id_for_name()`) is exact, case-insensitive, and trimmed — not fuzzy. "Acme Inc" and "Acme Inc." are different orgs on purpose; there's no UI yet to merge two orgs that were already accidentally split by a naming mismatch (would need a manual `UPDATE org_members SET org_id = ...` today).
+- Org-name matching for provisioning (`org_id_for_name()`) is exact, case-insensitive, and trimmed — not fuzzy. "Acme Inc" and "Acme Inc." are different orgs on purpose; there's no UI yet to merge two orgs that were already accidentally split by a naming mismatch (would need a manual `UPDATE org_members SET org_id = ...` today, plus manual DELETEs of the now-empty old org's rows — done by hand at least once already). **CL-30** (add `orgs.created_via` so this class of duplicate is visible from the data instead of reconstructed from timestamps) and **AC-10** (feature-flag change history) are filed backlog for this and the adjacent "who changed what" gap below, not yet built.
 - `admin_console.py`'s `search_directory()` swallows any lookup failure silently (`except Exception: return {"rows": []}`, no log line) — same class of gap `org_features.py`'s `features_for_org()` had before it got a `log.debug` line. Worth the same fix; low priority since it only affects the admin's own view, not tenant data.
 - A second platform admin is added by editing `PLATFORM_ADMIN_EMAILS` on Render — there's no self-service "add another admin" UI, and that's deliberate for now (see §5's note on why this isn't modeled as an "Admins" org).
 - `applog.py`'s secret-redaction filter is attached to the file log handler only — console/stdout output is not covered by the same filter.

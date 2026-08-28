@@ -160,7 +160,7 @@ interface SidebarProps {
 export function Sidebar({ open, onNavigate }: SidebarProps) {
   const { pathname } = useLocation()
   const { flaggedCount } = useAudit()
-  const { features, isPlatformAdmin } = useAuth()
+  const { features, isPlatformAdmin, orgName } = useAuth()
   const onHome = pathname === '/'
   const pulseOpen = pathname.startsWith('/agents-pulse')
   const showNeighbourhood = flagEnabled(features, 'show_neighbourhood_nav')
@@ -190,6 +190,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
         </div>
 
         <p className="sidebar-tagline">We close the loop</p>
+        {orgName ? <p className="sidebar-org-name">{orgName}</p> : null}
 
         <nav className="sidebar-home" aria-label="Home">
           <NavLink

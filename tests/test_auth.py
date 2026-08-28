@@ -153,6 +153,47 @@ def test_me_returns_membership_from_jwt(monkeypatch):
     assert body["is_platform_admin"] is False
 
 
+def test_me_returns_org_name_from_orgs_table(monkeypatch):
+    from backend.api import app
+
+    class _OrgConn:
+        def execute(self, sql, params=None):
+            assert "FROM ORGS" in " ".join(str(sql).split()).upper()
+            return _Row({"name": "The First Men"})
+
+    @contextmanager
+    def _cm(*_a, **_k):
+        yield _OrgConn()
+
+    monkeypatch.setattr("backend.db.connection", _cm)
+    monkeypatch.setattr("backend.db.apply_tenant_gucs", lambda *a, **k: None)
+    monkeypatch.setattr("backend.org_features.features_for_org", lambda org_id: {})
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
+    r = client.get("/api/me")
+    assert r.status_code == 200
+    assert r.json()["org_name"] == "The First Men"
+
+
+def test_me_org_name_is_none_when_db_unavailable(monkeypatch):
+    from backend.api import app
+
+    @contextmanager
+    def _cm(*_a, **_k):
+        raise RuntimeError("DATABASE_URL is not set.")
+        yield
+
+    monkeypatch.setattr("backend.db.connection", _cm)
+    monkeypatch.setattr("backend.org_features.features_for_org", lambda org_id: {})
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
+    r = client.get("/api/me")
+    assert r.status_code == 200
+    assert r.json()["org_name"] is None
+
+
 def test_justcall_webhook_stays_public():
     from backend.api import app
 

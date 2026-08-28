@@ -189,6 +189,7 @@ def me(request: Request):
     return {
         "user_id": getattr(request.state, "user_id", None),
         "org_id": org_id,
+        "org_name": _org_name(org_id),
         "role": getattr(request.state, "role", None),
         "features": org_features.features_for_org(org_id),
         "is_platform_admin": auth.is_platform_admin(request),
@@ -281,6 +282,20 @@ def _conn():
 def _org(request: Request) -> str:
     """JWT membership only. Never query, body, or path."""
     return auth.org_id_from_request(request)
+
+
+def _org_name(org_id: str) -> str | None:
+    """Display name for the caller's own org. RLS-scoped to that org only."""
+    if not org_id:
+        return None
+    try:
+        with db.connection() as conn:
+            db.apply_tenant_gucs(conn, org_id=org_id)
+            row = conn.execute("SELECT name FROM orgs WHERE id = %s", (org_id,)).fetchone()
+    except Exception as e:  # noqa: BLE001
+        log.debug("org_name lookup skipped: %s", e)
+        return None
+    return (row or {}).get("name")
 
 
 def _apply_pyai_key(api_key: str):

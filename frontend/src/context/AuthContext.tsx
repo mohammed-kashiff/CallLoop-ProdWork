@@ -18,6 +18,7 @@ type AuthContextValue = {
   session: Session | null
   accessToken: string | null
   email: string | null
+  orgName: string | null
   features: FeatureMap
   isPlatformAdmin: boolean
   passwordRecovery: boolean
@@ -31,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(supabaseConfigured)
   const [session, setSession] = useState<Session | null>(null)
   const [features, setFeatures] = useState<FeatureMap>({})
+  const [orgName, setOrgName] = useState<string | null>(null)
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false)
   const [passwordRecovery, setPasswordRecovery] = useState(hasPasswordRecoveryHint)
 
@@ -40,6 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!session) {
       setFeatures({})
       setIsPlatformAdmin(false)
+      setOrgName(null)
       return
     }
     const r = await apiFetch('/api/me')
@@ -50,11 +53,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = (await r.json()) as {
       features?: FeatureMap
       is_platform_admin?: boolean
+      org_name?: string | null
     }
     if (data.features && typeof data.features === 'object') {
       setFeatures(data.features)
     }
     setIsPlatformAdmin(data.is_platform_admin === true)
+    setOrgName(typeof data.org_name === 'string' ? data.org_name : null)
   }, [session])
 
   useEffect(() => {
@@ -97,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (supabase) await supabase.auth.signOut()
     setFeatures({})
     setIsPlatformAdmin(false)
+    setOrgName(null)
   }, [])
 
   const value = useMemo(
@@ -106,13 +112,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       accessToken: session?.access_token ?? null,
       email,
+      orgName,
       features,
       isPlatformAdmin,
       passwordRecovery,
       refreshMe,
       signOut,
     }),
-    [loading, session, email, features, isPlatformAdmin, passwordRecovery, refreshMe, signOut],
+    [
+      loading,
+      session,
+      email,
+      orgName,
+      features,
+      isPlatformAdmin,
+      passwordRecovery,
+      refreshMe,
+      signOut,
+    ],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
