@@ -15,6 +15,7 @@ import { Home } from './pages/Home'
 import { Integrations } from './pages/Integrations'
 import { Login } from './pages/Login'
 import { Neighbourhood } from './pages/Neighbourhood'
+import { ResetPassword } from './pages/ResetPassword'
 import { Pyai } from './pages/Pyai'
 import { Training } from './pages/Training'
 import './App.css'
@@ -38,6 +39,7 @@ function App() {
           <BrowserRouter>
             <Routes>
               <Route path="login" element={<Login />} />
+              <Route path="reset-password" element={<ResetPassword />} />
               <Route element={<RequireAuth />}>
                 <Route element={<AuthedShell />}>
                   <Route element={<AppLayout />}>

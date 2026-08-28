@@ -5,18 +5,23 @@ import { useAuth } from '../context/AuthContext'
 import { useColorMode } from '../context/ColorMode'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 
+const RESET_SENT =
+  'If that email is registered, we sent a reset link. Check your inbox.'
+
 export function Login() {
   const { session, loading } = useAuth()
   const { mode } = useColorMode()
   const location = useLocation()
   const from = (location.state as { from?: string } | null)?.from || '/'
-  const [modeForm, setModeForm] = useState<'login' | 'signup'>('login')
+  const [modeForm, setModeForm] = useState<'login' | 'signup' | 'forgot'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [error, setError] = useState('')
-  const [info, setInfo] = useState('')
+  const [info, setInfo] = useState(
+    () => (location.state as { info?: string } | null)?.info || '',
+  )
   const [busy, setBusy] = useState(false)
 
   if (!loading && session) {
@@ -39,7 +44,21 @@ export function Login() {
     }
     setBusy(true)
     try {
-      if (modeForm === 'login') {
+      if (modeForm === 'forgot') {
+        const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo: `${window.location.origin}/reset-password`,
+        })
+        if (err) {
+          const msg = err.message.toLowerCase()
+          const leaky = /not found|does not exist|no user|unregistered|could not find/.test(
+            msg,
+          )
+          if (leaky) setInfo(RESET_SENT)
+          else setError(err.message)
+        } else {
+          setInfo(RESET_SENT)
+        }
+      } else if (modeForm === 'login') {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password })
         if (err) setError(err.message)
       } else {
@@ -62,11 +81,19 @@ export function Login() {
     <div className="auth-page" data-color-mode={mode}>
       <div className="auth-card">
         <BrandLogo size="md" surface={mode === 'dark' ? 'dark' : 'light'} showMark />
-        <h1>{modeForm === 'login' ? 'Log in' : 'Create account'}</h1>
+        <h1>
+          {modeForm === 'login'
+            ? 'Log in'
+            : modeForm === 'signup'
+              ? 'Create account'
+              : 'Reset password'}
+        </h1>
         <p className="auth-lead">
-          {supabaseConfigured
-            ? 'People with the same company email share a workspace. Gmail, Outlook, and similar inboxes each get their own.'
-            : 'Supabase URL and anon key are missing in this build.'}
+          {!supabaseConfigured
+            ? 'Supabase URL and anon key are missing in this build.'
+            : modeForm === 'forgot'
+              ? 'Enter the email you use to log in.'
+              : 'People with the same company email share a workspace. Gmail, Outlook, and similar inboxes each get their own.'}
         </p>
         <form className="auth-form" onSubmit={onSubmit}>
           {modeForm === 'signup' ? (
@@ -105,33 +132,58 @@ export function Login() {
               required
             />
           </label>
-          <label>
-            Password
-            <input
-              type="password"
-              autoComplete={modeForm === 'login' ? 'current-password' : 'new-password'}
-              value={password}
-              onChange={(ev) => setPassword(ev.target.value)}
-              required
-              minLength={8}
-            />
-          </label>
+          {modeForm !== 'forgot' ? (
+            <label>
+              Password
+              <input
+                type="password"
+                autoComplete={modeForm === 'login' ? 'current-password' : 'new-password'}
+                value={password}
+                onChange={(ev) => setPassword(ev.target.value)}
+                required
+                minLength={8}
+              />
+            </label>
+          ) : null}
+          {modeForm === 'login' ? (
+            <button
+              type="button"
+              className="ghost-btn auth-switch"
+              onClick={() => {
+                setModeForm('forgot')
+                setError('')
+                setInfo('')
+              }}
+            >
+              Forgot password?
+            </button>
+          ) : null}
           {error ? <p className="auth-error">{error}</p> : null}
           {info ? <p className="auth-info">{info}</p> : null}
           <button className="start-btn" type="submit" disabled={busy || !supabaseConfigured}>
-            {busy ? 'Please wait…' : modeForm === 'login' ? 'Log in' : 'Sign up'}
+            {busy
+              ? 'Please wait…'
+              : modeForm === 'login'
+                ? 'Log in'
+                : modeForm === 'signup'
+                  ? 'Sign up'
+                  : 'Send reset link'}
           </button>
         </form>
         <button
           type="button"
           className="ghost-btn auth-switch"
           onClick={() => {
-            setModeForm((m) => (m === 'login' ? 'signup' : 'login'))
+            setModeForm((m) => (m === 'signup' ? 'login' : m === 'forgot' ? 'login' : 'signup'))
             setError('')
             setInfo('')
           }}
         >
-          {modeForm === 'login' ? 'Need an account? Sign up' : 'Already have an account? Log in'}
+          {modeForm === 'login'
+            ? 'Need an account? Sign up'
+            : modeForm === 'signup'
+              ? 'Already have an account? Log in'
+              : 'Back to log in'}
         </button>
       </div>
     </div>
