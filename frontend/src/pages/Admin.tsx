@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch, fmtUsd, readError } from '../lib/api'
 import { TRIAL_FLAGS, type FeatureMap } from '../lib/features'
+import { supabase, supabaseConfigured } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 
 type ProvisionResult = {
@@ -60,6 +61,9 @@ export function Admin() {
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisionResult, setProvisionResult] = useState<ProvisionResult | null>(null)
   const [copied, setCopied] = useState(false)
+  const [resetEmailBusy, setResetEmailBusy] = useState(false)
+  const [resetEmailInfo, setResetEmailInfo] = useState<string | null>(null)
+  const [resetEmailError, setResetEmailError] = useState<string | null>(null)
 
   const search = useCallback(async (needle: string) => {
     const r = await apiFetch(`/api/admin/directory?q=${encodeURIComponent(needle)}`)
@@ -124,6 +128,8 @@ export function Admin() {
   const loadOrg = async (row: DirectoryRow) => {
     setSelected(row)
     setError(null)
+    setResetEmailInfo(null)
+    setResetEmailError(null)
     setBusy(true)
     try {
       const r = await apiFetch(
@@ -159,6 +165,51 @@ export function Admin() {
     setUsage((prev) =>
       prev ? { ...prev, features: data.features || prev.features } : prev,
     )
+  }
+
+  const sendResetEmail = async () => {
+    if (!selected?.email) return
+    setResetEmailError(null)
+    setResetEmailInfo(null)
+    if (!supabase) {
+      setResetEmailError('Auth is not configured.')
+      return
+    }
+    setResetEmailBusy(true)
+    try {
+      const { error: err } = await supabase.auth.resetPasswordForEmail(selected.email.trim(), {
+        redirectTo: `${window.location.origin}/reset-password`,
+      })
+      if (err) {
+        const msg = err.message.toLowerCase()
+        const leaky = /not found|does not exist|no user|unregistered|could not find/.test(
+          msg,
+        )
+        if (!leaky) {
+          setResetEmailError(err.message)
+          return
+        }
+      }
+      setResetEmailInfo(
+        'Reset email sent. They set the new password from the link — you will not see it.',
+      )
+      try {
+        await apiFetch('/api/admin/log-password-reset-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: selected.user_id,
+            email: selected.email,
+          }),
+        })
+      } catch {
+        /* email already sent; a log miss must not look like a failed reset */
+      }
+    } catch {
+      setResetEmailError('Could not send the reset email.')
+    } finally {
+      setResetEmailBusy(false)
+    }
   }
 
   if (!isPlatformAdmin) {
@@ -361,6 +412,36 @@ export function Admin() {
                   )
                 })}
               </ul>
+              <div className="admin-support">
+                <h3>Account recovery</h3>
+                <p className="admin-id">{selected.email || 'No email on this row'}</p>
+                <p className="admin-provision-hint">
+                  Sends the same reset link as Forgot password. You never see
+                  or set the new password — they finish it from the email.
+                </p>
+                <div className="admin-support-actions">
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    disabled={
+                      resetEmailBusy || !selected.email || !supabaseConfigured
+                    }
+                    onClick={() => void sendResetEmail()}
+                  >
+                    {resetEmailBusy ? 'Sending…' : 'Send reset email'}
+                  </button>
+                </div>
+                {resetEmailError ? (
+                  <p className="upload-error" role="alert">
+                    {resetEmailError}
+                  </p>
+                ) : null}
+                {resetEmailInfo ? (
+                  <p className="auth-info" role="status">
+                    {resetEmailInfo}
+                  </p>
+                ) : null}
+              </div>
             </>
           )}
         </aside>

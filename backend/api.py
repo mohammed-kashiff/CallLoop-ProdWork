@@ -245,6 +245,32 @@ def admin_features(request: Request, body: AdminFeatureBody):
     return admin_console.set_feature(body.org_id, body.feature_key, body.enabled)
 
 
+class AdminPasswordResetLogBody(BaseModel):
+    user_id: str
+    email: str
+
+
+@app.post("/api/admin/log-password-reset-request")
+def log_password_reset_request(request: Request, body: AdminPasswordResetLogBody):
+    """Audit only. The client already sent the reset email. No Admin API, no password."""
+    auth.require_platform_admin(request)
+    try:
+        uid = str(uuid.UUID((body.user_id or "").strip()))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid user_id.")
+    email = (body.email or "").strip().lower()
+    if not email or len(email) > 254 or "@" not in email or " " in email:
+        raise HTTPException(status_code=400, detail="Invalid email.")
+    applog.event(
+        log,
+        "admin_password_reset_email_sent",
+        user_id=uid,
+        email=email,
+        admin_email=getattr(request.state, "email", None),
+    )
+    return {"ok": True}
+
+
 # --- end platform admin ---
 
 

@@ -49,6 +49,13 @@ def test_non_admin_gets_403_on_all_admin_reads_and_writes(monkeypatch):
     assert client.get("/api/admin/directory", params={"q": "ada"}).status_code == 403
     assert client.get("/api/admin/usage", params={"org_id": ORG_A}).status_code == 403
     assert client.post("/api/admin/features", json=_BODY).status_code == 403
+    assert (
+        client.post(
+            "/api/admin/log-password-reset-request",
+            json={"user_id": str(uuid.uuid4()), "email": "ada@example.com"},
+        ).status_code
+        == 403
+    )
     usage.assert_not_called()
 
 
@@ -129,3 +136,65 @@ def test_admin_console_does_not_bypass_rls():
     assert "SECURITY DEFINER" in rev
     assert "CREATE POLICY org_features_insert" in rev
     assert uuid.UUID(ORG_A)
+
+
+def test_log_password_reset_request_writes_audit_not_password(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    uid = str(uuid.uuid4())
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    with caplog.at_level(logging.INFO, logger="callproof.api"):
+        r = client.post(
+            "/api/admin/log-password-reset-request",
+            json={"user_id": uid, "email": "Ada@Example.com"},
+        )
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    line = next(
+        rec.getMessage()
+        for rec in caplog.records
+        if "admin_password_reset_email_sent" in rec.getMessage()
+    )
+    assert f"user_id={uid}" in line
+    assert "email=ada@example.com" in line
+    assert "admin_email=tester@example.com" in line
+    assert "temporary_password" not in line
+    assert " password=" not in line
+
+
+def test_log_password_reset_request_rejects_bad_body(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    assert (
+        client.post(
+            "/api/admin/log-password-reset-request",
+            json={"user_id": "not-a-uuid", "email": "ada@example.com"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/api/admin/log-password-reset-request",
+            json={"user_id": str(uuid.uuid4()), "email": "not-an-email"},
+        ).status_code
+        == 400
+    )
+
+
+def test_log_password_reset_route_does_not_call_supabase_admin():
+    src = (ROOT / "backend" / "api.py").read_text(encoding="utf-8")
+    start = src.index("def log_password_reset_request")
+    end = src.index("# --- end platform admin ---", start)
+    region = src[start:end].lower()
+    assert "service_role" not in region
+    assert "auth/v1/admin" not in region
+    assert "resetpassword" not in region
+    assert "generate_link" not in region
+    assert "httpx" not in region
