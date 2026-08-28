@@ -11,6 +11,7 @@ import wave
 from backend import transcribe as transcribe_mod
 from backend.transcribe import (
     _pcm16_true_stereo,
+    _segments_from_words,
     _separation_fields,
     channel_split_ok,
     expand_tagged_segments,
@@ -263,3 +264,56 @@ def test_auto_true_stereo_uses_channel_only(monkeypatch):
     assert modes == ["channel"]
     assert mode == "channel"
     assert speaker_split_ok(result)
+
+
+def test_expand_tagged_segments_sorts_channel_blocks_by_start():
+    """Hear channel mode often returns all of ch0 then all of ch1; seq must follow elapsed time."""
+    rows = expand_tagged_segments(
+        [
+            {
+                "speaker": "speaker_1",
+                "channel": 0,
+                "start": 20,
+                "end": 60,
+                "text": "agent middle turn",
+            },
+            {
+                "speaker": "speaker_2",
+                "channel": 1,
+                "start": 0,
+                "end": 20,
+                "text": "customer first turn",
+            },
+            {
+                "speaker": "speaker_2",
+                "channel": 1,
+                "start": 60,
+                "end": 75,
+                "text": "customer last turn",
+            },
+        ]
+    )
+    assert [(r["start"], r["end"], r["speaker"], r["seq"]) for r in rows] == [
+        (0, 20, "speaker_2", 0),
+        (20, 60, "speaker_1", 1),
+        (60, 75, "speaker_2", 2),
+    ]
+
+
+def test_segments_from_words_sorts_before_grouping():
+    """Word arrays grouped by channel must still become chronological turns."""
+    turns = _segments_from_words(
+        [
+            {"word": "agent", "start": 20, "end": 60, "speaker": "speaker_1"},
+            {"word": "hello", "start": 0, "end": 10, "speaker": "speaker_2"},
+            {"word": "again", "start": 60, "end": 75, "speaker": "speaker_2"},
+        ]
+    )
+    assert [(t["start"], t["end"], t["speaker"]) for t in turns] == [
+        (0.0, 10.0, "speaker_2"),
+        (20.0, 60.0, "speaker_1"),
+        (60.0, 75.0, "speaker_2"),
+    ]
+    assert "hello" in turns[0]["text"]
+    assert "agent" in turns[1]["text"]
+    assert "again" in turns[2]["text"]

@@ -431,10 +431,22 @@ def _labeled_speaker_ids(segments: list) -> set:
     return out
 
 
+def _time_key(row: dict) -> tuple[float, float]:
+    """Sort key for elapsed time. Invalid timestamps sort as 0."""
+    try:
+        start = float(row.get("start") or 0)
+    except (TypeError, ValueError):
+        start = 0.0
+    try:
+        end = float(row.get("end") or start)
+    except (TypeError, ValueError):
+        end = start
+    return (start, end)
+
+
 def _segments_from_words(words: list) -> list:
     """Group consecutive same-speaker words into turns when Hear omitted segment labels."""
-    turns: list = []
-    current = None
+    prepared: list = []
     for raw in words or []:
         if not isinstance(raw, dict):
             continue
@@ -445,12 +457,25 @@ def _segments_from_words(words: list) -> list:
         token = str(row.get("word") or row.get("text") or "").strip()
         if not token:
             continue
-        try:
-            start = float(row.get("start") or 0)
-            end = float(row.get("end") or start)
-        except (TypeError, ValueError):
-            start, end = 0.0, 0.0
-        speaker = str(speaker).strip().lower()
+        start, end = _time_key(row)
+        prepared.append(
+            {
+                "speaker": str(speaker).strip().lower(),
+                "channel": row.get("channel"),
+                "start": start,
+                "end": end,
+                "text": token,
+            }
+        )
+    prepared.sort(key=_time_key)
+
+    turns: list = []
+    current = None
+    for row in prepared:
+        speaker = row["speaker"]
+        token = row["text"]
+        start = row["start"]
+        end = row["end"]
         if current and current["speaker"] == speaker:
             if token[:1] in ",.?!:;":
                 current["text"] += token
@@ -509,6 +534,7 @@ def expand_tagged_segments(segments: list) -> list:
             row["end"] = cursor + dur
             out.append(row)
             cursor += dur
+    out.sort(key=_time_key)
     for i, row in enumerate(out):
         row["seq"] = i
     return out
