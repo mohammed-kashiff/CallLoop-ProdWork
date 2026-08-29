@@ -3037,6 +3037,44 @@ html[data-color-mode='dark'] .claude-cord-plug {
   background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
+.audit-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+}
+
+.audit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.audit-filters .ghost-btn.is-current {
+  border-color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 8%, var(--control-bg));
+}
+
+.audit-table tr.audit-row {
+  cursor: pointer;
+}
+
+.audit-table tr.audit-row:hover td {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.audit-table tr.audit-row:focus {
+  outline: 2px solid var(--teal);
+  outline-offset: -2px;
+}
+
+.crumb a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
 .admin-org {
   display: block;
 }

@@ -8,6 +8,8 @@ import { PyaiStatusProvider } from './context/PyaiStatus'
 import { UsageEnvProvider } from './context/UsageEnv'
 import { Admin } from './pages/Admin'
 import { AgentsPulse } from './pages/AgentsPulse'
+import { AuditDetail } from './pages/AuditDetail'
+import { Audits } from './pages/Audits'
 import { ChurnRisk } from './pages/ChurnRisk'
 import { Feedbacks } from './pages/Feedbacks'
 import { FlaggedForReview } from './pages/FlaggedForReview'
@@ -47,6 +49,8 @@ function App() {
                     <Route path="neighbourhood" element={<Neighbourhood />} />
                     <Route path="agents-pulse" element={<AgentsPulse />} />
                     <Route path="agents-pulse/flagged" element={<FlaggedForReview />} />
+                    <Route path="audits" element={<Audits />} />
+                    <Route path="audits/:callId" element={<AuditDetail />} />
                     <Route path="feedbacks" element={<Feedbacks />} />
                     <Route path="churn-risk" element={<ChurnRisk />} />
                     <Route path="integrations" element={<Integrations />} />

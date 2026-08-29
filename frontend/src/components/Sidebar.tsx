@@ -15,7 +15,7 @@ const LOOP_NAV = [
   { to: '/training', label: 'Training', end: false, icon: 'training', soon: true },
 ] as const
 
-type NavIconName = typeof HOME.icon | (typeof LOOP_NAV)[number]['icon'] | 'pulse' | 'neighbourhood'
+type NavIconName = typeof HOME.icon | (typeof LOOP_NAV)[number]['icon'] | 'pulse' | 'neighbourhood' | 'audits'
 
 function NavIcon({ name }: { name: NavIconName }) {
   if (name === 'home') {
@@ -70,6 +70,26 @@ function NavIcon({ name }: { name: NavIconName }) {
           strokeWidth="1.8"
           strokeLinecap="round"
           d="M4 12h2.8l1.7-4.5 2.6 9 2.2-6.2L15.6 12H20"
+        />
+      </svg>
+    )
+  }
+  if (name === 'audits') {
+    return (
+      <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
+          d="M7 4.5h10A1.5 1.5 0 0 1 18.5 6v13A1.5 1.5 0 0 1 17 20.5H7A1.5 1.5 0 0 1 5.5 19V6A1.5 1.5 0 0 1 7 4.5Z"
+        />
+        <path
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          d="M8.5 9h7M8.5 12.5h7M8.5 16h4.5"
         />
       </svg>
     )
@@ -163,6 +183,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
   const { features, isPlatformAdmin, orgName } = useAuth()
   const onHome = pathname === '/'
   const pulseOpen = pathname.startsWith('/agents-pulse')
+  const auditsOpen = pathname.startsWith('/audits')
   const showNeighbourhood = flagEnabled(features, 'show_neighbourhood_nav')
   const showGrowth = flagEnabled(features, 'show_growth_tools_nav')
 
@@ -254,6 +275,16 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               </NavLink>
             ) : null}
           </div>
+          <NavLink
+            to="/audits"
+            className={() =>
+              ['sidebar-link', auditsOpen ? 'is-active' : ''].filter(Boolean).join(' ')
+            }
+            onClick={onNavigate}
+          >
+            <NavIcon name="audits" />
+            Audits
+          </NavLink>
           {showGrowth
             ? LOOP_NAV.map((item) => (
                 <NavLink
