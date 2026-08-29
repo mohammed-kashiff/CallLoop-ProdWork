@@ -186,14 +186,61 @@ def health():
 def me(request: Request):
     """Current user from the verified JWT + org_members row."""
     org_id = _org(request)
+    uid = getattr(request.state, "user_id", None)
+    first_name, last_name = _member_names(org_id, uid)
     return {
-        "user_id": getattr(request.state, "user_id", None),
+        "user_id": uid,
         "org_id": org_id,
         "org_name": _org_name(org_id),
         "role": getattr(request.state, "role", None),
+        "first_name": first_name,
+        "last_name": last_name,
         "features": org_features.features_for_org(org_id),
         "is_platform_admin": auth.is_platform_admin(request),
     }
+
+
+class ProfileNameBody(BaseModel):
+    first_name: str
+    last_name: str
+
+
+@app.patch("/api/me")
+def patch_me(request: Request, body: ProfileNameBody):
+    """Update the caller's own org_members names. Never a client-supplied user_id."""
+    org_id = _org(request)
+    try:
+        user_id = str(uuid.UUID(str(getattr(request.state, "user_id", None) or "")))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    first = auth._optional_name(body.first_name)
+    last = auth._optional_name(body.last_name)
+    if not first or not last:
+        raise HTTPException(status_code=400, detail="First and last name are required.")
+    try:
+        with db.connection() as conn:
+            db.apply_tenant_gucs(conn, org_id=org_id, user_id=user_id)
+            cur = conn.execute(
+                """
+                UPDATE org_members
+                SET first_name = %s, last_name = %s
+                WHERE user_id = %s AND org_id = %s
+                """,
+                (first, last, user_id, org_id),
+            )
+            updated = int(getattr(cur, "rowcount", 0) or 0)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not update your name.")
+    if updated < 1:
+        raise HTTPException(status_code=404, detail="Membership not found.")
+    applog.event(log, "profile_name_updated", user_id=user_id)
+    return {"first_name": first, "last_name": last}
+
+
+@app.get("/api/me/usage")
+def me_usage(request: Request):
+    """Same payload as /api/admin/usage, always the caller's JWT org."""
+    return admin_console.usage_for_org(_org(request))
 
 
 # --- platform admin: target org from query/body, not the caller's JWT ---
@@ -296,6 +343,36 @@ def _org_name(org_id: str) -> str | None:
         log.debug("org_name lookup skipped: %s", e)
         return None
     return (row or {}).get("name")
+
+
+def _member_names(org_id: str, user_id: str | None) -> tuple[str | None, str | None]:
+    """Caller's own first/last name from org_members. JWT user_id only."""
+    if not org_id or not user_id:
+        return None, None
+    try:
+        uid = str(uuid.UUID(str(user_id)))
+    except (ValueError, TypeError, AttributeError):
+        return None, None
+    try:
+        with db.connection() as conn:
+            db.apply_tenant_gucs(conn, org_id=org_id, user_id=uid)
+            row = conn.execute(
+                """
+                SELECT first_name, last_name FROM org_members
+                WHERE user_id = %s AND org_id = %s
+                """,
+                (uid, org_id),
+            ).fetchone()
+    except Exception as e:  # noqa: BLE001
+        log.debug("member names lookup skipped: %s", e)
+        return None, None
+    if not row:
+        return None, None
+    first = row.get("first_name") if hasattr(row, "get") else None
+    last = row.get("last_name") if hasattr(row, "get") else None
+    first_s = first.strip() if isinstance(first, str) and first.strip() else None
+    last_s = last.strip() if isinstance(last, str) and last.strip() else None
+    return first_s, last_s
 
 
 def _apply_pyai_key(api_key: str):

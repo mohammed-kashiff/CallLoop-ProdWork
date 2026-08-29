@@ -12,6 +12,8 @@ import { apiFetch } from '../lib/api'
 import type { FeatureMap } from '../lib/features'
 import { supabase, supabaseConfigured, hasPasswordRecoveryHint, markPasswordRecovery, clearPasswordRecovery } from '../lib/supabase'
 
+type OrgRole = 'owner' | 'member'
+
 type AuthContextValue = {
   configured: boolean
   loading: boolean
@@ -19,6 +21,9 @@ type AuthContextValue = {
   accessToken: string | null
   email: string | null
   orgName: string | null
+  role: OrgRole | null
+  firstName: string | null
+  lastName: string | null
   features: FeatureMap
   isPlatformAdmin: boolean
   passwordRecovery: boolean
@@ -33,6 +38,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [features, setFeatures] = useState<FeatureMap>({})
   const [orgName, setOrgName] = useState<string | null>(null)
+  const [role, setRole] = useState<OrgRole | null>(null)
+  const [firstName, setFirstName] = useState<string | null>(null)
+  const [lastName, setLastName] = useState<string | null>(null)
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false)
   const [passwordRecovery, setPasswordRecovery] = useState(hasPasswordRecoveryHint)
 
@@ -43,6 +51,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setFeatures({})
       setIsPlatformAdmin(false)
       setOrgName(null)
+      setRole(null)
+      setFirstName(null)
+      setLastName(null)
       return
     }
     const r = await apiFetch('/api/me')
@@ -54,12 +65,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       features?: FeatureMap
       is_platform_admin?: boolean
       org_name?: string | null
+      role?: string | null
+      first_name?: string | null
+      last_name?: string | null
     }
     if (data.features && typeof data.features === 'object') {
       setFeatures(data.features)
     }
     setIsPlatformAdmin(data.is_platform_admin === true)
     setOrgName(typeof data.org_name === 'string' ? data.org_name : null)
+    setRole(data.role === 'owner' || data.role === 'member' ? data.role : null)
+    setFirstName(typeof data.first_name === 'string' ? data.first_name : null)
+    setLastName(typeof data.last_name === 'string' ? data.last_name : null)
   }, [session])
 
   useEffect(() => {
@@ -103,6 +120,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setFeatures({})
     setIsPlatformAdmin(false)
     setOrgName(null)
+    setRole(null)
+    setFirstName(null)
+    setLastName(null)
   }, [])
 
   const value = useMemo(
@@ -113,6 +133,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       accessToken: session?.access_token ?? null,
       email,
       orgName,
+      role,
+      firstName,
+      lastName,
       features,
       isPlatformAdmin,
       passwordRecovery,
@@ -124,6 +147,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       email,
       orgName,
+      role,
+      firstName,
+      lastName,
       features,
       isPlatformAdmin,
       passwordRecovery,

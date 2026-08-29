@@ -113,7 +113,7 @@ def test_data_routes_401_without_token():
     from backend.api import app
 
     client = TestClient(app)
-    for path in ("/api/calls", "/api/me", "/api/pyai/status"):
+    for path in ("/api/calls", "/api/me", "/api/me/usage", "/api/pyai/status"):
         r = client.get(path)
         assert r.status_code == 401, path
 
@@ -158,7 +158,10 @@ def test_me_returns_org_name_from_orgs_table(monkeypatch):
 
     class _OrgConn:
         def execute(self, sql, params=None):
-            assert "FROM ORGS" in " ".join(str(sql).split()).upper()
+            text = " ".join(str(sql).split()).upper()
+            if "FROM ORG_MEMBERS" in text:
+                return _Row({"first_name": "Jon", "last_name": "Snow"})
+            assert "FROM ORGS" in text
             return _Row({"name": "The First Men"})
 
     @contextmanager
@@ -174,6 +177,8 @@ def test_me_returns_org_name_from_orgs_table(monkeypatch):
     r = client.get("/api/me")
     assert r.status_code == 200
     assert r.json()["org_name"] == "The First Men"
+    assert r.json()["first_name"] == "Jon"
+    assert r.json()["last_name"] == "Snow"
 
 
 def test_me_org_name_is_none_when_db_unavailable(monkeypatch):

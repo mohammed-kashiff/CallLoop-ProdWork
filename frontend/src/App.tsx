@@ -17,6 +17,7 @@ import { Home } from './pages/Home'
 import { Integrations } from './pages/Integrations'
 import { Login } from './pages/Login'
 import { Neighbourhood } from './pages/Neighbourhood'
+import { Profile } from './pages/Profile'
 import { ResetPassword } from './pages/ResetPassword'
 import { Pyai } from './pages/Pyai'
 import { Training } from './pages/Training'
@@ -56,6 +57,7 @@ function App() {
                     <Route path="integrations" element={<Integrations />} />
                     <Route path="training" element={<Training />} />
                     <Route path="admin" element={<Admin />} />
+                    <Route path="profile" element={<Profile />} />
                     <Route path="pyai" element={<Pyai />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Route>
