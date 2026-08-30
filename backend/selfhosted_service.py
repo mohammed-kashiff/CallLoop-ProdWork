@@ -17,6 +17,17 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from . import applog
 from .transcribe_selfhosted import transcribe_selfhosted
 
+# applog.setup_logging() (called by transcribe_selfhosted on import) only adds
+# a file handler — console output has always depended on some other module
+# calling basicConfig() first (transcribe.py does this for the main app).
+# This service has no such module, so without this call every log line here
+# was going nowhere Cloud Run could ever show it.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-7s [%(name)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+
 log = logging.getLogger("callproof.selfhosted_service")
 
 app = FastAPI()
@@ -37,9 +48,15 @@ async def transcribe(audio: UploadFile = File(...)):
         job_id, result, mode = transcribe_selfhosted(path)
         return {"job_id": job_id, "result": result, "mode": mode}
     except Exception as e:  # noqa: BLE001
-        applog.event(log, "selfhosted_service_failed", error=str(e)[:300])
+        applog.event(
+            log, "selfhosted_service_failed", level=logging.ERROR, error=str(e)[:300],
+        )
+        # This service requires Google IAM auth (Cloud Run rejects anything
+        # unauthenticated before it reaches this code) — only Render's own
+        # service account ever sees this response, so the real exception is
+        # safe to return directly instead of a generic message.
         raise HTTPException(
-            status_code=502, detail="Self-hosted transcription failed."
+            status_code=502, detail=f"Self-hosted transcription failed: {e}"[:400],
         ) from e
     finally:
         if os.path.exists(path):
