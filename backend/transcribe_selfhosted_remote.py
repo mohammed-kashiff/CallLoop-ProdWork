@@ -25,7 +25,9 @@ from . import applog
 
 log = logging.getLogger("callproof.transcribe_selfhosted_remote")
 
-REQUEST_TIMEOUT = 600  # ~200s measured processing time, plus real headroom
+REQUEST_TIMEOUT = 1800  # Cloud Run's CPU measured ~10x slower than local for
+# model load alone (41-47s vs ~3s) — 600s cut off runs that were still working,
+# not crashed. 1800s gives real headroom until actual throughput is measured.
 _TOKEN_LIFETIME_S = 3000  # Google ID tokens last ~1h; refresh a bit early
 
 _token_cache: dict = {"token": None, "exp": 0.0}
