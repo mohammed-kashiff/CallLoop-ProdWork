@@ -21,14 +21,11 @@ steps:
         DOCKER_BUILDKIT=1 docker build \
           --secret id=hf_token,env=HF_TOKEN \
           -f Dockerfile.selfhosted \
-          -t "${_IMAGE_URI}" .
+          -t "us-central1-docker.pkg.dev/$PROJECT_ID/calloop/selfhosted:latest" .
     secretEnv: ['HF_TOKEN']
 
 images:
-  - '${_IMAGE_URI}'
-
-substitutions:
-  _IMAGE_URI: us-central1-docker.pkg.dev/${PROJECT_ID}/calloop/selfhosted:latest
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/calloop/selfhosted:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
