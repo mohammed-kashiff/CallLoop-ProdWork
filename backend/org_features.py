@@ -1,8 +1,12 @@
 """Per-org UI feature flags (AC-4).
 
-A missing org+key row means the flag is on. That default is what keeps
-existing orgs unchanged on rollout. /api/me overlays DB rows onto FEATURE_KEYS;
-extra keys in the table are returned too so new flags do not need a migration.
+A missing org+key row means the flag is on for trial-run UI switches. That
+default is what keeps existing orgs unchanged on rollout. /api/me overlays DB
+rows onto FEATURE_KEYS; extra keys in the table are returned too so new flags
+do not need a migration.
+
+Exception: use_selfhosted_transcription is off when unset, so deploy does not
+silently move orgs off PyAI Hear.
 
 org_id is the JWT tenant only. Do not read it from the request body here.
 """
@@ -25,15 +29,19 @@ FEATURE_KEYS = (
     "show_growth_tools_nav",
     "show_powered_by_pyai",
     "show_billed_usage_panel",
+    "use_selfhosted_transcription",
 )
+
+# Missing key → on, except this engine switch. Unset must stay on PyAI.
+DEFAULT_OFF_KEYS = frozenset({"use_selfhosted_transcription"})
 
 
 def default_features() -> dict[str, bool]:
-    return {key: True for key in FEATURE_KEYS}
+    return {key: key not in DEFAULT_OFF_KEYS for key in FEATURE_KEYS}
 
 
 def features_for_org(org_id: str) -> dict[str, bool]:
-    """Flags for this org. Missing keys are enabled. Read-only."""
+    """Flags for this org. Missing trial-run keys are on; self-hosted ASR is off."""
     flags = default_features()
     oid = parse_org_id(org_id)
     if not oid:

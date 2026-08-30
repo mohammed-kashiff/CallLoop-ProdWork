@@ -6,7 +6,7 @@ from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
 
-from backend.org_features import FEATURE_KEYS, features_for_org, set_feature
+from backend.org_features import FEATURE_KEYS, default_features, features_for_org, set_feature
 from backend.org_ids import DEFAULT_ORG_ID
 from backend.paths import ROOT
 from tests.conftest import authorize
@@ -64,8 +64,40 @@ def test_missing_row_is_enabled(monkeypatch):
     conn = _FakeConn(rows=[])
     with _fake_db(monkeypatch, conn):
         flags = features_for_org(DEFAULT_ORG_ID)
-    assert flags == {key: True for key in FEATURE_KEYS}
+    assert flags["show_usage_bar"] is True
+    assert flags["show_neighbourhood_nav"] is True
+    assert flags["show_growth_tools_nav"] is True
+    assert flags["show_powered_by_pyai"] is True
+    assert flags["show_billed_usage_panel"] is True
+    assert flags["use_selfhosted_transcription"] is False
     assert any("org_id = %s" in s for s in conn.sql)
+
+
+def test_selfhosted_flag_is_off_until_row_exists(monkeypatch):
+    conn = _FakeConn(
+        rows=[
+            {
+                "org_id": DEFAULT_ORG_ID,
+                "feature_key": "use_selfhosted_transcription",
+                "enabled": True,
+            }
+        ]
+    )
+    with _fake_db(monkeypatch, conn):
+        flags = features_for_org(DEFAULT_ORG_ID)
+    assert flags["use_selfhosted_transcription"] is True
+    assert flags["show_usage_bar"] is True
+
+
+def test_default_features_keeps_trial_on_and_selfhosted_off():
+    flags = default_features()
+    assert "use_selfhosted_transcription" in FEATURE_KEYS
+    assert flags["use_selfhosted_transcription"] is False
+    assert all(
+        flags[key] is True
+        for key in FEATURE_KEYS
+        if key != "use_selfhosted_transcription"
+    )
 
 
 def test_disabled_row_is_reported_false(monkeypatch):

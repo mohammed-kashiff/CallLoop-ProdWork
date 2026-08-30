@@ -3190,7 +3190,7 @@ html[data-color-mode='dark'] .claude-cord-plug {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 0.45rem;
+  gap: 0.65rem;
 }
 
 .admin-flags label {
@@ -3198,6 +3198,10 @@ html[data-color-mode='dark'] .claude-cord-plug {
   gap: 0.45rem;
   align-items: center;
   font-size: 0.85rem;
+}
+
+.admin-flags .admin-provision-hint {
+  margin: 0.15rem 0 0 1.45rem;
 }
 
 .admin-support {

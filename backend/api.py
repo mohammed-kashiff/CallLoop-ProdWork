@@ -1904,8 +1904,8 @@ def _ingest_audio_file(
                     return call_id, True
 
         pyai_id = transcribe.new_pyai_call_id()
-        job_id, result, mode = transcribe.transcribe_with_fallback(
-            src_path, hear_tmp, call_id=pyai_id,
+        job_id, result, mode = transcribe.transcribe_audio(
+            src_path, hear_tmp, call_id=pyai_id, org_id=org_id,
         )
         with _db_lock:
             with db.connection() as conn:
@@ -2453,8 +2453,8 @@ def retranscribe_call(call_id: int, request: Request):
                     log, "retranscribe_started",
                     call_id=call_id, size_bytes=size,
                 )
-                job_id, result, mode = transcribe.transcribe_with_fallback(
-                    path, hear_tmp, call_id=pyai_id,
+                job_id, result, mode = transcribe.transcribe_audio(
+                    path, hear_tmp, call_id=pyai_id, org_id=org_id,
                 )
                 with _db_lock:
                     with db.connection() as conn:

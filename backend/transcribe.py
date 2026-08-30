@@ -1071,6 +1071,24 @@ def transcribe_with_fallback(src_path, hear_tmp, call_id=None):
     return picked_id, picked, mode
 
 
+def transcribe_audio(src_path, hear_tmp, call_id=None, *, org_id: str):
+    """Dispatch to PyAI Hear or self-hosted ASR. Same result shape either way.
+
+    org_id is the JWT/worker tenant, never a client-supplied id.
+    Unset use_selfhosted_transcription stays on PyAI (Hear path untouched).
+    """
+    from . import org_features
+
+    flags = org_features.features_for_org(org_id)
+    if flags.get("use_selfhosted_transcription") is True:
+        applog.event(log, "transcribe_dispatch", engine="selfhosted", call_id=call_id)
+        from .transcribe_selfhosted import transcribe_selfhosted
+
+        return transcribe_selfhosted(src_path, call_id=call_id)
+    applog.event(log, "transcribe_dispatch", engine="pyai", call_id=call_id)
+    return transcribe_with_fallback(src_path, hear_tmp, call_id=call_id)
+
+
 # ---------- Orchestrator (CLI) ----------
 def identity_for(src):
     if is_url(src):

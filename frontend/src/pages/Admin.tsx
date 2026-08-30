@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch, fmtUsd, readError } from '../lib/api'
-import { TRIAL_FLAGS, type FeatureMap } from '../lib/features'
+import { adminFlagOn, TRIAL_FLAGS, type FeatureMap } from '../lib/features'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 
@@ -396,7 +396,7 @@ export function Admin() {
               ) : null}
               <ul className="admin-flags">
                 {TRIAL_FLAGS.map((flag) => {
-                  const on = usage?.features?.[flag.key] !== false
+                  const on = adminFlagOn(usage?.features, flag)
                   return (
                     <li key={flag.key}>
                       <label>
@@ -408,6 +408,9 @@ export function Admin() {
                         />
                         {flag.label}
                       </label>
+                      {flag.description ? (
+                        <p className="admin-provision-hint">{flag.description}</p>
+                      ) : null}
                     </li>
                   )
                 })}
