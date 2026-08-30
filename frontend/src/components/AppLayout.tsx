@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Link, Outlet, useLocation } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
+import { Outlet, useLocation } from 'react-router-dom'
 import { useColorMode } from '../context/ColorMode'
+import { AccountMenu } from './AccountMenu'
 import { BrandLogo } from './BrandLogo'
 import { ColorModeToggle } from './ColorModeToggle'
 import { KeysPanel } from './KeysPanel'
@@ -23,7 +23,6 @@ export function AppLayout() {
   const { pathname } = useLocation()
   const theme = themeFromPath(pathname)
   const { mode } = useColorMode()
-  const { signOut } = useAuth()
 
   return (
     <div className="app-shell layout-shell" data-theme={theme} data-color-mode={mode}>
@@ -49,35 +48,7 @@ export function AppLayout() {
           <LiveTicker />
           <span className="topbar-chip">Rubric v8</span>
           <ColorModeToggle />
-          <Link
-            to="/profile"
-            className={['mode-toggle', pathname.startsWith('/profile') ? 'is-current' : '']
-              .filter(Boolean)
-              .join(' ')}
-            aria-label="Profile"
-            title="Profile"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle
-                cx="12"
-                cy="8.2"
-                r="3.1"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-              />
-              <path
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                d="M5.6 19.2c.7-3.2 3.2-5 6.4-5s5.7 1.8 6.4 5"
-              />
-            </svg>
-          </Link>
-          <button type="button" className="ghost-btn" onClick={() => void signOut()}>
-            Sign out
-          </button>
+          <AccountMenu />
         </header>
 
         <main className="main">
