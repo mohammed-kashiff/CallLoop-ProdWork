@@ -11,3 +11,9 @@ psycopg[binary]
 PyJWT>=2.8
 cryptography
 sentry-sdk[fastapi]>=2.19,<3
+# Self-hosted ASR + diarization (CL-36). CPU-only; not wired to live routes until CL-39.
+# These pull torch (hundreds of MB) and inflate image size / pip time — see CL-40.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+faster-whisper
+pyannote.audio
