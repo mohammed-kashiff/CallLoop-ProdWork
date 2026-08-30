@@ -37,7 +37,7 @@ def test_dispatch_default_uses_pyai(monkeypatch):
     )
     monkeypatch.setattr("backend.transcribe.transcribe_with_fallback", fake_pyai)
     monkeypatch.setattr(
-        "backend.transcribe_selfhosted.transcribe_selfhosted", fake_self,
+        "backend.transcribe_selfhosted_remote.transcribe_remote", fake_self,
     )
     job_id, result, mode = transcribe_audio(
         "/tmp/a.wav", "/tmp/a.hear.wav", call_id="c1", org_id=ORG,
@@ -69,7 +69,7 @@ def test_dispatch_on_uses_selfhosted(monkeypatch):
     )
     monkeypatch.setattr("backend.transcribe.transcribe_with_fallback", fake_pyai)
     monkeypatch.setattr(
-        "backend.transcribe_selfhosted.transcribe_selfhosted", fake_self,
+        "backend.transcribe_selfhosted_remote.transcribe_remote", fake_self,
     )
     job_id, result, mode = transcribe_audio(
         "/tmp/a.wav", "/tmp/a.hear.wav", call_id="c1", org_id=ORG,
@@ -93,7 +93,7 @@ def test_dispatch_off_after_on_returns_to_pyai(monkeypatch):
         lambda *_a, **_k: ("job_pyai", dict(HEAR_SHAPE), "diarize"),
     )
     monkeypatch.setattr(
-        "backend.transcribe_selfhosted.transcribe_selfhosted",
+        "backend.transcribe_selfhosted_remote.transcribe_remote",
         lambda *_a, **_k: ("job_sh", dict(HEAR_SHAPE), "selfhosted"),
     )
     _jid, _r, mode = transcribe_audio("/tmp/a.wav", "/tmp/a.hear.wav", org_id=ORG)

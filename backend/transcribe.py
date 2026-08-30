@@ -1072,19 +1072,25 @@ def transcribe_with_fallback(src_path, hear_tmp, call_id=None):
 
 
 def transcribe_audio(src_path, hear_tmp, call_id=None, *, org_id: str):
-    """Dispatch to PyAI Hear or self-hosted ASR. Same result shape either way.
+    """Dispatch to PyAI Hear or the self-hosted service (CL-40). Same result
+    shape either way.
 
     org_id is the JWT/worker tenant, never a client-supplied id.
     Unset use_selfhosted_transcription stays on PyAI (Hear path untouched).
+
+    The self-hosted engine runs on Cloud Run, not in this process — running
+    torch/pyannote in-process here once starved/crashed the box serving live
+    API traffic (see CL-40). transcribe_selfhosted.py (CL-38) still exists and
+    is still tested; it's just not called from here anymore.
     """
     from . import org_features
 
     flags = org_features.features_for_org(org_id)
     if flags.get("use_selfhosted_transcription") is True:
         applog.event(log, "transcribe_dispatch", engine="selfhosted", call_id=call_id)
-        from .transcribe_selfhosted import transcribe_selfhosted
+        from .transcribe_selfhosted_remote import transcribe_remote
 
-        return transcribe_selfhosted(src_path, call_id=call_id)
+        return transcribe_remote(src_path, call_id=call_id)
     applog.event(log, "transcribe_dispatch", engine="pyai", call_id=call_id)
     return transcribe_with_fallback(src_path, hear_tmp, call_id=call_id)
 

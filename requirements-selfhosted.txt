@@ -1,0 +1,11 @@
+# CL-40: minimal deps for the Cloud Run self-hosted transcription image.
+# Deliberately not the main requirements.txt — this image never touches
+# Postgres, Alembic, JWT verification, or Sentry, so it skips all of that
+# weight. torch/faster-whisper/pyannote.audio are the actual engine (CL-38).
+python-dotenv
+fastapi
+uvicorn[standard]
+python-multipart
+torch
+faster-whisper
+pyannote.audio

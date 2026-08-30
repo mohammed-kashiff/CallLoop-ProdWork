@@ -1,0 +1,34 @@
+# CL-40: standalone self-hosted transcription service, deployed to Cloud Run.
+#
+# Model weights are baked into the image at build time (the RUN step below),
+# not downloaded at container startup. That's the fix for the exact problem
+# that made Render's free tier unworkable for this: no persistent disk meant
+# every restart re-downloaded gigabytes of weights from Hugging Face. Here,
+# the weights just ship as part of the deployed image.
+#
+# HF_TOKEN is needed only to pull the gated pyannote checkpoint during this
+# build, via a BuildKit secret mount (--mount=type=secret) — it is never an
+# ENV var, never written to a layer, and never present in the final image.
+# See cloudbuild.yaml for how the secret gets to this step.
+
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements-selfhosted.txt .
+RUN pip install --no-cache-dir \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements-selfhosted.txt
+
+COPY backend ./backend
+
+RUN --mount=type=secret,id=hf_token \
+    HF_TOKEN="$(cat /run/secrets/hf_token)" \
+    python -c "from backend.transcribe_selfhosted import get_pipeline, get_whisper; get_pipeline(); get_whisper()"
+
+ENV PORT=8080
+EXPOSE 8080
+CMD ["sh", "-c", "uvicorn backend.selfhosted_service:app --host 0.0.0.0 --port ${PORT}"]
