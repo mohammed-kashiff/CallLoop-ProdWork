@@ -1,4 +1,4 @@
-import { NavLink, useLocation } from 'react-router-dom'
+import { Link, NavLink, useLocation } from 'react-router-dom'
 import { BrandLogo } from './BrandLogo'
 import { PyaiBadge } from './PyaiBadge'
 import { UsageMeter } from './UsageMeter'
@@ -199,7 +199,9 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
         aria-label="Call Loop navigation"
       >
         <div className="sidebar-brand">
-          <BrandLogo size="sm" surface="dark" animate={false} />
+          <Link to="/" onClick={onNavigate} aria-label="Go to home">
+            <BrandLogo size="sm" surface="dark" animate={false} />
+          </Link>
           <button
             type="button"
             className="sidebar-close"

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
+import { Link, Outlet, useLocation } from 'react-router-dom'
 import { useColorMode } from '../context/ColorMode'
 import { AccountMenu } from './AccountMenu'
 import { BrandLogo } from './BrandLogo'
@@ -41,9 +41,9 @@ export function AppLayout() {
             <span />
             <span />
           </button>
-          <div className="topbar-brand">
+          <Link to="/" className="topbar-brand" aria-label="Go to home">
             <BrandLogo size="sm" surface={mode === 'dark' ? 'dark' : 'light'} showMark animate={false} />
-          </div>
+          </Link>
           <p className="topbar-spacer" />
           <LiveTicker />
           <span className="topbar-chip">Rubric v8</span>

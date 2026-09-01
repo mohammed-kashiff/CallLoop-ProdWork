@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { apiFetch, fmtUsd, readError } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 
@@ -90,7 +91,7 @@ export function Profile() {
     <>
       <header className="page-bar">
         <div>
-          <p className="crumb">Account</p>
+          <p className="crumb"><Link to="/">Home</Link> / Account</p>
           <h1>Profile</h1>
         </div>
       </header>
