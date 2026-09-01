@@ -48,6 +48,10 @@
   padding: 0.15rem 0.45rem 0;
 }
 
+.sidebar-brand > a {
+  text-decoration: none;
+}
+
 .sidebar-brand .brand-wordmark {
   flex: 1;
   min-width: 0;
@@ -434,6 +438,7 @@ html[data-color-mode='dark'] .brand-motion.is-hero {
 
 .topbar-brand {
   display: none;
+  text-decoration: none;
 }
 
 .topbar-spacer {
