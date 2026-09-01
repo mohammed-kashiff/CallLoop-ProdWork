@@ -8,6 +8,7 @@ instead of running torch/pyannote in-process.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -45,7 +46,7 @@ async def transcribe(audio: UploadFile = File(...)):
     try:
         with os.fdopen(fd, "wb") as out:
             out.write(await audio.read())
-        job_id, result, mode = transcribe_selfhosted(path)
+        job_id, result, mode = await asyncio.to_thread(transcribe_selfhosted, path)
         return {"job_id": job_id, "result": result, "mode": mode}
     except Exception as e:  # noqa: BLE001
         applog.event(

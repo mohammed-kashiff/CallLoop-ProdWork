@@ -11,11 +11,3 @@ psycopg[binary]
 PyJWT>=2.8
 cryptography
 sentry-sdk[fastapi]>=2.19,<3
-# CL-40: mints the ID token Render uses to call the self-hosted transcription
-# service on Cloud Run. torch/faster-whisper/pyannote.audio moved to
-# requirements-selfhosted.txt — Render no longer needs them at all; that's
-# the point of running the engine on separate infra instead of in-process.
-# google-auth's token-refresh transport needs `requests` specifically, not
-# httpx — the one deliberate exception to this repo's usual HTTP client.
-google-auth
-requests
