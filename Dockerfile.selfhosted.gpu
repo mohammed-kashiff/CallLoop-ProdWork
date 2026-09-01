@@ -1,0 +1,37 @@
+# GPU variant of Dockerfile.selfhosted, for Lightning AI (or any CUDA GPU host).
+# Same service, same code — only the torch wheel and the device env vars differ.
+# Dockerfile.selfhosted (CPU, Cloud Run) is untouched; go back to it any time
+# with no edits.
+#
+# HF_TOKEN is needed only to pull the gated pyannote checkpoint during this
+# build, via a BuildKit secret mount (--mount=type=secret) — it is never an
+# ENV var, never written to a layer, and never present in the final image.
+
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements-selfhosted.txt .
+RUN pip install --no-cache-dir \
+    --extra-index-url https://download.pytorch.org/whl/cu121 \
+    -r requirements-selfhosted.txt
+
+COPY backend ./backend
+
+# Bake weights in CPU mode — no GPU is present during `docker build`, so this
+# step only needs to download/cache the models, not run them on CUDA. The
+# device env vars below apply at container runtime, on the real GPU host.
+RUN --mount=type=secret,id=hf_token \
+    HF_TOKEN="$(cat /run/secrets/hf_token)" \
+    python -c "from backend.transcribe_selfhosted import get_pipeline, get_whisper; get_pipeline(); get_whisper()"
+
+ENV WHISPER_DEVICE=cuda
+ENV WHISPER_COMPUTE_TYPE=float16
+ENV PIPELINE_DEVICE=cuda
+
+ENV PORT=8080
+EXPOSE 8080
+CMD ["sh", "-c", "uvicorn backend.selfhosted_service:app --host 0.0.0.0 --port ${PORT}"]

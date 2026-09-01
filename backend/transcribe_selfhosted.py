@@ -32,6 +32,9 @@ log = logging.getLogger("callproof.transcribe_selfhosted")
 
 DIARIZE_CHECKPOINT = "pyannote/speaker-diarization-3.1"
 WHISPER_MODEL = (os.getenv("SELFHOSTED_WHISPER_MODEL") or "small").strip() or "small"
+WHISPER_DEVICE = (os.getenv("WHISPER_DEVICE") or "cpu").strip() or "cpu"
+WHISPER_COMPUTE_TYPE = (os.getenv("WHISPER_COMPUTE_TYPE") or "int8").strip() or "int8"
+PIPELINE_DEVICE = (os.getenv("PIPELINE_DEVICE") or "cpu").strip() or "cpu"
 TARGET_SAMPLE_RATE = 16000
 FFMPEG_TIMEOUT = 60
 
@@ -84,13 +87,18 @@ def _load_pipeline():
         )
     from pyannote.audio import Pipeline
 
-    return Pipeline.from_pretrained(DIARIZE_CHECKPOINT, token=token)
+    pipeline = Pipeline.from_pretrained(DIARIZE_CHECKPOINT, token=token)
+    if PIPELINE_DEVICE != "cpu":
+        import torch
+
+        pipeline.to(torch.device(PIPELINE_DEVICE))
+    return pipeline
 
 
 def _load_whisper():
     from faster_whisper import WhisperModel
 
-    return WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+    return WhisperModel(WHISPER_MODEL, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE)
 
 
 def get_pipeline():
