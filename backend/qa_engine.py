@@ -90,7 +90,7 @@ def load_call(call_id=None, *, org_id: str | None = None):
             call_id = row["id"]
         meta = conn.execute(
             """
-            SELECT id, full_text, speakers, audio_seconds, pyai_call_id
+            SELECT id, full_text, speakers, audio_seconds, pyai_call_id, raw_json
             FROM calls WHERE id = %s AND org_id = %s
             """,
             (call_id, tenant),
@@ -107,7 +107,11 @@ def load_call(call_id=None, *, org_id: str | None = None):
             """,
             (call_id, tenant),
         ).fetchall()
-    return call_id, dict(meta), transcribe.expand_tagged_segments([dict(s) for s in segs])
+    meta_out = dict(meta)
+    words = transcribe.words_from_raw_json(meta_out.pop("raw_json", None))
+    return call_id, meta_out, transcribe.expand_tagged_segments(
+        [dict(s) for s in segs], words=words,
+    )
 
 
 def identify_agent(segments):

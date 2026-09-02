@@ -20,6 +20,7 @@ from backend.transcribe import (
     resolve_separation_mode,
     speaker_split_ok,
     transcribe_with_fallback,
+    words_from_raw_json,
 )
 
 
@@ -317,3 +318,99 @@ def test_segments_from_words_sorts_before_grouping():
     assert "hello" in turns[0]["text"]
     assert "agent" in turns[1]["text"]
     assert "again" in turns[2]["text"]
+
+
+def test_tagged_blob_splits_by_word_weight_not_punctuation():
+    bangs = "OK" + "!" * 40
+    rows = expand_tagged_segments(
+        [
+            {
+                "start": 0,
+                "end": 10,
+                "text": f"[speaker_1] {bangs} [speaker_2] Yes",
+            }
+        ]
+    )
+    assert [r["speaker"] for r in rows] == ["speaker_1", "speaker_2"]
+    # Equal word counts share the span; character-length would give "OK!!!!" almost all 10s.
+    assert abs(rows[0]["end"] - 5.0) < 0.2
+    assert abs(rows[1]["start"] - 5.0) < 0.2
+    assert all("_from_tag" not in r and "_stamped" not in r for r in rows)
+
+
+def test_tagged_blob_uses_word_timestamps_when_present():
+    rows = expand_tagged_segments(
+        [
+            {
+                "start": 0,
+                "end": 10,
+                "text": "[speaker_1] Hello there. [speaker_2] Uh huh.",
+            }
+        ],
+        words=[
+            {"word": "Hello", "start": 0.0, "end": 0.4, "speaker": "speaker_1"},
+            {"word": "there", "start": 0.4, "end": 0.8, "speaker": "speaker_1"},
+            {"word": "Uh", "start": 5.0, "end": 5.2, "speaker": "speaker_2"},
+            {"word": "huh", "start": 5.2, "end": 5.5, "speaker": "speaker_2"},
+        ],
+    )
+    assert [(r["start"], r["end"], r["speaker"]) for r in rows] == [
+        (0.0, 0.8, "speaker_1"),
+        (5.0, 5.5, "speaker_2"),
+    ]
+
+
+def test_tag_split_start_does_not_land_inside_neighbor_turn():
+    """Click-to-seek used interpolated starts that sat inside an earlier real turn (CL-42)."""
+    long_a = "Please hold on while I look that up in the system. " * 8
+    long_b = "And then we can go over the next steps together. " * 8
+    rows = expand_tagged_segments(
+        [
+            {
+                "speaker": "speaker_1",
+                "start": 109,
+                "end": 140,
+                "text": "I'm calling from InvestorList about your property listing today",
+            },
+            {
+                "speaker": None,
+                "start": 0,
+                "end": 234,
+                "text": (
+                    f"[speaker_1] {long_a} [speaker_2] Uh huh. [speaker_1] {long_b}"
+                ),
+            },
+        ]
+    )
+    neighbor = next(r for r in rows if "InvestorList" in r["text"])
+    uh = next(r for r in rows if r["text"].strip().startswith("Uh huh"))
+    assert neighbor["start"] == 109
+    assert neighbor["end"] == 140
+    assert not (neighbor["start"] < uh["start"] < neighbor["end"])
+    assert uh["start"] >= neighbor["end"] - 1e-6
+
+
+def test_already_split_rows_retimed_from_words():
+    rows = expand_tagged_segments(
+        [
+            {"seq": 0, "speaker": "speaker_1", "start": 0, "end": 8, "text": "Hello there"},
+            {"seq": 1, "speaker": "speaker_2", "start": 2.5, "end": 3.0, "text": "Uh huh"},
+        ],
+        words=[
+            {"word": "Hello", "start": 0.0, "end": 0.4, "speaker": "speaker_1"},
+            {"word": "there", "start": 0.4, "end": 0.8, "speaker": "speaker_1"},
+            {"word": "Uh", "start": 5.0, "end": 5.2, "speaker": "speaker_2"},
+            {"word": "huh", "start": 5.2, "end": 5.5, "speaker": "speaker_2"},
+        ],
+    )
+    uh = next(r for r in rows if "Uh huh" in r["text"])
+    hello = next(r for r in rows if "Hello" in r["text"])
+    assert hello["start"] == 0.0 and hello["end"] == 0.8
+    assert uh["start"] == 5.0 and uh["end"] == 5.5
+
+
+def test_words_from_raw_json_accepts_dict_and_string():
+    assert words_from_raw_json({"words": [{"word": "Hi"}]}) == [{"word": "Hi"}]
+    assert words_from_raw_json('{"words": [{"word": "Hi"}]}') == [{"word": "Hi"}]
+    assert words_from_raw_json("not-json") is None
+    assert words_from_raw_json(None) is None

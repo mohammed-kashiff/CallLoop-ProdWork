@@ -396,6 +396,8 @@ def get_call(conn, call_id: int, *, org_id: str):
 
 
 _SPEAKER_TAG = re.compile(r"\[(speaker_\d+)\]", re.I)
+_TOKEN_RE = re.compile(r"[A-Za-z0-9']+")
+_MIN_PIECE_SEC = 0.35
 
 
 def _channel_to_speaker(channel) -> str | None:
@@ -442,6 +444,192 @@ def _time_key(row: dict) -> tuple[float, float]:
     except (TypeError, ValueError):
         end = start
     return (start, end)
+
+
+def _norm_token(raw: str) -> str:
+    return re.sub(r"[^a-z0-9']+", "", (raw or "").lower())
+
+
+def _speech_tokens(text: str) -> list[str]:
+    """Word-like tokens used as a speaking-time proxy. Keep in sync with speakerText.ts."""
+    return [tok for m in _TOKEN_RE.finditer(text or "") if (tok := _norm_token(m.group(0)))]
+
+
+def _speech_weight(text: str) -> int:
+    return max(len(_speech_tokens(text)), 1)
+
+
+def words_from_raw_json(raw) -> list | None:
+    """Pull Hear word timings from calls.raw_json without assuming a JSON column type."""
+    if raw is None:
+        return None
+    if isinstance(raw, (bytes, memoryview)):
+        raw = bytes(raw).decode("utf-8")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(raw, dict):
+        return None
+    words = raw.get("words")
+    return words if isinstance(words, list) else None
+
+
+def _word_speaker(row: dict) -> str:
+    sp = row.get("speaker")
+    if sp not in (None, "") and str(sp).strip():
+        return str(sp).strip().lower()
+    label = _channel_to_speaker(row.get("channel"))
+    return (label or "").lower()
+
+
+def _timed_words(words: list | None) -> list[tuple[float, float, str, str]]:
+    rows: list[tuple[float, float, str, str]] = []
+    for raw in words or []:
+        if not isinstance(raw, dict):
+            continue
+        token = _norm_token(str(raw.get("word") or raw.get("text") or ""))
+        if not token:
+            continue
+        start, end = _time_key(raw)
+        rows.append((start, end, token, _word_speaker(raw)))
+    rows.sort(key=lambda r: (r[0], r[1]))
+    return rows
+
+
+def _words_in_span(
+    timed: list[tuple[float, float, str, str]], t0: float, t1: float, pad: float = 0.05,
+) -> list[tuple[float, float, str, str]]:
+    lo, hi = t0 - pad, t1 + pad
+    return [w for w in timed if w[1] >= lo and w[0] <= hi]
+
+
+def _consume_tokens(
+    tokens: list[str],
+    timed: list[tuple[float, float, str, str]],
+    start_at: int,
+    speaker: str = "",
+) -> tuple[tuple[float, float] | None, int]:
+    """Match tokens to consecutive same-speaker words. Skip other speakers in between."""
+    if not tokens or not timed:
+        return None, start_at
+    want = speaker.strip().lower()
+    n = len(timed)
+    start_i = None
+    for j in range(start_at, n):
+        if want and timed[j][3] and timed[j][3] != want:
+            continue
+        if timed[j][2] == tokens[0]:
+            start_i = j
+            break
+    if start_i is None:
+        return None, start_at
+    k = start_i
+    for tok in tokens:
+        while k < n and want and timed[k][3] and timed[k][3] != want:
+            k += 1
+        if k >= n:
+            return None, start_at
+        if timed[k][2] == tok:
+            k += 1
+            continue
+        nxt = k + 1
+        while nxt < n and want and timed[nxt][3] and timed[nxt][3] != want:
+            nxt += 1
+        if nxt < n and timed[nxt][2] == tok:
+            k = nxt + 1
+            continue
+        return None, start_at
+    return (timed[start_i][0], timed[k - 1][1]), k
+
+
+def _piece_spans(t0: float, t1: float, weights: list[int]) -> list[tuple[float, float]]:
+    """Distribute a parent span across pieces by speech weight, not character count."""
+    span = max(0.0, t1 - t0)
+    if not weights:
+        return []
+    total = sum(weights) or 1
+    durs = [span * (w / total) for w in weights]
+    if span >= _MIN_PIECE_SEC * len(weights):
+        durs = [max(_MIN_PIECE_SEC, d) for d in durs]
+        scale = sum(durs) or 1
+        durs = [span * (d / scale) for d in durs]
+    out: list[tuple[float, float]] = []
+    cursor = t0
+    for dur in durs:
+        out.append((cursor, cursor + dur))
+        cursor += dur
+    if out:
+        out[-1] = (out[-1][0], t1)
+    return out
+
+
+def _split_tagged_pieces(text: str) -> list[tuple[str, str]]:
+    marks = list(_SPEAKER_TAG.finditer(text))
+    pieces: list[tuple[str, str]] = []
+    for i, m in enumerate(marks):
+        body = text[m.end() : (marks[i + 1].start() if i + 1 < len(marks) else len(text))]
+        body = body.strip()
+        if body:
+            pieces.append((m.group(1).lower(), body))
+    return pieces
+
+
+def _stamp_unstamped(rows: list, timed: list[tuple[float, float, str, str]]) -> int:
+    """Re-time rows that still have interpolated clocks by walking Hear word timings."""
+    if not timed:
+        return 0
+    cursor = 0
+    stamped = 0
+    for row in rows:
+        if row.get("_stamped"):
+            span, nxt = _consume_tokens(
+                _speech_tokens(str(row.get("text") or "")),
+                timed,
+                cursor,
+                str(row.get("speaker") or ""),
+            )
+            if span:
+                cursor = nxt
+            continue
+        span, nxt = _consume_tokens(
+            _speech_tokens(str(row.get("text") or "")),
+            timed,
+            cursor,
+            str(row.get("speaker") or ""),
+        )
+        if not span:
+            continue
+        old_start, old_end = _time_key(row)
+        row["start"], row["end"] = span
+        row["_stamped"] = True
+        cursor = nxt
+        if abs(old_start - span[0]) > 0.05 or abs(old_end - span[1]) > 0.05:
+            stamped += 1
+    return stamped
+
+
+def _clamp_tag_splits(rows: list) -> int:
+    """Keep interpolated tag-split starts out of a previous turn's real window."""
+    clamped = 0
+    prev_end: float | None = None
+    for row in rows:
+        start, end = _time_key(row)
+        if (
+            row.get("_from_tag")
+            and not row.get("_stamped")
+            and prev_end is not None
+            and start < prev_end
+        ):
+            start = prev_end
+            if end < start:
+                end = start
+            row["start"] = start
+            row["end"] = end
+            clamped += 1
+        prev_end = _time_key(row)[1]
+    return clamped
 
 
 def _segments_from_words(words: list) -> list:
@@ -497,9 +685,18 @@ def _segments_from_words(words: list) -> list:
     return turns
 
 
-def expand_tagged_segments(segments: list) -> list:
-    """Split Hear blobs like '[speaker_1] hi [speaker_2] hello' into one row per speaker."""
+def expand_tagged_segments(segments: list, words: list | None = None) -> list:
+    """Split Hear blobs like '[speaker_1] hi [speaker_2] hello' into one row per speaker.
+
+    Character-length interpolation is a poor speech-duration proxy and made
+    click-to-seek land inside a neighboring turn. Prefer Hear word timestamps;
+    otherwise split the parent span by word count. Keep the fallback in sync
+    with frontend/src/lib/speakerText.ts.
+    """
+    timed = _timed_words(words)
     out: list = []
+    tag_pieces = 0
+    word_aligned = 0
     for seg in segments or []:
         if not isinstance(seg, dict):
             continue
@@ -509,34 +706,54 @@ def expand_tagged_segments(segments: list) -> list:
         if not marks:
             out.append(dict(seg))
             continue
-        pieces: list[tuple[str, str]] = []
-        for i, m in enumerate(marks):
-            body = text[m.end() : (marks[i + 1].start() if i + 1 < len(marks) else len(text))]
-            body = body.strip()
-            if body:
-                pieces.append((m.group(1).lower(), body))
+        pieces = _split_tagged_pieces(text)
         if not pieces:
             row = dict(seg)
             row["text"] = _SPEAKER_TAG.sub("", text).strip()
             out.append(row)
             continue
-        t0 = float(seg.get("start") or 0)
-        t1 = float(seg.get("end") or t0)
-        total = sum(len(b) for _, b in pieces) or 1
-        span = max(0.0, t1 - t0)
-        cursor = t0
-        for speaker, body in pieces:
-            dur = span * (len(body) / total)
+        t0, t1 = _time_key(seg)
+        spans = _piece_spans(t0, t1, [_speech_weight(body) for _, body in pieces])
+        aligned = None
+        local = _words_in_span(timed, t0, t1) if timed else []
+        if local:
+            cursor = 0
+            found: list[tuple[float, float] | None] = []
+            for speaker, body in pieces:
+                span, nxt = _consume_tokens(_speech_tokens(body), local, cursor, speaker)
+                found.append(span)
+                if span:
+                    cursor = nxt
+            if found and all(span is not None for span in found):
+                aligned = found
+        for i, (speaker, body) in enumerate(pieces):
             row = dict(seg)
             row["speaker"] = speaker
             row["text"] = body
-            row["start"] = cursor
-            row["end"] = cursor + dur
+            row["_from_tag"] = True
+            tag_pieces += 1
+            if aligned:
+                row["start"], row["end"] = aligned[i]
+                row["_stamped"] = True
+                word_aligned += 1
+            else:
+                row["start"], row["end"] = spans[i]
             out.append(row)
-            cursor += dur
+    stamped = _stamp_unstamped(out, timed)
     out.sort(key=_time_key)
+    clamped = _clamp_tag_splits(out)
+    if tag_pieces or clamped:
+        applog.event(
+            log, "tagged_segment_times_fixed",
+            pieces=tag_pieces,
+            word_aligned=word_aligned,
+            stamped=stamped,
+            clamped=clamped,
+        )
     for i, row in enumerate(out):
         row["seq"] = i
+        row.pop("_from_tag", None)
+        row.pop("_stamped", None)
     return out
 
 
@@ -566,7 +783,7 @@ def normalize_hear_result(result: dict) -> dict:
                 speakers=len(_labeled_speaker_ids(rebuilt)),
             )
             segs = rebuilt
-    out["segments"] = expand_tagged_segments(segs)
+    out["segments"] = expand_tagged_segments(segs, words=words)
     speakers = _labeled_speaker_ids(out["segments"])
     if speakers:
         out["speakers"] = len(speakers)

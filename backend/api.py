@@ -1577,9 +1577,16 @@ def _hydrate_audit_segments(audit: dict, call_id: int, org_id: str) -> dict:
                 """,
                 (call_id, org_id),
             ).fetchall()
+            call = c.execute(
+                """
+                SELECT raw_json FROM calls WHERE id = %s AND org_id = %s
+                """,
+                (call_id, org_id),
+            ).fetchone()
     except Exception:
         return audit
-    segs = transcribe.expand_tagged_segments([dict(r) for r in rows])
+    words = transcribe.words_from_raw_json(call["raw_json"] if call else None)
+    segs = transcribe.expand_tagged_segments([dict(r) for r in rows], words=words)
     out = dict(audit)
     out["segments"] = segs
     agent = out.get("agent_speaker")
