@@ -3209,6 +3209,19 @@ html[data-color-mode='dark'] .claude-cord-plug {
   margin: 0.15rem 0 0 1.45rem;
 }
 
+.admin-calls {
+  margin: 0.95rem 0 0;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.6rem;
+}
+
+.admin-calls h3 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
 .admin-support {
   margin: 0.95rem 0 0;
   padding-top: 0.85rem;

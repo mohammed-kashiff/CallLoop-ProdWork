@@ -73,3 +73,69 @@ def set_feature(
         org_id or "", feature_key, enabled, changed_by=changed_by,
     )
     return {"org_id": parse_org_id(org_id), "features": flags}
+
+
+_DETAIL_LIMIT_MAX = 500
+_DETAIL_LIMIT_DEFAULT = 200
+
+
+def _call_mode(job_id: str | None) -> str:
+    """selfhosted_* job ids are ours (Modal); everything else is a PyAI job id."""
+    return "selfhosted" if (job_id or "").startswith("selfhosted_") else "pyai"
+
+
+def call_detail(org_id: str | None, limit: int | None = None) -> dict:
+    """Org call volume, audit coverage, and which engine ran each call (AC-13).
+
+    Counts are true totals (COUNT(*)/COUNT(DISTINCT)), not capped by the
+    per-call listing's limit, which stays reasonable for a single JSON
+    response — callers needing the full list can page by created_at.
+    """
+    oid = parse_org_id(org_id)
+    if not oid:
+        raise HTTPException(status_code=400, detail="org_id is required.")
+    cap = max(1, min(int(limit or _DETAIL_LIMIT_DEFAULT), _DETAIL_LIMIT_MAX))
+    with org_scope(oid):
+        with db.connection() as conn:
+            total_row = conn.execute(
+                "SELECT COUNT(*) AS n FROM calls WHERE org_id = %s", (oid,),
+            ).fetchone()
+            audited_row = conn.execute(
+                "SELECT COUNT(DISTINCT call_id) AS n FROM audits WHERE org_id = %s",
+                (oid,),
+            ).fetchone()
+            call_rows = conn.execute(
+                """
+                SELECT id, filename, job_id, created_at, audio_seconds
+                FROM calls
+                WHERE org_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (oid, cap),
+            ).fetchall()
+            audited_ids = conn.execute(
+                "SELECT DISTINCT call_id FROM audits WHERE org_id = %s", (oid,),
+            ).fetchall()
+    audited = {int(r["call_id"]) for r in audited_ids or [] if r.get("call_id") is not None}
+    total_calls = int((total_row or {}).get("n") or 0)
+    calls = []
+    for row in call_rows or []:
+        call_id = int(row["id"])
+        calls.append(
+            {
+                "call_id": call_id,
+                "filename": row.get("filename"),
+                "created_at": _json_value(row.get("created_at")),
+                "audio_seconds": row.get("audio_seconds"),
+                "mode": _call_mode(row.get("job_id")),
+                "audited": call_id in audited,
+            }
+        )
+    return {
+        "org_id": oid,
+        "total_calls": total_calls,
+        "audited_count": int((audited_row or {}).get("n") or 0),
+        "calls": calls,
+        "calls_truncated": total_calls > len(calls),
+    }

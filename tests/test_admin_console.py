@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
@@ -195,6 +196,118 @@ def test_log_password_reset_request_rejects_bad_body(monkeypatch):
         ).status_code
         == 400
     )
+
+
+class _Result:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+
+class _DetailFakeConn:
+    """Answers exactly the four queries call_detail() issues, org-scoped."""
+
+    def __init__(self, calls, audited_call_ids):
+        self.calls = calls
+        self.audited_call_ids = audited_call_ids
+        self.seen_org_ids: list[str] = []
+
+    def execute(self, sql, params=None):
+        norm = " ".join(str(sql).split()).upper()
+        oid = params[0] if params else None
+        self.seen_org_ids.append(oid)
+        rows_for_org = [c for c in self.calls if c["org_id"] == oid]
+        audited_for_org = [a for a in self.audited_call_ids if a[0] == oid]
+        if "COUNT(*) AS N FROM CALLS" in norm:
+            return _Result([{"n": len(rows_for_org)}])
+        if "COUNT(DISTINCT CALL_ID) AS N FROM AUDITS" in norm:
+            return _Result([{"n": len({a[1] for a in audited_for_org})}])
+        if "SELECT DISTINCT CALL_ID FROM AUDITS" in norm:
+            return _Result([{"call_id": a[1]} for a in audited_for_org])
+        if "FROM CALLS" in norm and "ORDER BY CREATED_AT" in norm:
+            limit = params[1] if len(params) > 1 else len(rows_for_org)
+            ordered = sorted(rows_for_org, key=lambda c: c["created_at"], reverse=True)
+            return _Result(ordered[:limit])
+        raise AssertionError(f"unexpected query: {norm}")
+
+
+@contextmanager
+def _fake_detail_db(monkeypatch, conn):
+    @contextmanager
+    def _connection(*, bypass_rls=False):
+        assert not bypass_rls
+        yield conn
+
+    monkeypatch.setattr("backend.admin_console.db.connection", _connection)
+    yield conn
+
+
+def test_call_detail_counts_mode_and_audited_are_org_scoped(monkeypatch):
+    from backend.admin_console import call_detail
+
+    calls = [
+        {"id": 1, "org_id": ORG_A, "filename": "a1.mp3", "job_id": "job_abc",
+         "created_at": "2026-01-01", "audio_seconds": 90},
+        {"id": 2, "org_id": ORG_A, "filename": "a2.mp3", "job_id": "selfhosted_xyz",
+         "created_at": "2026-01-02", "audio_seconds": 200},
+        {"id": 3, "org_id": ORG_B, "filename": "b1.mp3", "job_id": "job_other",
+         "created_at": "2026-01-03", "audio_seconds": 50},
+    ]
+    audited = [(ORG_A, 2), (ORG_B, 3)]
+    conn = _DetailFakeConn(calls, audited)
+    with _fake_detail_db(monkeypatch, conn):
+        out = call_detail(ORG_A)
+
+    assert out["org_id"] == ORG_A
+    assert out["total_calls"] == 2
+    assert out["audited_count"] == 1
+    assert out["calls_truncated"] is False
+    by_id = {c["call_id"]: c for c in out["calls"]}
+    assert by_id[1]["mode"] == "pyai"
+    assert by_id[1]["audited"] is False
+    assert by_id[2]["mode"] == "selfhosted"
+    assert by_id[2]["audited"] is True
+    assert 3 not in by_id
+    assert all(oid == ORG_A for oid in conn.seen_org_ids)
+
+
+def test_call_detail_route_is_gated_and_org_scoped(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    seen: list[tuple] = []
+
+    def _detail(org_id, limit=None):
+        seen.append((org_id, limit))
+        return {
+            "org_id": org_id,
+            "total_calls": 2,
+            "audited_count": 1,
+            "calls": [],
+            "calls_truncated": False,
+        }
+
+    monkeypatch.setattr("backend.admin_console.call_detail", _detail)
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get(f"/api/admin/orgs/{ORG_A}/detail")
+    assert r.status_code == 200
+    assert seen == [(ORG_A, None)]
+    assert r.json()["org_id"] == ORG_A
+
+
+def test_call_detail_route_403_for_non_admin(monkeypatch):
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    assert client.get(f"/api/admin/orgs/{ORG_A}/detail").status_code == 403
 
 
 def test_log_password_reset_route_does_not_call_supabase_admin():

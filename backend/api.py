@@ -287,6 +287,12 @@ def admin_usage(request: Request, org_id: str | None = None):
     return admin_console.usage_for_org(org_id)
 
 
+@app.get("/api/admin/orgs/{org_id}/detail")
+def admin_org_detail(request: Request, org_id: str, limit: int | None = None):
+    auth.require_platform_admin(request)
+    return admin_console.call_detail(org_id, limit=limit)
+
+
 @app.post("/api/admin/features")
 def admin_features(request: Request, body: AdminFeatureBody):
     auth.require_platform_admin(request)

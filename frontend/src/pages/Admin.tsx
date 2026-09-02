@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch, fmtUsd, readError } from '../lib/api'
 import { adminFlagOn, TRIAL_FLAGS, type FeatureMap } from '../lib/features'
+import { formatTime } from '../lib/format'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { isAdminHost } from '../lib/adminHost'
@@ -40,6 +41,23 @@ type UsagePayload = {
   features: FeatureMap
 }
 
+type OrgCallRow = {
+  call_id: number
+  filename: string | null
+  created_at: string | null
+  audio_seconds: number | null
+  mode: 'pyai' | 'selfhosted'
+  audited: boolean
+}
+
+type OrgDetailPayload = {
+  org_id: string
+  total_calls: number
+  audited_count: number
+  calls: OrgCallRow[]
+  calls_truncated: boolean
+}
+
 function displayName(row: DirectoryRow): string {
   const n = [row.first_name, row.last_name].filter(Boolean).join(' ').trim()
   return n || '—'
@@ -52,6 +70,7 @@ export function Admin() {
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<DirectoryRow | null>(null)
   const [usage, setUsage] = useState<UsagePayload | null>(null)
+  const [orgDetail, setOrgDetail] = useState<OrgDetailPayload | null>(null)
   const [busy, setBusy] = useState(false)
 
   const [pEmail, setPEmail] = useState('')
@@ -133,13 +152,17 @@ export function Admin() {
     setResetEmailError(null)
     setBusy(true)
     try {
-      const r = await apiFetch(
-        `/api/admin/usage?org_id=${encodeURIComponent(row.org_id)}`,
-      )
-      if (!r.ok) throw new Error(await readError(r, 'Could not load usage.'))
-      setUsage((await r.json()) as UsagePayload)
+      const [usageRes, detailRes] = await Promise.all([
+        apiFetch(`/api/admin/usage?org_id=${encodeURIComponent(row.org_id)}`),
+        apiFetch(`/api/admin/orgs/${encodeURIComponent(row.org_id)}/detail`),
+      ])
+      if (!usageRes.ok) throw new Error(await readError(usageRes, 'Could not load usage.'))
+      if (!detailRes.ok) throw new Error(await readError(detailRes, 'Could not load org detail.'))
+      setUsage((await usageRes.json()) as UsagePayload)
+      setOrgDetail((await detailRes.json()) as OrgDetailPayload)
     } catch (e: unknown) {
       setUsage(null)
+      setOrgDetail(null)
       setError(e instanceof Error ? e.message : 'Could not load usage.')
     } finally {
       setBusy(false)
@@ -431,6 +454,61 @@ export function Admin() {
                   )
                 })}
               </ul>
+              <div className="admin-calls">
+                <h3>Calls</h3>
+                {orgDetail ? (
+                  <>
+                    <dl className="admin-stats">
+                      <div>
+                        <dt>Total calls</dt>
+                        <dd>{orgDetail.total_calls}</dd>
+                      </div>
+                      <div>
+                        <dt>Audited</dt>
+                        <dd>{orgDetail.audited_count}</dd>
+                      </div>
+                    </dl>
+                    <div className="admin-table-wrap">
+                      <table className="admin-table">
+                        <thead>
+                          <tr>
+                            <th>Date</th>
+                            <th>Filename</th>
+                            <th>Length</th>
+                            <th>Engine</th>
+                            <th>Audited</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {orgDetail.calls.map((c) => (
+                            <tr key={c.call_id}>
+                              <td>
+                                {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}
+                              </td>
+                              <td>{c.filename || '—'}</td>
+                              <td>
+                                {c.audio_seconds != null ? formatTime(c.audio_seconds) : '—'}
+                              </td>
+                              <td>{c.mode === 'selfhosted' ? 'Self-hosted' : 'PyAI'}</td>
+                              <td>{c.audited ? 'Yes' : 'No'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {orgDetail.calls.length === 0 ? (
+                        <p className="empty-copy">No calls for this org.</p>
+                      ) : null}
+                      {orgDetail.calls_truncated ? (
+                        <p className="admin-provision-hint">
+                          Showing the {orgDetail.calls.length} most recent of{' '}
+                          {orgDetail.total_calls} calls.
+                        </p>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+
               <div className="admin-support">
                 <h3>Account recovery</h3>
                 <p className="admin-id">{selected.email || 'No email on this row'}</p>
