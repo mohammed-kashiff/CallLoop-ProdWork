@@ -163,6 +163,33 @@ def test_cors_origins_from_env(monkeypatch):
     assert cors_origins() == ["https://app.example"]
 
 
+def test_cors_origins_drop_wildcard(monkeypatch):
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.example,*,null")
+    origins = cors_origins()
+    assert origins == ["https://app.example"]
+    assert "*" not in origins
+
+
+def test_ac12_idb_origin_is_allowlisted_not_wildcard():
+    from backend.config import IDB_ORIGIN
+
+    yaml = (ROOT / "render.yaml").read_text(encoding="utf-8")
+    api = (ROOT / "backend" / "api.py").read_text(encoding="utf-8")
+    host = (ROOT / "frontend" / "src" / "lib" / "adminHost.ts").read_text(encoding="utf-8")
+    assert IDB_ORIGIN == "https://idb.call-loop.com"
+    assert IDB_ORIGIN in yaml
+    cors_line = next(
+        line for line in yaml.splitlines() if "callloop-web.onrender.com" in line
+    )
+    assert IDB_ORIGIN in cors_line
+    assert "*" not in cors_line
+    assert "allow_origins=cors_origins()" in api
+    assert 'allow_origins=["*"]' not in api
+    assert 'allow_origins=["*"]' not in api.replace(" ", "")
+    assert IDB_ORIGIN in host
+    assert "idb.call-loop.com" in host
+
+
 def test_audit_mapper_still_reads_known_fields():
     """Frontend mapAudit.ts depends on these keys staying in audit JSON."""
     mapper = Path(ROOT / "frontend" / "src" / "lib" / "mapAudit.ts").read_text(encoding="utf-8")

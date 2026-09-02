@@ -4,6 +4,7 @@ import { apiFetch, fmtUsd, readError } from '../lib/api'
 import { adminFlagOn, TRIAL_FLAGS, type FeatureMap } from '../lib/features'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { isAdminHost } from '../lib/adminHost'
 
 type ProvisionResult = {
   email: string
@@ -213,6 +214,21 @@ export function Admin() {
   }
 
   if (!isPlatformAdmin) {
+    if (isAdminHost()) {
+      return (
+        <>
+          <header className="page-bar">
+            <div>
+              <p className="crumb">Platform</p>
+              <h1>Admin</h1>
+            </div>
+          </header>
+          <p className="admin-provision-hint">
+            This console is limited to platform admins.
+          </p>
+        </>
+      )
+    }
     return <Navigate to="/" replace />
   }
 

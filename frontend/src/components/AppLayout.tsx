@@ -7,6 +7,7 @@ import { ColorModeToggle } from './ColorModeToggle'
 import { KeysPanel } from './KeysPanel'
 import { LiveTicker } from './LiveTicker'
 import { Sidebar } from './Sidebar'
+import { appHomePath, isAdminHost } from '../lib/adminHost'
 
 function themeFromPath(
   pathname: string,
@@ -23,6 +24,8 @@ export function AppLayout() {
   const { pathname } = useLocation()
   const theme = themeFromPath(pathname)
   const { mode } = useColorMode()
+  const home = appHomePath()
+  const adminHost = isAdminHost()
 
   return (
     <div className="app-shell layout-shell" data-theme={theme} data-color-mode={mode}>
@@ -41,12 +44,12 @@ export function AppLayout() {
             <span />
             <span />
           </button>
-          <Link to="/" className="topbar-brand" aria-label="Go to home">
+          <Link to={home} className="topbar-brand" aria-label={adminHost ? 'Go to admin' : 'Go to home'}>
             <BrandLogo size="sm" surface={mode === 'dark' ? 'dark' : 'light'} showMark animate={false} />
           </Link>
           <p className="topbar-spacer" />
-          <LiveTicker />
-          <span className="topbar-chip">Rubric v8</span>
+          {adminHost ? null : <LiveTicker />}
+          {adminHost ? null : <span className="topbar-chip">Rubric v8</span>}
           <ColorModeToggle />
           <AccountMenu />
         </header>
@@ -55,7 +58,7 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
-      <KeysPanel />
+      {adminHost ? null : <KeysPanel />}
     </div>
   )
 }

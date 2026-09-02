@@ -5,6 +5,7 @@ import { UsageMeter } from './UsageMeter'
 import { useAudit } from '../context/AuditContext'
 import { useAuth } from '../context/AuthContext'
 import { flagEnabled } from '../lib/features'
+import { appHomePath, isAdminHost } from '../lib/adminHost'
 
 const HOME = { to: '/', label: 'Home', end: true, icon: 'home' } as const
 
@@ -181,7 +182,9 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
   const { pathname } = useLocation()
   const { flaggedCount } = useAudit()
   const { features, isPlatformAdmin, orgName } = useAuth()
-  const onHome = pathname === '/'
+  const adminHost = isAdminHost()
+  const home = appHomePath()
+  const onHome = pathname === home
   const pulseOpen = pathname.startsWith('/agents-pulse')
   const auditsOpen = pathname.startsWith('/audits')
   const showNeighbourhood = flagEnabled(features, 'show_neighbourhood_nav')
@@ -199,7 +202,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
         aria-label="Call Loop navigation"
       >
         <div className="sidebar-brand">
-          <Link to="/" onClick={onNavigate} aria-label="Go to home">
+          <Link to={home} onClick={onNavigate} aria-label={adminHost ? 'Go to admin' : 'Go to home'}>
             <BrandLogo size="sm" surface="dark" animate={false} />
           </Link>
           <button
@@ -215,6 +218,20 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
         <p className="sidebar-tagline">We close the loop</p>
         {orgName ? <p className="sidebar-org-name">{orgName}</p> : null}
 
+        {adminHost ? (
+          <nav className="sidebar-nav" aria-label="Admin">
+            <NavLink
+              to="/admin"
+              className={({ isActive }) =>
+                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+              }
+              onClick={onNavigate}
+            >
+              Admin
+            </NavLink>
+          </nav>
+        ) : (
+          <>
         <nav className="sidebar-home" aria-label="Home">
           <NavLink
             to={HOME.to}
@@ -316,10 +333,14 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
             </NavLink>
           ) : null}
         </nav>
+          </>
+        )}
+        {adminHost ? null : (
         <div className="sidebar-footer">
           <PyaiBadge onNavigate={onNavigate} />
           <UsageMeter />
         </div>
+        )}
       </aside>
     </>
   )

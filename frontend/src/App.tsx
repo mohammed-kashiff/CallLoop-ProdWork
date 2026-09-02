@@ -21,6 +21,7 @@ import { Profile } from './pages/Profile'
 import { ResetPassword } from './pages/ResetPassword'
 import { Pyai } from './pages/Pyai'
 import { Training } from './pages/Training'
+import { appHomePath, isAdminHost } from './lib/adminHost'
 import './App.css'
 import './live.css'
 
@@ -35,6 +36,8 @@ function AuthedShell() {
 }
 
 function App() {
+  const adminHost = isAdminHost()
+  const home = appHomePath()
   return (
     <ColorModeProvider>
       <AuthProvider>
@@ -46,7 +49,7 @@ function App() {
               <Route element={<RequireAuth />}>
                 <Route element={<AuthedShell />}>
                   <Route element={<AppLayout />}>
-                    <Route index element={<Home />} />
+                    <Route index element={adminHost ? <Admin /> : <Home />} />
                     <Route path="neighbourhood" element={<Neighbourhood />} />
                     <Route path="agents-pulse" element={<AgentsPulse />} />
                     <Route path="agents-pulse/flagged" element={<FlaggedForReview />} />
@@ -59,7 +62,7 @@ function App() {
                     <Route path="admin" element={<Admin />} />
                     <Route path="profile" element={<Profile />} />
                     <Route path="pyai" element={<Pyai />} />
-                    <Route path="*" element={<Navigate to="/" replace />} />
+                    <Route path="*" element={<Navigate to={home} replace />} />
                   </Route>
                 </Route>
               </Route>

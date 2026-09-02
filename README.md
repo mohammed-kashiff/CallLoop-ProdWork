@@ -317,7 +317,7 @@ Set these as **Environment** variables on the Web Service (not Secret Files, not
 |------|--------|
 | `PYAI_API_KEY` | Live key `pyai_live_…` |
 | `ANTHROPIC_API_KEY` | Claude scoring |
-| `CORS_ORIGINS` | `https://callloop-web.onrender.com` (comma-separate extra origins if needed) |
+| `CORS_ORIGINS` | `https://callloop-web.onrender.com,https://call-loop.com,https://www.call-loop.com,https://idb.call-loop.com` (comma-separated; never `*`) |
 | `DATABASE_URL` | Supabase Postgres URI (password stays in the dashboard). Alias: `SUPABASE_DB_URL`. |
 | `SUPABASE_URL` | Project URL (`https://<ref>.supabase.co`). JWT issuer is `{URL}/auth/v1`. |
 | `SUPABASE_JWT_SECRET` | Project Settings → API JWT secret (HS256). Dashboard-only (`sync: false`). |
@@ -326,6 +326,17 @@ Set these as **Environment** variables on the Web Service (not Secret Files, not
 | `SENTRY_ENVIRONMENT` | `production` on Render (also inferred when `RENDER` is set). |
 
 On the **Static Site** (`callloop-web`), set **build-time** env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL` (the API origin). Vite bakes these in at build; changing them later needs a rebuild.
+
+### Admin origin (AC-12)
+
+**Decision: shared-build, not a separate admin compile.** `idb.call-loop.com` is a second custom domain on the same `callloop-web` static site. The JS bundle is the customer app; the hostname only changes routing and chrome (land on `/admin`, hide Loop nav, no public signup). Auth is still the same Supabase Bearer JWT and `require_platform_admin` — no extra or weaker gate. A compromised customer-app bundle can still reach admin routes in that file; this is a dedicated URL, not a hardened origin boundary. A separate Vite app would be the isolation upgrade if we need one later.
+
+To finish DNS (dashboard, not this repo):
+
+1. Add custom domain `idb.call-loop.com` on the `callloop-web` static site.
+2. Point the DNS CNAME at that site.
+3. Confirm `CORS_ORIGINS` on `callloop-prodwork` includes `https://idb.call-loop.com` (blueprint `render.yaml` already lists it; dashboard env wins if it overrides).
+4. Add `https://idb.call-loop.com/**` to the Supabase Auth redirect allow list.
 
 ### Auth (CL-8)
 

@@ -3,6 +3,7 @@ import { Navigate, useLocation } from 'react-router-dom'
 import { BrandLogo } from '../components/BrandLogo'
 import { useAuth } from '../context/AuthContext'
 import { useColorMode } from '../context/ColorMode'
+import { appHomePath, isAdminHost } from '../lib/adminHost'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 
 const RESET_SENT =
@@ -12,7 +13,7 @@ export function Login() {
   const { session, loading, passwordRecovery } = useAuth()
   const { mode } = useColorMode()
   const location = useLocation()
-  const from = (location.state as { from?: string } | null)?.from || '/'
+  const from = (location.state as { from?: string } | null)?.from || appHomePath()
   const [modeForm, setModeForm] = useState<'login' | 'signup' | 'forgot'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -94,7 +95,9 @@ export function Login() {
         <p className="auth-lead">
           {!supabaseConfigured
             ? 'Supabase URL and anon key are missing in this build.'
-            : modeForm === 'forgot'
+            : isAdminHost()
+              ? 'Platform admin console. Sign in with an allowlisted account.'
+              : modeForm === 'forgot'
               ? 'Enter the email you use to log in.'
               : 'People with the same company email share a workspace. Gmail, Outlook, and similar inboxes each get their own.'}
         </p>
@@ -173,21 +176,37 @@ export function Login() {
                   : 'Send reset link'}
           </button>
         </form>
-        <button
-          type="button"
-          className="ghost-btn auth-switch"
-          onClick={() => {
-            setModeForm((m) => (m === 'signup' ? 'login' : m === 'forgot' ? 'login' : 'signup'))
-            setError('')
-            setInfo('')
-          }}
-        >
-          {modeForm === 'login'
-            ? 'Need an account? Sign up'
-            : modeForm === 'signup'
-              ? 'Already have an account? Log in'
-              : 'Back to log in'}
-        </button>
+        {isAdminHost() ? (
+          modeForm === 'forgot' ? (
+            <button
+              type="button"
+              className="ghost-btn auth-switch"
+              onClick={() => {
+                setModeForm('login')
+                setError('')
+                setInfo('')
+              }}
+            >
+              Back to log in
+            </button>
+          ) : null
+        ) : (
+          <button
+            type="button"
+            className="ghost-btn auth-switch"
+            onClick={() => {
+              setModeForm((m) => (m === 'signup' ? 'login' : m === 'forgot' ? 'login' : 'signup'))
+              setError('')
+              setInfo('')
+            }}
+          >
+            {modeForm === 'login'
+              ? 'Need an account? Sign up'
+              : modeForm === 'signup'
+                ? 'Already have an account? Log in'
+                : 'Back to log in'}
+          </button>
+        )}
       </div>
     </div>
   )

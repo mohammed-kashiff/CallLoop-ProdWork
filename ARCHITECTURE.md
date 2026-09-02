@@ -5,11 +5,10 @@
 > picking up work in this repo, read this file first — it exists so you don't
 > have to reverse-engineer the codebase from scratch.
 >
-> Last written: 2026-08-29. Since the last pass: self-serve password reset
-> (CL-29) and an admin-triggered reset that never reveals the new password
-> (AC-9), and org names are now shown in the app itself — every member sees
-> their own org's name in the sidebar (CL-31), not just admins in the
-> directory search.
+> Last written: 2026-09-02. Since the last pass: AC-10 append-only feature-flag
+> history, and AC-12 hosts the admin console at `idb.call-loop.com` as a
+> **shared-build** second origin (same SPA, host-gated UI — not a separate
+> admin compile).
 
 ---
 
@@ -53,7 +52,7 @@ of orgs/users now that real signups exist.
 | Error tracking | **Sentry** (`sentry-sdk[fastapi]`) | 5xx only, scrubbed, org-tagged |
 | Frontend | **React 19 + TypeScript + Vite** | `frontend/` |
 | Frontend auth/data client | `@supabase/supabase-js` | |
-| Hosting | **Render** | `callloop-prodwork` (API) + a static site (frontend) |
+| Hosting | **Render** | `callloop-prodwork` (API) + static site `callloop-web` (customer `call-loop.com` and admin `idb.call-loop.com`, AC-12 shared-build) |
 | CI | **GitHub Actions** | Real Postgres container; migrate → downgrade → upgrade → pytest |
 
 **External APIs this product depends on:**
@@ -239,6 +238,8 @@ sequenceDiagram
 
 **Platform-admin access is a separate, orthogonal mechanism — not a third tenant-isolation layer.** `require_platform_admin()` (`backend/auth.py`) checks the verified JWT's email against a `PLATFORM_ADMIN_EMAILS` allowlist (comma-separated env var, empty means nobody — fails closed). It has nothing to do with `org_id`, RLS, or `org_members`: being a platform admin doesn't grant cross-org data access by itself, and it's deliberately not modeled as membership in an "Admins" org, since `org_members` only allows one org per user (`UNIQUE (user_id)`) and that would collide with an admin also having their own regular account. Every `/api/admin/*` route (Admin Controls epic, `AC-` in Jira) calls this first, same inline-helper convention as `_org(request)` on regular routes.
 
+**AC-12 hosting decision (explicit):** the internal console lives at `https://idb.call-loop.com` as the **same frontend build** with a second custom domain, not a separate deployed admin app. Hostname switches routing/chrome; API auth is unchanged (`require_platform_admin`). CORS allowlists that origin (`backend.config.IDB_ORIGIN`); wildcards are rejected. This is not a hardened origin boundary — customer JS still contains the Admin page.
+
 ---
 
 ## 6. Internal API surface (`backend/api.py`)
@@ -281,7 +282,7 @@ Every route except the JustCall webhook requires a valid Supabase JWT; the webho
 ## 7. Current known gaps (keep this section honest, don't let it go stale)
 
 - Admin Controls epic (AC-2 through AC-7) is fully live: authorization gate, manual provisioning (admin-chosen org name, same-name orgs merge rather than duplicate), per-org feature flags, and the admin panel UI itself. `short_id` is sequential (100000+) by design, not random.
-- Org-name matching for provisioning (`org_id_for_name()`) is exact, case-insensitive, and trimmed — not fuzzy. "Acme Inc" and "Acme Inc." are different orgs on purpose; there's no UI yet to merge two orgs that were already accidentally split by a naming mismatch (would need a manual `UPDATE org_members SET org_id = ...` today, plus manual DELETEs of the now-empty old org's rows — done by hand at least once already). **CL-30** (add `orgs.created_via` so this class of duplicate is visible from the data instead of reconstructed from timestamps) and **AC-10** (feature-flag change history) are filed backlog for this and the adjacent "who changed what" gap below, not yet built.
+- Org-name matching for provisioning (`org_id_for_name()`) is exact, case-insensitive, and trimmed — not fuzzy. "Acme Inc" and "Acme Inc." are different orgs on purpose; there's no UI yet to merge two orgs that were already accidentally split by a naming mismatch (would need a manual `UPDATE org_members SET org_id = ...` today, plus manual DELETEs of the now-empty old org's rows — done by hand at least once already). **CL-30** (add `orgs.created_via` so this class of duplicate is visible from the data instead of reconstructed from timestamps) is still backlog. **AC-10** (feature-flag change history) is shipped (`org_features_history`, Alembic `0016`).
 - `admin_console.py`'s `search_directory()` swallows any lookup failure silently (`except Exception: return {"rows": []}`, no log line) — same class of gap `org_features.py`'s `features_for_org()` had before it got a `log.debug` line. Worth the same fix; low priority since it only affects the admin's own view, not tenant data.
 - A second platform admin is added by editing `PLATFORM_ADMIN_EMAILS` on Render — there's no self-service "add another admin" UI, and that's deliberate for now (see §5's note on why this isn't modeled as an "Admins" org).
 - `applog.py`'s secret-redaction filter is attached to the file log handler only — console/stdout output is not covered by the same filter.

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch, fmtUsd, readError } from '../lib/api'
+import { appHomePath } from '../lib/adminHost'
 import { useAuth } from '../context/AuthContext'
 
 type UsagePayload = {
@@ -91,7 +92,7 @@ export function Profile() {
     <>
       <header className="page-bar">
         <div>
-          <p className="crumb"><Link to="/">Home</Link> / Account</p>
+          <p className="crumb"><Link to={appHomePath()}>{appHomePath() === '/admin' ? 'Admin' : 'Home'}</Link> / Account</p>
           <h1>Profile</h1>
         </div>
       </header>
