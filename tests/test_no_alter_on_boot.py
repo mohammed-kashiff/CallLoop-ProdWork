@@ -196,6 +196,22 @@ def test_sixteenth_revision_org_features_history_is_append_only():
     assert "GRANT SELECT ON ORG_DIRECTORY TO CALLPROOF_APP" not in sql
 
 
+def test_seventeenth_revision_call_audit_attribution_is_nullable_fk():
+    rev = ROOT / "alembic" / "versions" / "0017_call_audit_attribution.py"
+    assert rev.is_file()
+    raw = rev.read_text(encoding="utf-8")
+    sql = raw.upper()
+    assert "ALTER TABLE CALLS" in sql
+    assert "ADD COLUMN UPLOADED_BY UUID REFERENCES ORG_MEMBERS (USER_ID)" in sql
+    assert "ALTER TABLE AUDITS" in sql
+    assert "ADD COLUMN REQUESTED_BY UUID REFERENCES ORG_MEMBERS (USER_ID)" in sql
+    assert "NOT NULL" not in sql
+    assert "CREATE INDEX IDX_CALLS_UPLOADED_BY ON CALLS (UPLOADED_BY)" in sql
+    assert "CREATE INDEX IDX_AUDITS_REQUESTED_BY ON AUDITS (REQUESTED_BY)" in sql
+    assert "bypass_rls" not in raw
+    assert "0016_org_features_history" in raw
+
+
 def test_twelfth_revision_short_id_sequence_granted_to_app():
     rev = ROOT / "alembic" / "versions" / "0012_org_members_short_id.py"
     assert rev.is_file()

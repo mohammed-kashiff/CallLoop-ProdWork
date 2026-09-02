@@ -84,8 +84,17 @@ def _call_mode(job_id: str | None) -> str:
     return "selfhosted" if (job_id or "").startswith("selfhosted_") else "pyai"
 
 
+def _member_name(row) -> str | None:
+    n = " ".join(p for p in (row.get("first_name"), row.get("last_name")) if p).strip()
+    return n or None
+
+
 def call_detail(org_id: str | None, limit: int | None = None) -> dict:
     """Org call volume, audit coverage, and which engine ran each call (AC-13).
+
+    Also surfaces who uploaded each call and who last requested its audit
+    (AC-14) — both resolved to a display name via org_members, since email
+    lives outside this app's normal role (Supabase auth, not org_members).
 
     Counts are true totals (COUNT(*)/COUNT(DISTINCT)), not capped by the
     per-call listing's limit, which stays reasonable for a single JSON
@@ -106,7 +115,7 @@ def call_detail(org_id: str | None, limit: int | None = None) -> dict:
             ).fetchone()
             call_rows = conn.execute(
                 """
-                SELECT id, filename, job_id, created_at, audio_seconds
+                SELECT id, filename, job_id, created_at, audio_seconds, uploaded_by
                 FROM calls
                 WHERE org_id = %s
                 ORDER BY created_at DESC
@@ -117,11 +126,32 @@ def call_detail(org_id: str | None, limit: int | None = None) -> dict:
             audited_ids = conn.execute(
                 "SELECT DISTINCT call_id FROM audits WHERE org_id = %s", (oid,),
             ).fetchall()
+            requester_rows = conn.execute(
+                """
+                SELECT DISTINCT ON (call_id) call_id, requested_by
+                FROM audits
+                WHERE org_id = %s
+                ORDER BY call_id, created_at DESC
+                """,
+                (oid,),
+            ).fetchall()
+            member_rows = conn.execute(
+                "SELECT user_id, first_name, last_name FROM org_members WHERE org_id = %s",
+                (oid,),
+            ).fetchall()
     audited = {int(r["call_id"]) for r in audited_ids or [] if r.get("call_id") is not None}
+    requested_by_call = {
+        int(r["call_id"]): r.get("requested_by")
+        for r in requester_rows or []
+        if r.get("call_id") is not None and r.get("requested_by") is not None
+    }
+    names = {str(r["user_id"]): _member_name(r) for r in member_rows or [] if r.get("user_id")}
     total_calls = int((total_row or {}).get("n") or 0)
     calls = []
     for row in call_rows or []:
         call_id = int(row["id"])
+        uploaded_by = row.get("uploaded_by")
+        requested_by = requested_by_call.get(call_id)
         calls.append(
             {
                 "call_id": call_id,
@@ -130,6 +160,8 @@ def call_detail(org_id: str | None, limit: int | None = None) -> dict:
                 "audio_seconds": row.get("audio_seconds"),
                 "mode": _call_mode(row.get("job_id")),
                 "audited": call_id in audited,
+                "uploaded_by": names.get(str(uploaded_by)) if uploaded_by else None,
+                "requested_by": names.get(str(requested_by)) if requested_by else None,
             }
         )
     return {

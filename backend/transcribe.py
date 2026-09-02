@@ -792,7 +792,7 @@ def normalize_hear_result(result: dict) -> dict:
 
 def save_transcript(
     conn, identity, job_id, result, pyai_call_id=None, filename=None,
-    source=None, external_id=None, *, org_id: str,
+    source=None, external_id=None, *, org_id: str, uploaded_by: str | None = None,
 ):
     result = normalize_hear_result(result)
     segments = result.get("segments") or []
@@ -805,9 +805,9 @@ def save_transcript(
         """
         INSERT INTO calls (
             org_id, audio_url, job_id, status, full_text, speakers, audio_seconds,
-            raw_json, pyai_call_id, filename, source, external_id
+            raw_json, pyai_call_id, filename, source, external_id, uploaded_by
         )
-        VALUES (%s, %s, %s, 'completed', %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, 'completed', %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -822,6 +822,7 @@ def save_transcript(
             safe_name,
             source,
             str(external_id) if external_id is not None else None,
+            uploaded_by,
         ),
     ).fetchone()
     call_id = int(row["id"])

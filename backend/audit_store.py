@@ -196,10 +196,14 @@ def upsert_audit(
     org_id: str = DEFAULT_ORG_ID,
     rubric_id: str = DEFAULT_RUBRIC_ID,
     rubric_version: int = LEGACY_RUBRIC_VERSION,
+    requested_by: str | None = None,
 ) -> str:
     """INSERT ... ON CONFLICT (call_id, rubric_id, rubric_version) DO UPDATE.
 
     Same rubric version retries one row. A different rubric_id persists both.
+    requested_by only overwrites on conflict when a real actor is passed (an
+    incidental cache-read recompute with no request context must not erase a
+    previously recorded attribution).
     """
     audit_id = str(uuid.uuid4())
     score = findings.get("score") if isinstance(findings, dict) else None
@@ -209,13 +213,14 @@ def upsert_audit(
         """
         INSERT INTO audits (
             id, org_id, call_id, rubric_id, rubric_version,
-            engine_version, score, findings, created_at
+            engine_version, score, findings, requested_by, created_at
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())
         ON CONFLICT (call_id, rubric_id, rubric_version) DO UPDATE SET
             engine_version = excluded.engine_version,
             score = excluded.score,
-            findings = excluded.findings
+            findings = excluded.findings,
+            requested_by = COALESCE(excluded.requested_by, audits.requested_by)
         """,
         (
             audit_id,
@@ -226,6 +231,7 @@ def upsert_audit(
             engine_version,
             score,
             Json(findings),
+            requested_by,
         ),
     )
     return audit_id

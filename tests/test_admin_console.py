@@ -210,11 +210,13 @@ class _Result:
 
 
 class _DetailFakeConn:
-    """Answers exactly the four queries call_detail() issues, org-scoped."""
+    """Answers exactly the queries call_detail() issues, org-scoped."""
 
-    def __init__(self, calls, audited_call_ids):
+    def __init__(self, calls, audited_call_ids, requesters=None, members=None):
         self.calls = calls
         self.audited_call_ids = audited_call_ids
+        self.requesters = requesters or []  # (org_id, call_id, requested_by, created_at)
+        self.members = members or []  # (org_id, user_id, first_name, last_name)
         self.seen_org_ids: list[str] = []
 
     def execute(self, sql, params=None):
@@ -227,8 +229,26 @@ class _DetailFakeConn:
             return _Result([{"n": len(rows_for_org)}])
         if "COUNT(DISTINCT CALL_ID) AS N FROM AUDITS" in norm:
             return _Result([{"n": len({a[1] for a in audited_for_org})}])
+        if "DISTINCT ON (CALL_ID) CALL_ID, REQUESTED_BY" in norm:
+            for_org = [r for r in self.requesters if r[0] == oid]
+            latest: dict[int, tuple] = {}
+            for org_id, call_id, requested_by, created_at in sorted(
+                for_org, key=lambda r: r[3]
+            ):
+                latest[call_id] = (requested_by, created_at)
+            return _Result(
+                [{"call_id": cid, "requested_by": v[0]} for cid, v in latest.items()]
+            )
         if "SELECT DISTINCT CALL_ID FROM AUDITS" in norm:
             return _Result([{"call_id": a[1]} for a in audited_for_org])
+        if "SELECT USER_ID, FIRST_NAME, LAST_NAME FROM ORG_MEMBERS" in norm:
+            return _Result(
+                [
+                    {"user_id": m[1], "first_name": m[2], "last_name": m[3]}
+                    for m in self.members
+                    if m[0] == oid
+                ]
+            )
         if "FROM CALLS" in norm and "ORDER BY CREATED_AT" in norm:
             limit = params[1] if len(params) > 1 else len(rows_for_org)
             ordered = sorted(rows_for_org, key=lambda c: c["created_at"], reverse=True)
@@ -274,6 +294,39 @@ def test_call_detail_counts_mode_and_audited_are_org_scoped(monkeypatch):
     assert by_id[2]["audited"] is True
     assert 3 not in by_id
     assert all(oid == ORG_A for oid in conn.seen_org_ids)
+
+
+def test_call_detail_resolves_uploaded_by_and_requested_by_to_names(monkeypatch):
+    from backend.admin_console import call_detail
+
+    ada = str(uuid.uuid4())
+    ben = str(uuid.uuid4())
+    other_org_user = str(uuid.uuid4())
+    calls = [
+        {"id": 1, "org_id": ORG_A, "filename": "a1.mp3", "job_id": "job_abc",
+         "created_at": "2026-01-01", "audio_seconds": 90, "uploaded_by": ada},
+        {"id": 2, "org_id": ORG_A, "filename": "a2.mp3", "job_id": "job_def",
+         "created_at": "2026-01-02", "audio_seconds": 60, "uploaded_by": None},
+    ]
+    # call 1 audited twice; the later request (by Ben) must win, not the first (Ada).
+    requesters = [
+        (ORG_A, 1, ada, "2026-01-01T00:00:00Z"),
+        (ORG_A, 1, ben, "2026-01-01T01:00:00Z"),
+    ]
+    members = [
+        (ORG_A, ada, "Ada", "Lovelace"),
+        (ORG_A, ben, "Ben", "Franklin"),
+        (ORG_B, other_org_user, "Other", "Org"),
+    ]
+    conn = _DetailFakeConn(calls, [(ORG_A, 1)], requesters, members)
+    with _fake_detail_db(monkeypatch, conn):
+        out = call_detail(ORG_A)
+
+    by_id = {c["call_id"]: c for c in out["calls"]}
+    assert by_id[1]["uploaded_by"] == "Ada Lovelace"
+    assert by_id[1]["requested_by"] == "Ben Franklin"
+    assert by_id[2]["uploaded_by"] is None
+    assert by_id[2]["requested_by"] is None
 
 
 def test_call_detail_route_is_gated_and_org_scoped(monkeypatch):

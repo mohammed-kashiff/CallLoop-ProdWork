@@ -48,6 +48,8 @@ type OrgCallRow = {
   audio_seconds: number | null
   mode: 'pyai' | 'selfhosted'
   audited: boolean
+  uploaded_by: string | null
+  requested_by: string | null
 }
 
 type OrgDetailPayload = {
@@ -477,6 +479,8 @@ export function Admin() {
                             <th>Length</th>
                             <th>Engine</th>
                             <th>Audited</th>
+                            <th>Uploaded by</th>
+                            <th>Requested by</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -491,6 +495,8 @@ export function Admin() {
                               </td>
                               <td>{c.mode === 'selfhosted' ? 'Self-hosted' : 'PyAI'}</td>
                               <td>{c.audited ? 'Yes' : 'No'}</td>
+                              <td>{c.uploaded_by || '—'}</td>
+                              <td>{c.requested_by || '—'}</td>
                             </tr>
                           ))}
                         </tbody>

@@ -608,10 +608,14 @@ def analyze_call(call_id, org_id: str, agent_override=None):
     }
 
 
-def _load_or_compute_audit(call_id: int, org_id: str, refresh: bool = False):
+def _load_or_compute_audit(
+    call_id: int, org_id: str, refresh: bool = False, requested_by: str | None = None,
+):
     """Return (audit_dict, rubric_hash). Computes and caches on miss/refresh.
 
-    Read mode: latest-per-rubric (default legacy v8).
+    Read mode: latest-per-rubric (default legacy v8). requested_by attributes
+    the write on an actual recompute (cache miss or refresh); a cache hit
+    never writes, so it never needs one.
     """
     rh = _rubric_hash()
     prev = None
@@ -646,6 +650,7 @@ def _load_or_compute_audit(call_id: int, org_id: str, refresh: bool = False):
                 findings=audit,
                 engine_version=rh,
                 org_id=org_id,
+                requested_by=requested_by,
             )
     return audit, rh
 
@@ -1637,7 +1642,10 @@ def get_audit(call_id: int, request: Request, refresh: bool = False):
     else:
         applog.event(log, "audit_cache", result="BYPASS", call_id=call_id)
         log.info("cache BYPASS (refresh) call %d - computing fresh audit", call_id)
-    audit, _rh = _load_or_compute_audit(call_id, org_id, refresh=True)
+    audit, _rh = _load_or_compute_audit(
+        call_id, org_id, refresh=True,
+        requested_by=getattr(request.state, "user_id", None),
+    )
     log.info("cached audit for call %d (score %s)", call_id, audit["score"])
     return _attach_filename(
         _hydrate_audit_segments(audit, call_id, org_id), call_id, org_id,
@@ -1883,6 +1891,7 @@ def _ingest_audio_file(
     identity: str | None = None,
     source: str | None = None,
     external_id: str | None = None,
+    uploaded_by: str | None = None,
 ) -> tuple[int, bool]:
     """
     Dedup or transcribe one local audio file. Hear temp is unique per src_path.
@@ -1950,6 +1959,7 @@ def _ingest_audio_file(
                         source=source,
                         external_id=external_id,
                         org_id=org_id,
+                        uploaded_by=uploaded_by,
                     )
                 except db.IntegrityError:
                     conn.rollback()
@@ -2480,7 +2490,10 @@ def retranscribe_call(call_id: int, request: Request):
                             conn, call_id, job_id, result,
                             pyai_call_id=pyai_id, org_id=org_id,
                         )
-                audit, _rh = _load_or_compute_audit(call_id, org_id, refresh=True)
+                audit, _rh = _load_or_compute_audit(
+                    call_id, org_id, refresh=True,
+                    requested_by=getattr(request.state, "user_id", None),
+                )
                 applog.event(
                     log, "retranscribe_completed",
                     call_id=call_id, mode=mode, job_id=job_id,
@@ -2548,9 +2561,12 @@ def upload(request: Request, file: UploadFile = File(...)):
 
     source_name = transcribe.sanitize_filename(file.filename)
     org_id = _org(request)
+    uploaded_by = getattr(request.state, "user_id", None)
 
     try:
-        call_id, _deduped = _ingest_audio_file(tmp, source_name, org_id=org_id)
+        call_id, _deduped = _ingest_audio_file(
+            tmp, source_name, org_id=org_id, uploaded_by=uploaded_by,
+        )
         _store_playback(tmp, call_id, org_id)
     except HTTPException:
         raise
@@ -2607,6 +2623,7 @@ def upload_batch(request: Request, file: UploadFile = File(...)):
         log.info("batch %s: %d file(s), parallel transcribe then parallel QA", batch_id, len(extracted))
 
         org_id = _org(request)
+        uploaded_by = getattr(request.state, "user_id", None)
         ingest_rows = [None] * len(extracted)
 
         def ingest_one(item):
@@ -2614,6 +2631,7 @@ def upload_batch(request: Request, file: UploadFile = File(...)):
                 with org_scope(org_id):
                     call_id, deduped = _ingest_audio_file(
                         item["path"], item["filename"], org_id=org_id,
+                        uploaded_by=uploaded_by,
                     )
                 _store_playback(item["path"], call_id, org_id)
                 return {
@@ -2651,7 +2669,9 @@ def upload_batch(request: Request, file: UploadFile = File(...)):
         def audit_one(row):
             try:
                 with org_scope(org_id):
-                    audit, _rh = _load_or_compute_audit(row["call_id"], org_id, refresh=False)
+                    audit, _rh = _load_or_compute_audit(
+                        row["call_id"], org_id, refresh=False, requested_by=uploaded_by,
+                    )
                 return {
                     **row,
                     "status": "ok",
