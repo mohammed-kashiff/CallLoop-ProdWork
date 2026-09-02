@@ -6,7 +6,13 @@ from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
 
-from backend.org_features import FEATURE_KEYS, default_features, features_for_org, set_feature
+from backend.org_features import (
+    FEATURE_KEYS,
+    default_features,
+    feature_history,
+    features_for_org,
+    set_feature,
+)
 from backend.org_ids import DEFAULT_ORG_ID
 from backend.paths import ROOT
 from tests.conftest import authorize
@@ -30,10 +36,25 @@ class _FakeConn:
         self.rows = list(rows or [])
         self.sql: list[str] = []
         self.inserts: list = []
+        self.history: list = []
+        self.history_rows: list = []
 
     def execute(self, sql, params=None):
         self.sql.append(" ".join(str(sql).split()))
         norm = self.sql[-1].upper()
+        if "INSERT INTO ORG_FEATURES_HISTORY" in norm:
+            self.history.append(params)
+            self.history_rows.append(
+                {
+                    "org_id": params[0],
+                    "feature_key": params[1],
+                    "enabled": params[2],
+                    "changed_by": params[3],
+                    "changed_at": len(self.history_rows),
+                    "id": len(self.history_rows),
+                }
+            )
+            return _Result([])
         if "INSERT INTO ORG_FEATURES" in norm:
             self.inserts.append(params)
             oid, key, enabled = params[0], params[1], params[2]
@@ -44,6 +65,16 @@ class _FakeConn:
             ]
             self.rows.append({"org_id": oid, "feature_key": key, "enabled": enabled})
             return _Result([])
+        if "FROM ORG_FEATURES_HISTORY" in norm:
+            oid = params[0] if params else None
+            key = params[1] if params and len(params) > 1 else None
+            matched = [
+                r
+                for r in self.history_rows
+                if r.get("org_id") == oid and r.get("feature_key") == key
+            ]
+            matched.sort(key=lambda r: (r.get("changed_at"), r.get("id")))
+            return _Result(matched)
         if "FROM ORG_FEATURES" in norm:
             oid = params[0] if params else None
             return _Result([r for r in self.rows if r.get("org_id") == oid])
@@ -160,11 +191,17 @@ def test_upsert_writes_one_row_for_target_org_only(monkeypatch):
         ]
     )
     with _fake_db(monkeypatch, conn):
-        flags = set_feature(DEFAULT_ORG_ID, "show_usage_bar", False)
+        flags = set_feature(
+            DEFAULT_ORG_ID, "show_usage_bar", False, changed_by="Ada@Example.com",
+        )
     assert len(conn.inserts) == 1
     assert conn.inserts[0][0] == DEFAULT_ORG_ID
     assert conn.inserts[0][1] == "show_usage_bar"
     assert conn.inserts[0][2] is False
+    assert len(conn.history) == 1
+    assert conn.history[0] == (
+        DEFAULT_ORG_ID, "show_usage_bar", False, "ada@example.com",
+    )
     assert flags["show_usage_bar"] is False
     other = [r for r in conn.rows if r["org_id"] == OTHER_ORG]
     assert other == [
@@ -203,5 +240,34 @@ def test_org_features_module_does_not_bypass_or_touch_directory():
     src = (ROOT / "backend" / "org_features.py").read_text(encoding="utf-8")
     assert "bypass_rls=True" not in src
     assert "org_directory" not in src
+    assert "UPDATE org_features_history" not in src.lower().replace("\n", " ")
+    assert "DELETE FROM org_features_history" not in src.upper()
     api = (ROOT / "backend" / "api.py").read_text(encoding="utf-8")
     assert "org_directory" not in api
+
+
+def test_two_toggles_append_two_history_rows_in_order(monkeypatch):
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        set_feature(DEFAULT_ORG_ID, "show_usage_bar", False, changed_by="a@x.com")
+        set_feature(DEFAULT_ORG_ID, "show_usage_bar", True, changed_by="b@x.com")
+        rows = feature_history(DEFAULT_ORG_ID, "show_usage_bar")
+    assert [r["enabled"] for r in rows] == [False, True]
+    assert [r["changed_by"] for r in rows] == ["a@x.com", "b@x.com"]
+    assert len(conn.history) == 2
+    assert conn.history[0] is not conn.history[1]
+
+
+def test_set_feature_requires_changed_by(monkeypatch):
+    from fastapi import HTTPException
+
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        try:
+            set_feature(DEFAULT_ORG_ID, "show_usage_bar", False, changed_by="  ")
+        except HTTPException as e:
+            assert e.status_code == 400
+        else:
+            raise AssertionError("expected HTTPException")
+    assert conn.history == []
+    assert conn.inserts == []

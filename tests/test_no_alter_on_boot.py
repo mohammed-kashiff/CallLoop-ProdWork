@@ -173,6 +173,29 @@ def test_fifteenth_revision_org_id_for_name_excludes_default_org():
     assert "0014_org_features_write" in raw
 
 
+def test_sixteenth_revision_org_features_history_is_append_only():
+    rev = ROOT / "alembic" / "versions" / "0016_org_features_history.py"
+    assert rev.is_file()
+    raw = rev.read_text(encoding="utf-8")
+    sql = raw.upper()
+    assert "CREATE TABLE ORG_FEATURES_HISTORY" in sql
+    assert "CHANGED_BY TEXT NOT NULL" in sql
+    assert "CHANGED_AT TIMESTAMPTZ NOT NULL DEFAULT NOW()" in sql
+    assert "REFERENCES ORGS" in sql
+    assert "ENABLE ROW LEVEL SECURITY" in sql
+    assert "CREATE POLICY ORG_FEATURES_HISTORY_SELECT" in sql
+    assert "CREATE POLICY ORG_FEATURES_HISTORY_INSERT" in sql
+    assert "CREATE POLICY ORG_FEATURES_HISTORY_UPDATE" not in sql
+    assert "CREATE POLICY ORG_FEATURES_HISTORY_DELETE" not in sql
+    assert "GRANT SELECT, INSERT ON ORG_FEATURES_HISTORY TO CALLPROOF_APP" in sql
+    assert "GRANT UPDATE" not in sql
+    assert "GRANT DELETE" not in sql
+    assert "CALLPROOF_CURRENT_ORG_ID()" in sql
+    assert "bypass_rls" not in raw
+    assert "0015_org_id_for_name" in raw
+    assert "GRANT SELECT ON ORG_DIRECTORY TO CALLPROOF_APP" not in sql
+
+
 def test_twelfth_revision_short_id_sequence_granted_to_app():
     rev = ROOT / "alembic" / "versions" / "0012_org_members_short_id.py"
     assert rev.is_file()

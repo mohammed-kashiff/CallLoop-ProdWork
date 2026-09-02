@@ -17,6 +17,7 @@ import logging
 
 from fastapi import HTTPException
 
+from . import applog
 from . import db
 from .org_ids import parse_org_id
 
@@ -68,14 +69,20 @@ def features_for_org(org_id: str) -> dict[str, bool]:
     return flags
 
 
-def set_feature(org_id: str, feature_key: str, enabled: bool) -> dict[str, bool]:
-    """Upsert one flag for the target org. Caller must already be a platform admin."""
+def set_feature(
+    org_id: str, feature_key: str, enabled: bool, *, changed_by: str,
+) -> dict[str, bool]:
+    """Upsert one flag and append a history row. Caller must already be a platform admin."""
     oid = parse_org_id(org_id)
     key = (feature_key or "").strip()
+    actor = (changed_by or "").strip().lower()
     if not oid:
         raise HTTPException(status_code=400, detail="org_id is required.")
     if key not in FEATURE_KEYS:
         raise HTTPException(status_code=400, detail="Unknown feature_key.")
+    if not actor or len(actor) > 254:
+        raise HTTPException(status_code=400, detail="changed_by is required.")
+    on = bool(enabled)
     with db.connection() as conn:
         db.apply_tenant_gucs(conn, org_id=oid)
         conn.execute(
@@ -85,6 +92,53 @@ def set_feature(org_id: str, feature_key: str, enabled: bool) -> dict[str, bool]
             ON CONFLICT (org_id, feature_key) DO UPDATE
             SET enabled = EXCLUDED.enabled, updated_at = now()
             """,
-            (oid, key, bool(enabled)),
+            (oid, key, on),
         )
+        conn.execute(
+            """
+            INSERT INTO org_features_history (
+                org_id, feature_key, enabled, changed_by
+            )
+            VALUES (%s, %s, %s, %s)
+            """,
+            (oid, key, on, actor),
+        )
+    applog.event(
+        log, "org_feature_changed",
+        org_id=oid,
+        feature_key=key,
+        enabled=on,
+        changed_by=actor,
+    )
     return features_for_org(oid)
+
+
+def feature_history(org_id: str, feature_key: str) -> list[dict]:
+    """Chronological flag changes for this org+key. Empty if the org id is invalid."""
+    oid = parse_org_id(org_id)
+    key = (feature_key or "").strip()
+    if not oid or not key:
+        return []
+    with db.connection() as conn:
+        db.apply_tenant_gucs(conn, org_id=oid)
+        rows = conn.execute(
+            """
+            SELECT org_id, feature_key, enabled, changed_by, changed_at
+            FROM org_features_history
+            WHERE org_id = %s AND feature_key = %s
+            ORDER BY changed_at ASC, id ASC
+            """,
+            (oid, key),
+        ).fetchall()
+    out: list[dict] = []
+    for row in rows or []:
+        out.append(
+            {
+                "org_id": str(row.get("org_id") or ""),
+                "feature_key": str(row.get("feature_key") or ""),
+                "enabled": bool(row.get("enabled")),
+                "changed_by": str(row.get("changed_by") or ""),
+                "changed_at": row.get("changed_at"),
+            }
+        )
+    return out

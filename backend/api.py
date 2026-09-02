@@ -290,7 +290,12 @@ def admin_usage(request: Request, org_id: str | None = None):
 @app.post("/api/admin/features")
 def admin_features(request: Request, body: AdminFeatureBody):
     auth.require_platform_admin(request)
-    return admin_console.set_feature(body.org_id, body.feature_key, body.enabled)
+    return admin_console.set_feature(
+        body.org_id,
+        body.feature_key,
+        body.enabled,
+        changed_by=getattr(request.state, "email", None) or "",
+    )
 
 
 class AdminPasswordResetLogBody(BaseModel):

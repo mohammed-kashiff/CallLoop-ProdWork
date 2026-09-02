@@ -94,8 +94,8 @@ def test_toggle_does_not_call_usage_for_other_org(monkeypatch):
     monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
     wrote: list[tuple] = []
 
-    def _set(org_id, feature_key, enabled):
-        wrote.append((org_id, feature_key, enabled))
+    def _set(org_id, feature_key, enabled, *, changed_by):
+        wrote.append((org_id, feature_key, enabled, changed_by))
         return {"show_usage_bar": False}
 
     monkeypatch.setattr("backend.admin_console.org_features.set_feature", _set)
@@ -105,7 +105,7 @@ def test_toggle_does_not_call_usage_for_other_org(monkeypatch):
     authorize(client, monkeypatch)
     r = client.post("/api/admin/features", json=_BODY)
     assert r.status_code == 200
-    assert wrote == [(ORG_A, "show_usage_bar", False)]
+    assert wrote == [(ORG_A, "show_usage_bar", False, "tester@example.com")]
 
 
 def test_directory_search_is_gated_and_forwards_q(monkeypatch):
@@ -135,6 +135,15 @@ def test_admin_console_does_not_bypass_rls():
     assert "admin_search_directory" in rev
     assert "SECURITY DEFINER" in rev
     assert "CREATE POLICY org_features_insert" in rev
+    hist = (ROOT / "alembic" / "versions" / "0016_org_features_history.py").read_text(
+        encoding="utf-8"
+    )
+    assert "bypass_rls" not in hist
+    assert "GRANT SELECT, INSERT ON org_features_history TO callproof_app" in hist
+    assert "GRANT SELECT ON org_directory TO callproof_app" not in hist.lower()
+    assert "CREATE POLICY org_features_history_insert" in hist
+    assert "CREATE POLICY org_features_history_update" not in hist
+    assert "CREATE POLICY org_features_history_delete" not in hist
     assert uuid.UUID(ORG_A)
 
 

@@ -66,6 +66,10 @@ def usage_for_org(org_id: str | None) -> dict:
     }
 
 
-def set_feature(org_id: str | None, feature_key: str, enabled: bool) -> dict:
-    flags = org_features.set_feature(org_id or "", feature_key, enabled)
+def set_feature(
+    org_id: str | None, feature_key: str, enabled: bool, *, changed_by: str,
+) -> dict:
+    flags = org_features.set_feature(
+        org_id or "", feature_key, enabled, changed_by=changed_by,
+    )
     return {"org_id": parse_org_id(org_id), "features": flags}
