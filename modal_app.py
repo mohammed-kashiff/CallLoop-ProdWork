@@ -53,7 +53,7 @@ image = (
     gpu="T4",
     secrets=[hf_secret],
     timeout=1800,
-    scaledown_window=300,
+    scaledown_window=60,
 )
 @modal.concurrent(max_inputs=1)
 @modal.asgi_app()
