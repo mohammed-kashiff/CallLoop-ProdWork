@@ -54,8 +54,9 @@ def set_api_key(api_key: str):
     ANTHROPIC_API_KEY = key
     os.environ["ANTHROPIC_API_KEY"] = key
 CLAUDE_EFFORT = "high"
-# hybrid: channel/greeting roles; Claude for resolution + churn (parallel).
-#         Tone LLM, ownership step-2, and first-load feedback stay skipped.
+# hybrid: greeting/channel roles; Claude only when those cues tie.
+#         Claude for resolution + churn (parallel). Tone LLM, ownership step-2,
+#         and first-load feedback stay skipped.
 # full: same roles, plus tone LLM, ownership step-2 LLM, churn.
 # Feedback is on-demand (Areas of Improvement), not part of the first-load wave.
 _raw_mode = (os.getenv("AUDIT_MODE") or "hybrid").strip().lower()
@@ -176,7 +177,11 @@ def _cue_score(text: str) -> int:
     for cue in _AGENT_CUES:
         if cue in t:
             score += 2
+    # "I'm calling from <company>" is an agent intro. Do not also fire "i'm calling".
+    skip_im_calling = "calling from" in t
     for cue in _CUSTOMER_CUES:
+        if skip_im_calling and cue in ("i'm calling", "i am calling", "i was calling"):
+            continue
         if cue in t:
             score -= 2
     return score
@@ -191,24 +196,77 @@ def _channel_int(value):
         return None
 
 
-def classify_roles(segments):
-    """Identify the AGENT without Claude.
+def _speaker_of(seg) -> str | None:
+    sp = seg.get("speaker")
+    if sp is not None and str(sp).strip() != "":
+        return sp
+    ch = _channel_int(seg.get("channel"))
+    if ch is None:
+        return None
+    return f"speaker_{ch + 1}"
 
-    Prefer greeting/company cues in the opening turns. If those tie, use Hear
-    channel (lower channel index = agent, typical left/agent dual-channel).
+
+def _claude_classify_agent(speakers: list, window: list) -> str | None:
+    """Ask Claude which anonymous speaker is the company agent. Transcript is not logged."""
+    if not ANTHROPIC_API_KEY or len(speakers) < 2:
+        return None
+    lines = []
+    for s in window:
+        sp = _speaker_of(s)
+        if sp not in speakers:
+            continue
+        text = str(s.get("text") or "").strip()
+        if not text:
+            continue
+        lines.append(f"{sp}: {text}")
+    if len(lines) < 2:
+        return None
+    allowed = ", ".join(str(sp) for sp in speakers)
+    prompt = (
+        "Identify which speaker is the company agent/rep (sales, support, or "
+        "an AI agent for the company) versus the customer/prospect.\n"
+        "The labels are anonymous (speaker_1, speaker_2, …).\n"
+        "The agent represents the company. The customer is the other party.\n"
+        "Outbound openers like \"I'm calling from <company>\" are the agent, "
+        "even if the other person said hello first.\n\n"
+        "OPENING TURNS:\n"
+        + "\n".join(lines)
+        + "\n\nReturn ONLY this JSON object:\n"
+        '{"agent_speaker": "<one speaker id>"}\n'
+        f"agent_speaker MUST be one of: {allowed}"
+    )
+    try:
+        raw = call_claude(prompt, max_tokens=80, timeout=30, effort="low")
+        parsed = parse_json(raw)
+    except Exception as e:  # noqa: BLE001
+        applog.event(
+            log, "role_classified",
+            method="claude_failed", error=applog.safe_exception_text(e),
+        )
+        return None
+    wanted = str((parsed or {}).get("agent_speaker") or "").strip().lower()
+    lookup = {str(sp).strip().lower(): sp for sp in speakers}
+    agent = lookup.get(wanted)
+    if not agent:
+        applog.event(log, "role_classified", method="claude_invalid")
+        return None
+    return agent
+
+
+def classify_roles(segments):
+    """Identify the AGENT.
+
+    Prefer greeting/company cues in the opening turns. "I'm calling from
+    <company>" counts as agent, not as the customer cue "i'm calling". If those
+    still tie, use Hear channel (lower index = agent). If still tied, ask Claude.
     Last resort: first speaker.
     """
     if not segments:
         return None
     speakers = []
     for s in segments:
-        sp = s.get("speaker")
-        if sp is None or str(sp).strip() == "":
-            ch = _channel_int(s.get("channel"))
-            if ch is None:
-                continue
-            sp = f"speaker_{ch + 1}"
-        if sp not in speakers:
+        sp = _speaker_of(s)
+        if sp and sp not in speakers:
             speakers.append(sp)
     if len(speakers) < 2:
         agent = speakers[0] if speakers else identify_agent(segments)
@@ -216,20 +274,11 @@ def classify_roles(segments):
         log.info("role classification: agent = %s (single speaker)", agent)
         return agent
 
-    window = [
-        s for s in segments[:15]
-        if (
-            (s.get("speaker") is not None and str(s.get("speaker")).strip() != "")
-            or _channel_int(s.get("channel")) is not None
-        )
-    ]
+    window = [s for s in segments[:15] if _speaker_of(s)]
     scores = {sp: 0 for sp in speakers}
     channel_of = {sp: [] for sp in speakers}
     for s in window:
-        sp = s.get("speaker")
-        if sp is None or str(sp).strip() == "":
-            ch = _channel_int(s.get("channel"))
-            sp = f"speaker_{ch + 1}" if ch is not None else None
+        sp = _speaker_of(s)
         if sp is None:
             continue
         scores[sp] = scores.get(sp, 0) + _cue_score(s.get("text") or "")
@@ -264,6 +313,12 @@ def classify_roles(segments):
             agent, mode_ch[agent],
         )
         return agent
+
+    claude_agent = _claude_classify_agent(speakers, window)
+    if claude_agent:
+        applog.event(log, "role_classified", method="claude", agent=claude_agent)
+        log.info("role classification: agent = %s (claude tie-break)", claude_agent)
+        return claude_agent
 
     agent = identify_agent(segments)
     applog.event(log, "role_classified", method="first_speaker", agent=agent)
