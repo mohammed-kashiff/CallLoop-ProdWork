@@ -49,6 +49,10 @@ def test_non_admin_gets_403_on_all_admin_reads_and_writes(monkeypatch):
     authorize(client, monkeypatch)
     assert client.get("/api/admin/directory", params={"q": "ada"}).status_code == 403
     assert client.get("/api/admin/usage", params={"org_id": ORG_A}).status_code == 403
+    assert client.get(
+        "/api/admin/activity",
+        params={"org_id": ORG_A, "since": "2026-01-01", "until": "2026-01-31"},
+    ).status_code == 403
     assert client.post("/api/admin/features", json=_BODY).status_code == 403
     assert (
         client.post(
@@ -373,3 +377,151 @@ def test_log_password_reset_route_does_not_call_supabase_admin():
     assert "resetpassword" not in region
     assert "generate_link" not in region
     assert "httpx" not in region
+
+
+class _ActivityFakeConn:
+    """Answers activity() queries, filtering by org_id and the date window."""
+
+    def __init__(self, *, shorts=None, calls=None, audits=None, flags=None, members=None):
+        self.shorts = shorts or {}  # short_id -> org_id
+        self.calls = calls or []
+        self.audits = audits or []
+        self.flags = flags or []
+        self.members = members or []
+        self.seen_org_ids: list[str] = []
+
+    def execute(self, sql, params=None):
+        norm = " ".join(str(sql).split()).upper()
+        if "FROM ORG_MEMBERS WHERE SHORT_ID" in norm:
+            sid = params[0] if params else None
+            oid = self.shorts.get(int(sid)) if sid is not None else None
+            return _Result([{"org_id": oid}] if oid else [])
+        oid = params[0] if params else None
+        start = params[1] if params and len(params) > 1 else None
+        stop = params[2] if params and len(params) > 2 else None
+        self.seen_org_ids.append(oid)
+
+        def in_window(ts):
+            if start is None or stop is None:
+                return True
+            return start <= ts < stop
+
+        if "FROM CALLS" in norm and "CREATED_AT >=" in norm:
+            rows = [
+                c for c in self.calls
+                if c["org_id"] == oid and in_window(c["created_at"])
+            ]
+            return _Result(rows)
+        if "FROM AUDITS" in norm and "CREATED_AT >=" in norm:
+            rows = [
+                a for a in self.audits
+                if a["org_id"] == oid and in_window(a["created_at"])
+            ]
+            return _Result(rows)
+        if "FROM ORG_FEATURES_HISTORY" in norm:
+            rows = [
+                f for f in self.flags
+                if f["org_id"] == oid and in_window(f["changed_at"])
+            ]
+            return _Result(rows)
+        if "FROM ORG_MEMBERS WHERE ORG_ID" in norm:
+            return _Result(
+                [
+                    {"user_id": m[1], "first_name": m[2], "last_name": m[3]}
+                    for m in self.members
+                    if m[0] == oid
+                ]
+            )
+        raise AssertionError(f"unexpected query: {norm}")
+
+
+def test_activity_never_returns_another_org_and_applies_dates(monkeypatch):
+    from datetime import datetime, timezone
+
+    from backend.admin_console import activity
+
+    t_in = datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc)
+    t_out = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
+    uid = "11111111-1111-4111-8111-111111111111"
+    conn = _ActivityFakeConn(
+        calls=[
+            {"id": 1, "org_id": ORG_A, "filename": "a.mp3", "created_at": t_in,
+             "uploaded_by": uid},
+            {"id": 2, "org_id": ORG_A, "filename": "late.mp3", "created_at": t_out,
+             "uploaded_by": uid},
+            {"id": 3, "org_id": ORG_B, "filename": "b.mp3", "created_at": t_in,
+             "uploaded_by": uid},
+        ],
+        audits=[
+            {"id": "aud-a", "org_id": ORG_A, "call_id": 1, "created_at": t_in,
+             "requested_by": uid},
+            {"id": "aud-b", "org_id": ORG_B, "call_id": 3, "created_at": t_in,
+             "requested_by": uid},
+        ],
+        flags=[
+            {"org_id": ORG_A, "feature_key": "show_usage_bar", "enabled": False,
+             "changed_by": "ada@x.com", "changed_at": t_in},
+            {"org_id": ORG_B, "feature_key": "show_usage_bar", "enabled": True,
+             "changed_by": "bob@x.com", "changed_at": t_in},
+        ],
+        members=[(ORG_A, uid, "Ada", "Admin")],
+    )
+    with _fake_detail_db(monkeypatch, conn):
+        out = activity(ORG_A, since="2026-01-01", until="2026-01-31")
+    kinds = {(e["kind"], e.get("filename") or e.get("feature_key") or e.get("call_id"))
+             for e in out["events"]}
+    assert out["org_id"] == ORG_A
+    assert ("upload", "a.mp3") in kinds
+    assert ("audit", 1) in kinds
+    assert ("flag_change", "show_usage_bar") in kinds
+    assert all(e["kind"] != "upload" or e["filename"] != "late.mp3" for e in out["events"])
+    assert all(e["kind"] != "upload" or e["filename"] != "b.mp3" for e in out["events"])
+    assert all(e.get("actor") != "bob@x.com" for e in out["events"])
+    upload = next(e for e in out["events"] if e["kind"] == "upload")
+    assert upload["actor"] == "Ada Admin"
+
+
+def test_activity_resolves_short_id_to_that_org_only(monkeypatch):
+    from datetime import datetime, timezone
+
+    from backend.admin_console import activity
+
+    t_in = datetime(2026, 1, 10, tzinfo=timezone.utc)
+    conn = _ActivityFakeConn(
+        shorts={100001: ORG_A, 100002: ORG_B},
+        calls=[
+            {"id": 1, "org_id": ORG_A, "filename": "a.mp3", "created_at": t_in,
+             "uploaded_by": None},
+            {"id": 9, "org_id": ORG_B, "filename": "b.mp3", "created_at": t_in,
+             "uploaded_by": None},
+        ],
+        audits=[],
+        flags=[],
+        members=[],
+    )
+    with _fake_detail_db(monkeypatch, conn):
+        out = activity(short_id="100001", since="2026-01-01", until="2026-01-31")
+    assert out["org_id"] == ORG_A
+    assert [e["filename"] for e in out["events"]] == ["a.mp3"]
+
+
+def test_activity_route_is_gated_and_forwards_org(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    seen: list[tuple] = []
+
+    def _activity(org_id, short_id=None, *, since, until, limit=None):
+        seen.append((org_id, short_id, since, until, limit))
+        return {"org_id": org_id, "events": [], "truncated": False}
+
+    monkeypatch.setattr("backend.admin_console.activity", _activity)
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get(
+        "/api/admin/activity",
+        params={"org_id": ORG_A, "since": "2026-01-01", "until": "2026-01-07"},
+    )
+    assert r.status_code == 200
+    assert seen == [(ORG_A, None, "2026-01-01", "2026-01-07", None)]
+    assert r.json()["org_id"] == ORG_A

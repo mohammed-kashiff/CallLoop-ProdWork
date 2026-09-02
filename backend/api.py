@@ -48,6 +48,7 @@ from . import error_notify
 from . import justcall
 from . import org_features
 from . import org_vault
+from . import password_events
 from . import sentry_report
 from .config import cors_origins, load_env, skip_startup
 
@@ -293,6 +294,21 @@ def admin_org_detail(request: Request, org_id: str, limit: int | None = None):
     return admin_console.call_detail(org_id, limit=limit)
 
 
+@app.get("/api/admin/activity")
+def admin_activity(
+    request: Request,
+    org_id: str | None = None,
+    short_id: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int | None = None,
+):
+    auth.require_platform_admin(request)
+    return admin_console.activity(
+        org_id, short_id, since=since, until=until, limit=limit,
+    )
+
+
 @app.post("/api/admin/features")
 def admin_features(request: Request, body: AdminFeatureBody):
     auth.require_platform_admin(request)
@@ -320,14 +336,70 @@ def log_password_reset_request(request: Request, body: AdminPasswordResetLogBody
     email = (body.email or "").strip().lower()
     if not email or len(email) > 254 or "@" not in email or " " in email:
         raise HTTPException(status_code=400, detail="Invalid email.")
+    admin_email = getattr(request.state, "email", None)
     applog.event(
         log,
         "admin_password_reset_email_sent",
         user_id=uid,
         email=email,
-        admin_email=getattr(request.state, "email", None),
+        admin_email=admin_email,
     )
+    try:
+        password_events.record_event(
+            user_id=uid,
+            event_type="admin_reset_email",
+            actor_email=admin_email,
+            ip_address=request.client.host if request.client else None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        # Audit-trail write only — the reset email was already sent by the
+        # client before this call; a logging failure must not look like a
+        # failed reset.
+        applog.event(
+            log, "password_event_write_failed", level=logging.WARNING,
+            user_id=uid, error=applog.safe_exception_text(e),
+        )
     return {"ok": True}
+
+
+@app.post("/api/me/password-changed")
+def self_password_changed(request: Request):
+    """Self-report: called by the frontend right after Supabase confirms a
+    self-service password change (there's no Supabase Auth Hook for this
+    event, and auth.audit_log_entries is not populated for this project —
+    both checked before building this). Best-effort; a write failure must
+    not surface to the user who just successfully changed their password.
+    """
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+    try:
+        password_events.record_event(
+            user_id=user_id,
+            event_type="self_service",
+            org_id=getattr(request.state, "org_id", None),
+            ip_address=request.client.host if request.client else None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        applog.event(
+            log, "password_event_write_failed", level=logging.WARNING,
+            user_id=user_id, error=applog.safe_exception_text(e),
+        )
+    return {"ok": True}
+
+
+@app.get("/api/admin/users/{user_id}/password-events")
+def admin_password_events(user_id: str, request: Request):
+    auth.require_platform_admin(request)
+    try:
+        uid = str(uuid.UUID((user_id or "").strip()))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid user_id.")
+    return {"user_id": uid, "events": password_events.history_for_user(uid)}
 
 
 # --- end platform admin ---

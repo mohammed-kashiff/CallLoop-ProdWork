@@ -2986,14 +2986,16 @@ html[data-color-mode='dark'] .claude-cord-plug {
   justify-self: start;
 }
 
-.admin-provision {
+.admin-provision,
+.admin-activity {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 0.9rem 1rem;
   margin: 0 0 1.25rem;
 }
 
-.admin-provision h2 {
+.admin-provision h2,
+.admin-activity h2 {
   margin: 0 0 0.3rem;
   font-size: 1.05rem;
 }

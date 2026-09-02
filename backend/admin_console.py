@@ -9,7 +9,7 @@ org — never bypass_rls.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -170,4 +170,159 @@ def call_detail(org_id: str | None, limit: int | None = None) -> dict:
         "audited_count": int((audited_row or {}).get("n") or 0),
         "calls": calls,
         "calls_truncated": total_calls > len(calls),
+    }
+
+
+_ACTIVITY_LIMIT_MAX = 500
+_ACTIVITY_LIMIT_DEFAULT = 200
+_ACTIVITY_WINDOW_DAYS = 366
+
+
+def _parse_short_id(raw: str | None) -> int | None:
+    s = (raw or "").strip()
+    if not s or not s.isdigit():
+        return None
+    n = int(s)
+    if n < 1 or n > 2_147_483_647:
+        return None
+    return n
+
+
+def resolve_activity_org(org_id: str | None, short_id: str | None) -> str:
+    """Platform-admin target org. UUID wins; otherwise short_id on org_members."""
+    oid = parse_org_id(org_id)
+    if oid:
+        return oid
+    sid = _parse_short_id(short_id) or _parse_short_id(org_id)
+    if sid is None:
+        raise HTTPException(status_code=400, detail="org_id or short_id is required.")
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT org_id FROM org_members WHERE short_id = %s",
+            (sid,),
+        ).fetchone()
+    oid = parse_org_id((row or {}).get("org_id"))
+    if not oid:
+        raise HTTPException(status_code=404, detail="No org matches that short_id.")
+    return oid
+
+
+def _parse_activity_bound(raw: str | None, *, end: bool) -> datetime:
+    s = (raw or "").strip()
+    if not s:
+        raise HTTPException(status_code=400, detail="since and until are required.")
+    try:
+        if len(s) == 10 and s[4] == "-" and s[7] == "-":
+            day = datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            return day + timedelta(days=1) if end else day
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="since and until must be dates.")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def activity(
+    org_id: str | None = None,
+    short_id: str | None = None,
+    *,
+    since: str | None,
+    until: str | None,
+    limit: int | None = None,
+) -> dict:
+    """Structured org activity from calls/audits/org_features_history — not app logs."""
+    oid = resolve_activity_org(org_id, short_id)
+    start = _parse_activity_bound(since, end=False)
+    stop = _parse_activity_bound(until, end=True)
+    if stop <= start:
+        raise HTTPException(status_code=400, detail="until must be after since.")
+    if (stop - start) > timedelta(days=_ACTIVITY_WINDOW_DAYS):
+        raise HTTPException(status_code=400, detail="Date range is too large.")
+    cap = max(1, min(int(limit or _ACTIVITY_LIMIT_DEFAULT), _ACTIVITY_LIMIT_MAX))
+    with org_scope(oid):
+        with db.connection() as conn:
+            uploads = conn.execute(
+                """
+                SELECT id, filename, created_at, uploaded_by
+                FROM calls
+                WHERE org_id = %s AND created_at >= %s AND created_at < %s
+                ORDER BY created_at DESC
+                """,
+                (oid, start, stop),
+            ).fetchall()
+            audits = conn.execute(
+                """
+                SELECT id, call_id, created_at, requested_by
+                FROM audits
+                WHERE org_id = %s AND created_at >= %s AND created_at < %s
+                ORDER BY created_at DESC
+                """,
+                (oid, start, stop),
+            ).fetchall()
+            flags = conn.execute(
+                """
+                SELECT feature_key, enabled, changed_by, changed_at
+                FROM org_features_history
+                WHERE org_id = %s AND changed_at >= %s AND changed_at < %s
+                ORDER BY changed_at DESC
+                """,
+                (oid, start, stop),
+            ).fetchall()
+            member_rows = conn.execute(
+                "SELECT user_id, first_name, last_name FROM org_members WHERE org_id = %s",
+                (oid,),
+            ).fetchall()
+    names = {
+        str(r["user_id"]): _member_name(r)
+        for r in member_rows or []
+        if r.get("user_id")
+    }
+    events: list[dict] = []
+    for row in uploads or []:
+        actor_id = row.get("uploaded_by")
+        events.append(
+            {
+                "at": _json_value(row.get("created_at")),
+                "kind": "upload",
+                "actor": names.get(str(actor_id)) if actor_id else None,
+                "call_id": int(row["id"]) if row.get("id") is not None else None,
+                "filename": row.get("filename"),
+                "feature_key": None,
+                "enabled": None,
+            }
+        )
+    for row in audits or []:
+        actor_id = row.get("requested_by")
+        events.append(
+            {
+                "at": _json_value(row.get("created_at")),
+                "kind": "audit",
+                "actor": names.get(str(actor_id)) if actor_id else None,
+                "call_id": int(row["call_id"]) if row.get("call_id") is not None else None,
+                "filename": None,
+                "feature_key": None,
+                "enabled": None,
+            }
+        )
+    for row in flags or []:
+        events.append(
+            {
+                "at": _json_value(row.get("changed_at")),
+                "kind": "flag_change",
+                "actor": str(row.get("changed_by") or "") or None,
+                "call_id": None,
+                "filename": None,
+                "feature_key": row.get("feature_key"),
+                "enabled": bool(row.get("enabled")) if row.get("enabled") is not None else None,
+            }
+        )
+    events.sort(key=lambda e: (e.get("at") or ""), reverse=True)
+    truncated = len(events) > cap
+    return {
+        "org_id": oid,
+        "since": start.isoformat(),
+        "until": stop.isoformat(),
+        "events": events[:cap],
+        "truncated": truncated,
     }

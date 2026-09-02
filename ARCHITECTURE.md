@@ -253,6 +253,7 @@ sequenceDiagram
 | GET | `/api/admin/directory` | **Platform-admin only.** Search `org_directory` (email/name/org id/user id/short id substring) via the `admin_search_directory` SQL function — `org_directory` itself is never granted to the app role. |
 | GET | `/api/admin/usage` | **Platform-admin only.** All-time PyAI/Anthropic call, poll, and estimated-cost totals for one *queried* org — not the caller's own. |
 | POST | `/api/admin/features` | **Platform-admin only.** Upsert one `org_features` row for a target org. |
+| GET | `/api/admin/activity` | **Platform-admin only.** Date + org/short_id activity from `calls` / `audits` / `org_features_history` (not app logs). |
 | POST | `/api/admin/log-password-reset-request` | **Platform-admin only.** (AC-9) Writes an audit log line for an admin-triggered reset email — never logs the password, never calls Supabase's admin/service-role API itself. |
 | GET | `/api/pyai/status` | PyAI connectivity/quota status |
 | POST | `/api/keys` | Update host-configured API keys |

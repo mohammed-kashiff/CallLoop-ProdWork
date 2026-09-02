@@ -60,6 +60,63 @@ type OrgDetailPayload = {
   calls_truncated: boolean
 }
 
+type ActivityEvent = {
+  at: string | null
+  kind: 'upload' | 'audit' | 'flag_change'
+  actor: string | null
+  call_id: number | null
+  filename: string | null
+  feature_key: string | null
+  enabled: boolean | null
+}
+
+type ActivityPayload = {
+  org_id: string
+  events: ActivityEvent[]
+  truncated: boolean
+}
+
+type PasswordEvent = {
+  event_type: 'self_service' | 'admin_reset_email' | 'admin_direct_reset'
+  actor_email: string | null
+  ip_address: string | null
+  created_at: string | null
+}
+
+function passwordEventLabel(e: PasswordEvent): string {
+  if (e.event_type === 'self_service') return 'Self-service'
+  if (e.event_type === 'admin_reset_email') return `Admin reset email${e.actor_email ? ` (${e.actor_email})` : ''}`
+  return `Admin direct reset${e.actor_email ? ` (${e.actor_email})` : ''}`
+}
+
+function ymd(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function weekAgo(): string {
+  const d = new Date()
+  d.setDate(d.getDate() - 7)
+  return ymd(d)
+}
+
+function activityLabel(e: ActivityEvent): string {
+  if (e.kind === 'upload') return e.filename || (e.call_id != null ? `Call ${e.call_id}` : 'Upload')
+  if (e.kind === 'audit') return e.call_id != null ? `Call ${e.call_id}` : 'Audit'
+  const flag = e.feature_key || 'flag'
+  if (e.enabled === true) return `${flag} on`
+  if (e.enabled === false) return `${flag} off`
+  return flag
+}
+
+function activityKind(kind: ActivityEvent['kind']): string {
+  if (kind === 'upload') return 'Upload'
+  if (kind === 'audit') return 'Audit'
+  return 'Flag'
+}
+
 function displayName(row: DirectoryRow): string {
   const n = [row.first_name, row.last_name].filter(Boolean).join(' ').trim()
   return n || '—'
@@ -74,6 +131,12 @@ export function Admin() {
   const [usage, setUsage] = useState<UsagePayload | null>(null)
   const [orgDetail, setOrgDetail] = useState<OrgDetailPayload | null>(null)
   const [busy, setBusy] = useState(false)
+  const [actOrg, setActOrg] = useState('')
+  const [actSince, setActSince] = useState(weekAgo)
+  const [actUntil, setActUntil] = useState(() => ymd(new Date()))
+  const [activity, setActivity] = useState<ActivityPayload | null>(null)
+  const [actBusy, setActBusy] = useState(false)
+  const [actError, setActError] = useState<string | null>(null)
 
   const [pEmail, setPEmail] = useState('')
   const [pFirst, setPFirst] = useState('')
@@ -86,6 +149,7 @@ export function Admin() {
   const [resetEmailBusy, setResetEmailBusy] = useState(false)
   const [resetEmailInfo, setResetEmailInfo] = useState<string | null>(null)
   const [resetEmailError, setResetEmailError] = useState<string | null>(null)
+  const [pwEvents, setPwEvents] = useState<PasswordEvent[] | null>(null)
 
   const search = useCallback(async (needle: string) => {
     const r = await apiFetch(`/api/admin/directory?q=${encodeURIComponent(needle)}`)
@@ -147,11 +211,25 @@ export function Admin() {
     }
   }
 
+  const loadPasswordEvents = async (userId: string) => {
+    try {
+      const r = await apiFetch(`/api/admin/users/${encodeURIComponent(userId)}/password-events`)
+      if (!r.ok) throw new Error(await readError(r, 'Could not load password history.'))
+      const data = (await r.json()) as { events?: PasswordEvent[] }
+      setPwEvents(Array.isArray(data.events) ? data.events : [])
+    } catch {
+      // Secondary detail on the panel — a miss here must not block usage/detail.
+      setPwEvents(null)
+    }
+  }
+
   const loadOrg = async (row: DirectoryRow) => {
     setSelected(row)
     setError(null)
     setResetEmailInfo(null)
     setResetEmailError(null)
+    setActOrg(row.org_id)
+    setPwEvents(null)
     setBusy(true)
     try {
       const [usageRes, detailRes] = await Promise.all([
@@ -168,6 +246,27 @@ export function Admin() {
       setError(e instanceof Error ? e.message : 'Could not load usage.')
     } finally {
       setBusy(false)
+    }
+    void loadPasswordEvents(row.user_id)
+  }
+
+  const loadActivity = async (e: FormEvent) => {
+    e.preventDefault()
+    setActError(null)
+    setActBusy(true)
+    try {
+      const ref = actOrg.trim()
+      const params = new URLSearchParams({ since: actSince, until: actUntil })
+      if (/^\d+$/.test(ref)) params.set('short_id', ref)
+      else params.set('org_id', ref)
+      const r = await apiFetch(`/api/admin/activity?${params.toString()}`)
+      if (!r.ok) throw new Error(await readError(r, 'Could not load activity.'))
+      setActivity((await r.json()) as ActivityPayload)
+    } catch (err: unknown) {
+      setActivity(null)
+      setActError(err instanceof Error ? err.message : 'Could not load activity.')
+    } finally {
+      setActBusy(false)
     }
   }
 
@@ -231,6 +330,7 @@ export function Admin() {
       } catch {
         /* email already sent; a log miss must not look like a failed reset */
       }
+      void loadPasswordEvents(selected.user_id)
     } catch {
       setResetEmailError('Could not send the reset email.')
     } finally {
@@ -340,6 +440,82 @@ export function Admin() {
                 {copied ? 'Copied' : 'Copy'}
               </button>
             </div>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="admin-activity">
+        <h2>Activity</h2>
+        <p className="admin-provision-hint">
+          Uploads, audits, and flag changes for one org in a date range.
+          Retranscribes show as a new audit on that call. Not application logs.
+        </p>
+        <form className="admin-provision-form" onSubmit={(e) => void loadActivity(e)}>
+          <label>
+            Org id or short id
+            <input
+              type="text"
+              value={actOrg}
+              onChange={(e) => setActOrg(e.target.value)}
+              placeholder="UUID or 100001"
+              required
+            />
+          </label>
+          <label>
+            From
+            <input
+              type="date"
+              value={actSince}
+              onChange={(e) => setActSince(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            To
+            <input
+              type="date"
+              value={actUntil}
+              onChange={(e) => setActUntil(e.target.value)}
+              required
+            />
+          </label>
+          <button type="submit" className="start-btn" disabled={actBusy}>
+            {actBusy ? 'Loading…' : 'Load'}
+          </button>
+        </form>
+        {actError ? (
+          <p className="upload-error" role="alert">
+            {actError}
+          </p>
+        ) : null}
+        {activity ? (
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Type</th>
+                  <th>Who</th>
+                  <th>Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activity.events.map((ev, i) => (
+                  <tr key={`${ev.kind}-${ev.at}-${ev.call_id ?? ev.feature_key ?? i}`}>
+                    <td>{ev.at ? new Date(ev.at).toLocaleString() : '—'}</td>
+                    <td>{activityKind(ev.kind)}</td>
+                    <td>{ev.actor || '—'}</td>
+                    <td>{activityLabel(ev)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {activity.events.length === 0 ? (
+              <p className="empty-copy">No activity in that window.</p>
+            ) : null}
+            {activity.truncated ? (
+              <p className="admin-provision-hint">Showing the most recent rows in this range.</p>
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -543,6 +719,30 @@ export function Admin() {
                   <p className="auth-info" role="status">
                     {resetEmailInfo}
                   </p>
+                ) : null}
+                {pwEvents && pwEvents.length > 0 ? (
+                  <div className="admin-table-wrap">
+                    <table className="admin-table">
+                      <thead>
+                        <tr>
+                          <th>When</th>
+                          <th>Event</th>
+                          <th>IP</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pwEvents.map((e, i) => (
+                          <tr key={i}>
+                            <td>{e.created_at ? new Date(e.created_at).toLocaleString() : '—'}</td>
+                            <td>{passwordEventLabel(e)}</td>
+                            <td>{e.ip_address || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : pwEvents && pwEvents.length === 0 ? (
+                  <p className="empty-copy">No password changes recorded.</p>
                 ) : null}
               </div>
             </>

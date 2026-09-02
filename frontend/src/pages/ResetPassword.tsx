@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BrandLogo } from '../components/BrandLogo'
 import { useColorMode } from '../context/ColorMode'
+import { apiFetch } from '../lib/api'
 import { supabase, supabaseConfigured, markPasswordRecovery, clearPasswordRecovery, hasPasswordRecoveryHint } from '../lib/supabase'
 
 const INVALID_COPY =
@@ -152,6 +153,14 @@ export function ResetPassword() {
         return
       }
       clearPasswordRecovery()
+      // Best-effort audit trail — never block the user over a logging miss.
+      // Sent before signOut() while the recovery session is still active,
+      // so the backend can identify who this is.
+      try {
+        await apiFetch('/api/me/password-changed', { method: 'POST' })
+      } catch {
+        /* audit only */
+      }
       await supabase.auth.signOut()
       navigate('/login', {
         replace: true,

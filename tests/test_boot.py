@@ -19,6 +19,7 @@ EXPECTED_ROUTES = {
     "/api/admin/directory",
     "/api/admin/usage",
     "/api/admin/features",
+    "/api/admin/activity",
     "/api/admin/log-password-reset-request",
     "/api/pyai/status",
     "/api/keys",
