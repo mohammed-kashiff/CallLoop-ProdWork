@@ -53,6 +53,23 @@ def load_v8_definition() -> dict[str, Any]:
     return data
 
 
+def fetch_active_definition(conn, *, org_id: str) -> dict[str, Any]:
+    """Org's active rubrics.definition; falls back to the legacy file if the
+    org has no active row (FR1, Rubric Customization v1a / CR-11).
+
+    No proactive seeding here — an org with nothing in rubrics yet correctly
+    reads the file until an admin saves a custom version (CR-13).
+    """
+    row = conn.execute(
+        "SELECT definition FROM rubrics WHERE org_id = %s AND is_active LIMIT 1",
+        (org_id,),
+    ).fetchone()
+    definition = decode_findings((row or {}).get("definition"))
+    if isinstance(definition, dict):
+        return definition
+    return load_v8_definition()
+
+
 def decode_findings(raw: Any) -> dict | None:
     """JSONB may already be a dict; TEXT-era rows are a JSON string."""
     if raw is None:

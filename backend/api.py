@@ -607,8 +607,8 @@ def analyze_call(call_id, org_id: str, agent_override=None):
 
     agent = agent_override or qa.classify_roles(segments)
     transcript_text = qa.format_transcript(segments, agent)
-    with open(qa.RUBRIC_PATH) as f:
-        rubric = json.load(f)
+    with _conn() as c:
+        rubric = audit_store.fetch_active_definition(c, org_id=org_id)
 
     mode = qa.audit_mode()
     is_v8 = qa_v8.is_v8_rubric(rubric)
