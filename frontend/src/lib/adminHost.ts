@@ -1,7 +1,7 @@
-/** AC-12 admin origin (keep in sync with backend.config.IDB_ORIGIN). */
+/** AC-12 admin origin (keep in sync with backend.config.ADMIN_ORIGIN). */
 
-export const IDB_ORIGIN = 'https://idb.call-loop.com'
-export const IDB_HOST = 'idb.call-loop.com'
+export const ADMIN_ORIGIN = 'https://commandcenter.call-loop.com'
+export const ADMIN_HOST = 'commandcenter.call-loop.com'
 
 /**
  * Shared-build host check (AC-12). Same JS bundle as call-loop.com.
@@ -11,7 +11,7 @@ export function isAdminHost(hostname?: string): boolean {
   const host = (
     hostname ?? (typeof window !== 'undefined' ? window.location.hostname : '')
   ).toLowerCase()
-  return host === IDB_HOST
+  return host === ADMIN_HOST
 }
 
 export function appHomePath(): string {

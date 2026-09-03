@@ -17,8 +17,8 @@ _DEFAULT_CORS = (
 
 # AC-12 admin console origin. Allowed only when listed in CORS_ORIGINS (see
 # render.yaml). Never implied as a wildcard. Keep in sync with frontend
-# IDB_ORIGIN in frontend/src/lib/adminHost.ts.
-IDB_ORIGIN = "https://idb.call-loop.com"
+# ADMIN_ORIGIN in frontend/src/lib/adminHost.ts.
+ADMIN_ORIGIN = "https://commandcenter.call-loop.com"
 
 
 def load_env() -> str:

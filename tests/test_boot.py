@@ -171,24 +171,24 @@ def test_cors_origins_drop_wildcard(monkeypatch):
     assert "*" not in origins
 
 
-def test_ac12_idb_origin_is_allowlisted_not_wildcard():
-    from backend.config import IDB_ORIGIN
+def test_ac12_admin_origin_is_allowlisted_not_wildcard():
+    from backend.config import ADMIN_ORIGIN
 
     yaml = (ROOT / "render.yaml").read_text(encoding="utf-8")
     api = (ROOT / "backend" / "api.py").read_text(encoding="utf-8")
     host = (ROOT / "frontend" / "src" / "lib" / "adminHost.ts").read_text(encoding="utf-8")
-    assert IDB_ORIGIN == "https://idb.call-loop.com"
-    assert IDB_ORIGIN in yaml
+    assert ADMIN_ORIGIN == "https://commandcenter.call-loop.com"
+    assert ADMIN_ORIGIN in yaml
     cors_line = next(
         line for line in yaml.splitlines() if "callloop-web.onrender.com" in line
     )
-    assert IDB_ORIGIN in cors_line
+    assert ADMIN_ORIGIN in cors_line
     assert "*" not in cors_line
     assert "allow_origins=cors_origins()" in api
     assert 'allow_origins=["*"]' not in api
     assert 'allow_origins=["*"]' not in api.replace(" ", "")
-    assert IDB_ORIGIN in host
-    assert "idb.call-loop.com" in host
+    assert ADMIN_ORIGIN in host
+    assert "commandcenter.call-loop.com" in host
 
 
 def test_audit_mapper_still_reads_known_fields():

@@ -25,7 +25,7 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: CORS_ORIGINS
-        value: https://callloop-web.onrender.com,https://call-loop.com,https://www.call-loop.com,https://idb.call-loop.com
+        value: https://callloop-web.onrender.com,https://call-loop.com,https://www.call-loop.com,https://commandcenter.call-loop.com
       - key: PYAI_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY

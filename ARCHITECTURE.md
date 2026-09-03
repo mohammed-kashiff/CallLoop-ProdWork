@@ -5,8 +5,8 @@
 > picking up work in this repo, read this file first — it exists so you don't
 > have to reverse-engineer the codebase from scratch.
 >
-> Last written: 2026-09-02. Since the last pass: AC-10 append-only feature-flag
-> history, and AC-12 hosts the admin console at `idb.call-loop.com` as a
+> Last written: 2026-09-03. Since the last pass: the admin console moved from
+> `idb.call-loop.com` to `commandcenter.call-loop.com` — still a
 > **shared-build** second origin (same SPA, host-gated UI — not a separate
 > admin compile).
 
@@ -52,7 +52,7 @@ of orgs/users now that real signups exist.
 | Error tracking | **Sentry** (`sentry-sdk[fastapi]`) | 5xx only, scrubbed, org-tagged |
 | Frontend | **React 19 + TypeScript + Vite** | `frontend/` |
 | Frontend auth/data client | `@supabase/supabase-js` | |
-| Hosting | **Render** | `callloop-prodwork` (API) + static site `callloop-web` (customer `call-loop.com` and admin `idb.call-loop.com`, AC-12 shared-build) |
+| Hosting | **Render** | `callloop-prodwork` (API) + static site `callloop-web` (customer `call-loop.com` and admin `commandcenter.call-loop.com`, AC-12 shared-build) |
 | CI | **GitHub Actions** | Real Postgres container; migrate → downgrade → upgrade → pytest |
 
 **External APIs this product depends on:**
@@ -238,7 +238,7 @@ sequenceDiagram
 
 **Platform-admin access is a separate, orthogonal mechanism — not a third tenant-isolation layer.** `require_platform_admin()` (`backend/auth.py`) checks the verified JWT's email against a `PLATFORM_ADMIN_EMAILS` allowlist (comma-separated env var, empty means nobody — fails closed). It has nothing to do with `org_id`, RLS, or `org_members`: being a platform admin doesn't grant cross-org data access by itself, and it's deliberately not modeled as membership in an "Admins" org, since `org_members` only allows one org per user (`UNIQUE (user_id)`) and that would collide with an admin also having their own regular account. Every `/api/admin/*` route (Admin Controls epic, `AC-` in Jira) calls this first, same inline-helper convention as `_org(request)` on regular routes.
 
-**AC-12 hosting decision (explicit):** the internal console lives at `https://idb.call-loop.com` as the **same frontend build** with a second custom domain, not a separate deployed admin app. Hostname switches routing/chrome; API auth is unchanged (`require_platform_admin`). CORS allowlists that origin (`backend.config.IDB_ORIGIN`); wildcards are rejected. This is not a hardened origin boundary — customer JS still contains the Admin page.
+**AC-12 hosting decision (explicit):** the internal console lives at `https://commandcenter.call-loop.com` as the **same frontend build** with a second custom domain, not a separate deployed admin app. Hostname switches routing/chrome; API auth is unchanged (`require_platform_admin`). CORS allowlists that origin (`backend.config.ADMIN_ORIGIN`); wildcards are rejected. This is not a hardened origin boundary — customer JS still contains the Admin page.
 
 ---
 
