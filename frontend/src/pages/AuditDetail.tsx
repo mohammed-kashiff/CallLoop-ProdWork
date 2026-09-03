@@ -12,7 +12,7 @@ import type { AuditReport } from '../types'
 export function AuditDetail() {
   const { callId } = useParams()
   const id = Number(callId)
-  const [rawAudit, setRawAudit] = useState<Record<string, unknown> | null>(null)
+  const [, setRawAudit] = useState<Record<string, unknown> | null>(null)
   const [report, setReport] = useState<AuditReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
