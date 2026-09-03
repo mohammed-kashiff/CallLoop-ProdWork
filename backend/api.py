@@ -835,6 +835,12 @@ def _load_or_compute_audit(
         with _conn() as c:
             row = audit_store.fetch_latest(c, call_id=call_id, org_id=org_id)
     prev, prev_hash = audit_store.parse_scorecard(row)
+    if refresh and isinstance(prev, dict):
+        if not org_features.features_for_org(org_id).get("enable_call_rescoring"):
+            raise HTTPException(
+                status_code=403,
+                detail="This call has already been audited. Re-scoring is disabled for this org.",
+            )
     if not refresh and prev_hash == rh and isinstance(prev, dict):
         stored_rubric_id = str(row["rubric_id"]) if row else rubric_id
         stored_rubric_version = int(row["rubric_version"]) if row else rubric_version
@@ -2721,6 +2727,17 @@ def retranscribe_call(call_id: int, request: Request):
         row = transcribe.get_call(c, call_id, org_id=org_id)
     if not row:
         raise HTTPException(status_code=404, detail="No stored audio for this call.")
+    with _conn() as c:
+        already_audited = audit_store.fetch_latest(c, call_id=call_id, org_id=org_id)
+    if already_audited and not org_features.features_for_org(org_id).get("enable_call_rescoring"):
+        # Checked before any transcribe work starts — retranscribing would
+        # replace the transcript first, then hit the same guard inside
+        # _load_or_compute_audit, leaving a new transcript paired with a
+        # stale score and an error. Reject up front instead.
+        raise HTTPException(
+            status_code=403,
+            detail="This call has already been audited. Re-scoring is disabled for this org.",
+        )
     try:
         with audio_store.download_to_temp(org_id, call_id) as path:
             hear_tmp = f"{path}.{uuid.uuid4().hex}.hear.wav"

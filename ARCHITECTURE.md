@@ -14,7 +14,11 @@
 > tool, which stays as-is. A team can save a **library** of several named
 > rubrics and switch which one is active. Sidebar: "Rubric builder", next to
 > Audits (`frontend/src/pages/RubricBuilder.tsx`, `backend/rubric_builder.py`,
-> `qa_v8.evaluate_custom`).
+> `qa_v8.evaluate_custom`). Score persistence: once a call has a completed
+> audit, re-scoring it (`?refresh=true`, or a retranscribe) is blocked by
+> default — Claude isn't perfectly deterministic, so a re-run could change
+> the score. `org_features.enable_call_rescoring` (off by default) lifts
+> that per org.
 
 ---
 
@@ -146,7 +150,7 @@ request and scopes every downstream call to that org.
 | `paths.py` | Repo-root-relative paths (log dir, rubric path, `.env` path) — independent of process cwd. |
 | `auth.py` | Verifies Supabase JWTs, `ensure_membership()`, `ensure_placeholder_org()` — idempotent seed of `DEFAULT_ORG_ID` for webhook/CLI/usage fallbacks only (not signup) — `require_platform_admin()`, the internal admin-console gate, and `require_owner()`, the self-serve rubric builder's gate (see §5). |
 | `admin_provision.py` | AC-3/AC-6/AC-7: creates a Supabase Auth user (generated password, `email_confirm: true`) plus an `org_members` row. `org_mode="new"` resolves a final org name (admin-given or auto-derived), looks it up via `org_id_for_name()` — a match joins that org as `member`; no match creates a new org as `owner`. `org_mode="existing"` targets an org id directly, unaffected by name matching. Rolls back the auth user if the org/membership insert fails. Response includes `created: bool` so the caller knows which happened. Callers must already have passed `require_platform_admin`; the module itself doesn't re-check. Password is returned once, never logged (enforced by a static test). |
-| `org_features.py` | AC-4/AC-5: `features_for_org()` (read, org-scoped, defaults missing keys to enabled) and `set_feature()` (upsert, admin-gated caller). `FEATURE_KEYS` is the trial-run flag list — add a key here without a migration. |
+| `org_features.py` | AC-4/AC-5: `features_for_org()` (read, org-scoped, defaults missing keys to enabled) and `set_feature()` (upsert, admin-gated caller). `FEATURE_KEYS` is the trial-run flag list — add a key here without a migration. `enable_call_rescoring` (off by default) gates whether an already-audited call can ever be re-scored — see `api._load_or_compute_audit`. |
 | `admin_console.py` | AC-5: directory search (via the `admin_search_directory` SQL function, never `org_directory` directly), org usage/cost lookup (`org_scope()` redirects `pyai_usage.usage_summary()`'s ambient RLS scoping to the *queried* org), and the feature-write entrypoint the admin panel calls. |
 | `org_ids.py` | Tenant-id plumbing: `contextvars`-based `bind_org_id`/`bound_org_id`/`org_scope`, `DEFAULT_ORG_ID`/`DEFAULT_RUBRIC_ID` constants (still used by background/webhook fallback paths, **not** by human signup anymore). |
 | `db.py` | Opens Postgres connections, runs `SET LOCAL ROLE callproof_app` + sets the tenant GUCs (`app.current_org_id`, `app.current_user_id`) so RLS applies. `bypass_rls=True` is a narrowly-scoped escape hatch for specific admin/background paths only — see the comment in that file before ever reaching for it. |

@@ -10,6 +10,12 @@ silently move orgs off PyAI Hear. enable_bulk_call_clear is off when unset too
 (AC-17) — org-wide hard-delete-adjacent "Clear cache" only runs for an org
 once a platform admin turns it on there; it is unrelated to the per-call
 delete a customer can always do from their own Audits list.
+enable_call_rescoring is off when unset too — once a call has a completed
+audit, its score is meant to stay fixed (Claude isn't perfectly
+deterministic; re-running the same transcript could hand back a different
+number). Off by default means neither ?refresh=true nor a retranscribe can
+recompute an already-scored call's audit for an org until a platform admin
+opts that org in.
 
 org_id is the JWT tenant only. Do not read it from the request body here.
 """
@@ -35,11 +41,14 @@ FEATURE_KEYS = (
     "show_billed_usage_panel",
     "use_selfhosted_transcription",
     "enable_bulk_call_clear",
+    "enable_call_rescoring",
 )
 
-# Missing key → on, except these. Unset must stay on PyAI, and bulk clear
-# must stay off until a platform admin opts an org in.
-DEFAULT_OFF_KEYS = frozenset({"use_selfhosted_transcription", "enable_bulk_call_clear"})
+# Missing key → on, except these. Unset must stay on PyAI, bulk clear and
+# call rescoring must stay off until a platform admin opts an org in.
+DEFAULT_OFF_KEYS = frozenset({
+    "use_selfhosted_transcription", "enable_bulk_call_clear", "enable_call_rescoring",
+})
 
 
 def default_features() -> dict[str, bool]:
