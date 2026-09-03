@@ -53,21 +53,27 @@ def load_v8_definition() -> dict[str, Any]:
     return data
 
 
-def fetch_active_definition(conn, *, org_id: str) -> dict[str, Any]:
-    """Org's active rubrics.definition; falls back to the legacy file if the
-    org has no active row (FR1, Rubric Customization v1a / CR-11).
+def fetch_active_rubric(conn, *, org_id: str) -> tuple[str, int, dict[str, Any]]:
+    """(rubric_id, version, definition) for the org's active row (FR1, CR-11).
 
-    No proactive seeding here — an org with nothing in rubrics yet correctly
-    reads the file until an admin saves a custom version (CR-13).
+    Resolved once by the caller and reused for both the cache lookup and the
+    eventual write — never re-queried mid-request (PRD edge case: a save
+    racing a scoring run must not partially apply).
+
+    No active row (including "no rubrics row at all") falls back to the
+    legacy identity every org shared before this feature existed —
+    DEFAULT_RUBRIC_ID / LEGACY_RUBRIC_VERSION / the rubric.json file. No
+    proactive seeding — an org with nothing in rubrics yet stays on this
+    fallback until an admin saves a custom version (CR-13).
     """
     row = conn.execute(
-        "SELECT definition FROM rubrics WHERE org_id = %s AND is_active LIMIT 1",
+        "SELECT id, version, definition FROM rubrics WHERE org_id = %s AND is_active LIMIT 1",
         (org_id,),
     ).fetchone()
     definition = decode_findings((row or {}).get("definition"))
-    if isinstance(definition, dict):
-        return definition
-    return load_v8_definition()
+    if row and isinstance(definition, dict):
+        return str(row["id"]), int(row["version"]), definition
+    return DEFAULT_RUBRIC_ID, LEGACY_RUBRIC_VERSION, load_v8_definition()
 
 
 def decode_findings(raw: Any) -> dict | None:
@@ -138,6 +144,26 @@ def fetch_latest_for_rubric(
         LIMIT 1
         """,
         (org_id, call_id, rubric_id),
+    ).fetchone()
+
+
+def fetch_latest(conn, *, call_id: int, org_id: str = DEFAULT_ORG_ID) -> Row | None:
+    """Most recent audit for this call, regardless of which rubric produced
+    it (CR-12). A call's cached result is never invalidated just because the
+    org's active rubric changed since — the PRD requires a weight change to
+    apply going forward only, so the cache-hit check must not filter by the
+    org's *current* rubric_id, or an org-wide rubric edit would silently
+    look like a cache miss for every already-scored call in that org and
+    quietly re-score them under the new weights on next view."""
+    return conn.execute(
+        """
+        SELECT *
+        FROM audits
+        WHERE org_id = %s AND call_id = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (org_id, call_id),
     ).fetchone()
 
 

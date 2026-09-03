@@ -63,7 +63,7 @@ from . import qa_engine as qa
 from . import qa_v8
 from . import recap as pyai_recap
 from . import transcribe
-from .org_ids import DEFAULT_RUBRIC_ID, integration_org_id, org_scope
+from .org_ids import integration_org_id, org_scope
 
 logging.basicConfig(
     level=logging.INFO,
@@ -574,7 +574,11 @@ def _attach_filename(audit: dict, call_id: int, org_id: str) -> dict:
 
 
 
-def analyze_call(call_id, org_id: str, agent_override=None):
+def analyze_call(call_id, org_id: str, agent_override=None, *, rubric: dict):
+    """rubric is resolved once by the caller (audit_store.fetch_active_rubric)
+    alongside the rubric_id/version it eventually stamps on the audit row —
+    never re-fetched here, so a save racing a scoring run can't split the
+    two (PRD edge case)."""
     started = time.perf_counter()
     applog.event(log, "audit_started", call_id=call_id)
 
@@ -607,8 +611,6 @@ def analyze_call(call_id, org_id: str, agent_override=None):
 
     agent = agent_override or qa.classify_roles(segments)
     transcript_text = qa.format_transcript(segments, agent)
-    with _conn() as c:
-        rubric = audit_store.fetch_active_definition(c, org_id=org_id)
 
     mode = qa.audit_mode()
     is_v8 = qa_v8.is_v8_rubric(rubric)
@@ -720,27 +722,28 @@ def analyze_call(call_id, org_id: str, agent_override=None):
 def _load_or_compute_audit(
     call_id: int, org_id: str, refresh: bool = False, requested_by: str | None = None,
 ):
-    """Return (audit_dict, rubric_hash). Computes and caches on miss/refresh.
+    """Return (audit_dict, rubric_hash, rubric_id, rubric_version). Computes
+    and caches on miss/refresh.
 
-    Read mode: latest-per-rubric (default legacy v8). requested_by attributes
-    the write on an actual recompute (cache miss or refresh); a cache hit
-    never writes, so it never needs one.
+    Cache lookup ignores which rubric produced the stored audit (CR-12) — a
+    call keeps showing whatever it was actually scored with even after the
+    org's active rubric changes; only a genuinely new/never-scored call, or
+    an explicit refresh, computes fresh under the currently active rubric.
+    requested_by attributes the write on an actual recompute (cache miss or
+    refresh); a cache hit never writes, so it never needs one.
     """
     rh = _rubric_hash()
-    prev = None
-    prev_hash = None
+    with _conn() as c:
+        rubric_id, rubric_version, rubric = audit_store.fetch_active_rubric(c, org_id=org_id)
     with _db_lock:
         with _conn() as c:
-            row = audit_store.fetch_latest_for_rubric(
-                c,
-                call_id=call_id,
-                rubric_id=DEFAULT_RUBRIC_ID,
-                org_id=org_id,
-            )
+            row = audit_store.fetch_latest(c, call_id=call_id, org_id=org_id)
     prev, prev_hash = audit_store.parse_scorecard(row)
     if not refresh and prev_hash == rh and isinstance(prev, dict):
-        return prev, rh
-    audit = analyze_call(call_id, org_id)
+        stored_rubric_id = str(row["rubric_id"]) if row else rubric_id
+        stored_rubric_version = int(row["rubric_version"]) if row else rubric_version
+        return prev, rh, stored_rubric_id, stored_rubric_version
+    audit = analyze_call(call_id, org_id, rubric=rubric)
     if isinstance(prev, dict) and prev.get("manual_review"):
         audit["manual_review"] = True
         audit["flagged"] = True
@@ -759,9 +762,11 @@ def _load_or_compute_audit(
                 findings=audit,
                 engine_version=rh,
                 org_id=org_id,
+                rubric_id=rubric_id,
+                rubric_version=rubric_version,
                 requested_by=requested_by,
             )
-    return audit, rh
+    return audit, rh, rubric_id, rubric_version
 
 
 _FLAG_REASON_LABELS = {
@@ -1765,13 +1770,7 @@ def get_audit(call_id: int, request: Request, refresh: bool = False):
     rh = _rubric_hash()
     if not refresh:
         with _conn() as c:
-            # latest-per-rubric (default legacy v8)
-            row = audit_store.fetch_latest_for_rubric(
-                c,
-                call_id=call_id,
-                rubric_id=DEFAULT_RUBRIC_ID,
-                org_id=org_id,
-            )
+            row = audit_store.fetch_latest(c, call_id=call_id, org_id=org_id)
         cached, cached_hash = audit_store.parse_scorecard(row)
         if cached and cached_hash == rh:
             applog.event(
@@ -1790,7 +1789,7 @@ def get_audit(call_id: int, request: Request, refresh: bool = False):
     else:
         applog.event(log, "audit_cache", result="BYPASS", call_id=call_id)
         log.info("cache BYPASS (refresh) call %d - computing fresh audit", call_id)
-    audit, _rh = _load_or_compute_audit(
+    audit, _rh, _rid, _rv = _load_or_compute_audit(
         call_id, org_id, refresh=True,
         requested_by=getattr(request.state, "user_id", None),
     )
@@ -1800,7 +1799,14 @@ def get_audit(call_id: int, request: Request, refresh: bool = False):
     )
 
 
-def _save_audit(call_id: int, audit: dict, rh: str, org_id: str):
+def _save_audit(
+    call_id: int, audit: dict, rh: str, org_id: str, *, rubric_id: str, rubric_version: int,
+):
+    """rubric_id/rubric_version must be the values the audit was ORIGINALLY
+    scored under (from the row being updated), never the org's current
+    active rubric — this only edits metadata on an existing scorecard
+    (flag/solve/cache an on-demand draft), it must not silently re-stamp a
+    historical audit as if today's weights had produced it (CR-12)."""
     with _conn() as c:
         audit_store.upsert_audit(
             c,
@@ -1808,6 +1814,8 @@ def _save_audit(call_id: int, audit: dict, rh: str, org_id: str):
             findings=audit,
             engine_version=rh,
             org_id=org_id,
+            rubric_id=rubric_id,
+            rubric_version=rubric_version,
         )
 
 
@@ -1818,13 +1826,7 @@ def flag_call_for_review(call_id: int, request: Request):
     if call_id < 1:
         raise HTTPException(status_code=400, detail="Invalid call id.")
     with _conn() as c:
-        # latest-per-rubric (default legacy v8)
-        row = audit_store.fetch_latest_for_rubric(
-            c,
-            call_id=call_id,
-            rubric_id=DEFAULT_RUBRIC_ID,
-            org_id=org_id,
-        )
+        row = audit_store.fetch_latest(c, call_id=call_id, org_id=org_id)
     if not row:
         raise HTTPException(
             status_code=404,
@@ -1844,7 +1846,10 @@ def flag_call_for_review(call_id: int, request: Request):
     if not audit.get("manual_review_at"):
         audit["manual_review_at"] = datetime.now(timezone.utc).isoformat()
     rh = stored_hash or _rubric_hash()
-    _save_audit(call_id, audit, rh, org_id)
+    _save_audit(
+        call_id, audit, rh, org_id,
+        rubric_id=str(row["rubric_id"]), rubric_version=int(row["rubric_version"]),
+    )
     applog.event(
         log, "call_flagged",
         call_id=call_id,
@@ -1871,13 +1876,7 @@ def solve_flagged_review(call_id: int, request: Request):
     if call_id < 1:
         raise HTTPException(status_code=400, detail="Invalid call id.")
     with _conn() as c:
-        # latest-per-rubric (default legacy v8)
-        row = audit_store.fetch_latest_for_rubric(
-            c,
-            call_id=call_id,
-            rubric_id=DEFAULT_RUBRIC_ID,
-            org_id=org_id,
-        )
+        row = audit_store.fetch_latest(c, call_id=call_id, org_id=org_id)
     if not row:
         raise HTTPException(
             status_code=404,
@@ -1897,7 +1896,10 @@ def solve_flagged_review(call_id: int, request: Request):
     if not audit.get("review_solved_at"):
         audit["review_solved_at"] = datetime.now(timezone.utc).isoformat()
     rh = stored_hash or _rubric_hash()
-    _save_audit(call_id, audit, rh, org_id)
+    _save_audit(
+        call_id, audit, rh, org_id,
+        rubric_id=str(row["rubric_id"]), rubric_version=int(row["rubric_version"]),
+    )
     applog.event(
         log, "review_solved",
         call_id=call_id,
@@ -1913,7 +1915,9 @@ def solve_flagged_review(call_id: int, request: Request):
     }
 
 
-def _ensure_retention_draft(call_id: int, audit: dict, rh: str, org_id: str) -> dict:
+def _ensure_retention_draft(
+    call_id: int, audit: dict, rh: str, org_id: str, *, rubric_id: str, rubric_version: int,
+) -> dict:
     """
     Run the retention Claude draft once if missing, cache on the audit, return updated audit.
     """
@@ -1931,7 +1935,7 @@ def _ensure_retention_draft(call_id: int, audit: dict, rh: str, org_id: str) -> 
             "summary": "",
             "suggested_actions": [],
         }
-        _save_audit(call_id, audit, rh, org_id)
+        _save_audit(call_id, audit, rh, org_id, rubric_id=rubric_id, rubric_version=rubric_version)
         return audit
 
     agent = audit.get("agent_speaker") or qa.classify_roles(segments)
@@ -1939,7 +1943,7 @@ def _ensure_retention_draft(call_id: int, audit: dict, rh: str, org_id: str) -> 
     log.info("on-demand retention draft for call %d", call_id)
     draft = qa.draft_retention_email(transcript_text, segments)
     audit["retention_email"] = draft
-    _save_audit(call_id, audit, rh, org_id)
+    _save_audit(call_id, audit, rh, org_id, rubric_id=rubric_id, rubric_version=rubric_version)
     return audit
 
 
@@ -1948,7 +1952,7 @@ def post_feedback(call_id: int, request: Request):
     """On-demand areas of improvement (Sonnet, effort=high). Cached after first success
     that includes at least one agent insight."""
     org_id = _org(request)
-    audit, rh = _load_or_compute_audit(call_id, org_id, refresh=False)
+    audit, rh, rubric_id, rubric_version = _load_or_compute_audit(call_id, org_id, refresh=False)
     existing = audit.get("feedback") or {}
     if existing.get("status") == "ok" and (existing.get("agent") or []):
         log.info("on-demand feedback cache HIT for call %d", call_id)
@@ -1963,7 +1967,7 @@ def post_feedback(call_id: int, request: Request):
             "agent": [],
             "product": [],
         }
-        _save_audit(call_id, audit, rh, org_id)
+        _save_audit(call_id, audit, rh, org_id, rubric_id=rubric_id, rubric_version=rubric_version)
         applog.event(
             log, "feedback_failure", level=logging.ERROR,
             call_id=call_id, error="no_segments",
@@ -1980,7 +1984,7 @@ def post_feedback(call_id: int, request: Request):
         transcript_text, segments, findings=audit.get("findings"),
     )
     audit["feedback"] = feedback
-    _save_audit(call_id, audit, rh, org_id)
+    _save_audit(call_id, audit, rh, org_id, rubric_id=rubric_id, rubric_version=rubric_version)
     applog.event(
         log, "feedback_success" if feedback.get("status") == "ok" else "feedback_failure",
         call_id=call_id,
@@ -2001,7 +2005,7 @@ def get_stakeholder_email_compose(call_id: int, request: Request):
     Frontend opens gmail_url in a new tab (user sends from their own Gmail).
     """
     org_id = _org(request)
-    audit, rh = _load_or_compute_audit(call_id, org_id, refresh=False)
+    audit, rh, rubric_id, rubric_version = _load_or_compute_audit(call_id, org_id, refresh=False)
     risk = ((audit.get("churn") or {}).get("risk") or "").lower()
     if risk not in ("high", "medium"):
         raise HTTPException(
@@ -2012,7 +2016,9 @@ def get_stakeholder_email_compose(call_id: int, request: Request):
             ),
         )
 
-    audit = _ensure_retention_draft(call_id, audit, rh, org_id)
+    audit = _ensure_retention_draft(
+        call_id, audit, rh, org_id, rubric_id=rubric_id, rubric_version=rubric_version,
+    )
     payload = email_notify.build_compose_payload(call_id, audit)
     log.info(
         "stakeholder Gmail compose for call %d (risk=%s, to=%s, retention=%s)",
@@ -2246,7 +2252,7 @@ def _process_justcall_call(
                 external_id=cid,
             )
             _store_playback(tmp, local_id, org_id)
-            audit, _rh = _load_or_compute_audit(local_id, org_id)
+            audit, _rh, _rid, _rv = _load_or_compute_audit(local_id, org_id)
             applog.event(
                 log, "justcall_ingest",
                 justcall_id=cid,
@@ -2638,7 +2644,7 @@ def retranscribe_call(call_id: int, request: Request):
                             conn, call_id, job_id, result,
                             pyai_call_id=pyai_id, org_id=org_id,
                         )
-                audit, _rh = _load_or_compute_audit(
+                audit, _rh, _rid, _rv = _load_or_compute_audit(
                     call_id, org_id, refresh=True,
                     requested_by=getattr(request.state, "user_id", None),
                 )
@@ -2817,7 +2823,7 @@ def upload_batch(request: Request, file: UploadFile = File(...)):
         def audit_one(row):
             try:
                 with org_scope(org_id):
-                    audit, _rh = _load_or_compute_audit(
+                    audit, _rh, _rid, _rv = _load_or_compute_audit(
                         row["call_id"], org_id, refresh=False, requested_by=uploaded_by,
                     )
                 return {

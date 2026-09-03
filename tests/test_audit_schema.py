@@ -189,7 +189,12 @@ def test_api_audit_reads_name_a_mode():
     assert "FROM audits WHERE call_id=?" not in text
     assert "FROM audits WHERE call_id = %s" not in text
     assert "JOIN audits a ON a.call_id = c.id" not in text
-    assert "fetch_latest_for_rubric" in text
+    # CR-12: cache lookups no longer filter by rubric_id (DEFAULT_RUBRIC_ID
+    # was hardcoded regardless of which org's rubric actually scored the
+    # call) — audit_store.fetch_latest() replaced fetch_latest_for_rubric()
+    # at every api.py call site.
+    assert "audit_store.fetch_latest(" in text
+    assert "fetch_latest_for_rubric" not in text
     assert "latest_default_join_sql" in text
     assert "upsert_audit" in text
 
