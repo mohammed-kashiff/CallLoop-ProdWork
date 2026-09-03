@@ -10,6 +10,8 @@ import { TranscriptPlayer } from '../components/TranscriptPlayer'
 import { UploadZone } from '../components/UploadZone'
 import { Workspace, callNoteScopeKey } from '../components/Workspace'
 import { useAudit } from '../context/AuditContext'
+import { useAuth } from '../context/AuthContext'
+import { flagEnabled } from '../lib/features'
 import { capFirst, capWords, formatTime, scoreHue } from '../lib/format'
 import { stripSpeakerTags } from '../lib/speakerText'
 import type { BulkJob, CallListItem, JobStatus } from '../types'
@@ -88,6 +90,7 @@ export function AgentsPulse() {
     exportScorecard,
     clearCache,
   } = useAudit()
+  const { features } = useAuth()
 
   const [tab, setTab] = useState('evaluation')
   const [flagMsg, setFlagMsg] = useState<string | null>(null)
@@ -146,18 +149,20 @@ export function AgentsPulse() {
           >
             Export
           </button>
-          <button
-            type="button"
-            className="ghost-btn"
-            disabled={running}
-            onClick={() => {
-              void clearCache().catch((e: unknown) =>
-                setFlagMsg(e instanceof Error ? e.message : 'Clear failed'),
-              )
-            }}
-          >
-            Clear cache
-          </button>
+          {flagEnabled(features, 'enable_bulk_call_clear') ? (
+            <button
+              type="button"
+              className="ghost-btn"
+              disabled={running}
+              onClick={() => {
+                void clearCache().catch((e: unknown) =>
+                  setFlagMsg(e instanceof Error ? e.message : 'Clear failed'),
+                )
+              }}
+            >
+              Clear cache
+            </button>
+          ) : null}
           {showReport ? upload : null}
         </div>
       </header>

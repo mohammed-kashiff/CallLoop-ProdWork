@@ -79,8 +79,10 @@ def test_data_sql_filters_org_id():
     transcribe = (BACKEND / "transcribe.py").read_text(encoding="utf-8")
     assert "WHERE id = %s AND org_id = %s" in api or "AND org_id = %s" in api
     assert "WHERE c.org_id = %s" in api
-    assert "DELETE FROM audits WHERE org_id = %s" in api
-    assert "DELETE FROM calls WHERE org_id = %s" in api
+    # AC-17: Clear cache soft-deletes (org-scoped UPDATE) instead of a hard
+    # DELETE; per-call delete is scoped by id AND org_id.
+    assert "WHERE org_id = %s AND deleted_at IS NULL" in api
+    assert "WHERE id = %s AND org_id = %s AND deleted_at IS NULL" in api
     assert "WHERE org_id = %s AND audio_url" in transcribe
     assert "WHERE id = %s AND org_id = %s" in transcribe
 

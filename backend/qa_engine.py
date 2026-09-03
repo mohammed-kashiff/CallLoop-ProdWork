@@ -80,7 +80,7 @@ def load_call(call_id=None, *, org_id: str | None = None):
             row = conn.execute(
                 """
                 SELECT id FROM calls
-                WHERE org_id = %s AND status='completed'
+                WHERE org_id = %s AND status='completed' AND deleted_at IS NULL
                 ORDER BY id DESC LIMIT 1
                 """,
                 (tenant,),
@@ -91,7 +91,7 @@ def load_call(call_id=None, *, org_id: str | None = None):
         meta = conn.execute(
             """
             SELECT id, full_text, speakers, audio_seconds, pyai_call_id, raw_json
-            FROM calls WHERE id = %s AND org_id = %s
+            FROM calls WHERE id = %s AND org_id = %s AND deleted_at IS NULL
             """,
             (call_id, tenant),
         ).fetchone()

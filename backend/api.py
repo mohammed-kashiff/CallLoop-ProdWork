@@ -545,7 +545,7 @@ def analyze_call(call_id, org_id: str, agent_override=None):
         exists = c.execute(
             """
             SELECT 1 FROM calls
-            WHERE id = %s AND org_id = %s AND status='completed'
+            WHERE id = %s AND org_id = %s AND status='completed' AND deleted_at IS NULL
             """,
             (call_id, org_id),
         ).fetchone()
@@ -1104,7 +1104,7 @@ def list_calls(request: Request, source: str | None = None):
               a.created_at AS audited_at
             FROM calls c
             {audit_store.latest_default_join_sql()}
-            WHERE c.org_id = %s
+            WHERE c.org_id = %s AND c.deleted_at IS NULL
     """
     params: list = list(audit_store.latest_default_join_params(org_id))
     params.append(org_id)
@@ -1188,44 +1188,76 @@ def _clear_playback_audio(org_id: str, call_ids: list[int] | None = None) -> int
 
 @app.post("/api/cache/clear")
 def clear_cache(request: Request):
-    """Delete this org's transcripts, scorecards, and playback audio."""
+    """Org-wide bulk clear (AC-17): soft-deletes every call and wipes their
+    playback audio. Gated behind enable_bulk_call_clear, off by default —
+    a platform admin has to turn it on for an org before this can run.
+    Transcripts and audit scores are kept, only the recording is removed;
+    admins still see these calls (flagged Deleted) via the admin console.
+    """
     org_id = _org(request)
+    if not org_features.features_for_org(org_id).get("enable_bulk_call_clear"):
+        raise HTTPException(
+            status_code=403,
+            detail="Bulk clear is not enabled for this org.",
+        )
+    actor = getattr(request.state, "user_id", None)
     with _db_lock:
         with _conn() as c:
             id_rows = c.execute(
-                "SELECT id FROM calls WHERE org_id = %s", (org_id,),
+                "SELECT id FROM calls WHERE org_id = %s AND deleted_at IS NULL",
+                (org_id,),
             ).fetchall()
             call_ids = [int(r["id"]) for r in id_rows]
             n_calls = c.execute(
-                "SELECT COUNT(*) AS n FROM calls WHERE org_id = %s", (org_id,),
-            ).fetchone()["n"]
-            n_segments = c.execute(
-                "SELECT COUNT(*) AS n FROM segments WHERE org_id = %s", (org_id,),
-            ).fetchone()["n"]
-            n_audits = c.execute(
-                "SELECT COUNT(*) AS n FROM audits WHERE org_id = %s", (org_id,),
-            ).fetchone()["n"]
-            c.execute("DELETE FROM audits WHERE org_id = %s", (org_id,))
-            c.execute("DELETE FROM segments WHERE org_id = %s", (org_id,))
-            c.execute("DELETE FROM calls WHERE org_id = %s", (org_id,))
+                """
+                UPDATE calls SET deleted_at = now(), deleted_by = %s
+                WHERE org_id = %s AND deleted_at IS NULL
+                """,
+                (actor, org_id),
+            ).rowcount
     n_audio = _clear_playback_audio(org_id, call_ids)
     applog.event(
         log, "cache_cleared",
-        calls=n_calls, segments=n_segments, audits=n_audits, audio=n_audio,
+        calls=n_calls, audio=n_audio, deleted_by=actor,
     )
     log.info(
-        "cache cleared: %d call(s), %d segment(s), %d scorecard(s), %d audio item(s)",
-        n_calls, n_segments, n_audits, n_audio,
+        "cache cleared: %d call(s) soft-deleted, %d audio item(s) removed",
+        n_calls, n_audio,
     )
     return {
         "status": "ok",
         "deleted": {
             "calls": n_calls,
-            "segments": n_segments,
-            "audits": n_audits,
             "audio": n_audio,
         },
     }
+
+
+@app.delete("/api/calls/{call_id}")
+def delete_call(call_id: int, request: Request):
+    """Per-call delete (AC-17): always available to any org member, no flag.
+    Soft-deletes this one call and removes just its playback audio; the
+    transcript and audit score are kept for the admin console, which still
+    shows the call (flagged Deleted, with who deleted it).
+    """
+    org_id = _org(request)
+    actor = getattr(request.state, "user_id", None)
+    with _db_lock:
+        with _conn() as c:
+            row = c.execute(
+                """
+                UPDATE calls SET deleted_at = now(), deleted_by = %s
+                WHERE id = %s AND org_id = %s AND deleted_at IS NULL
+                RETURNING id
+                """,
+                (actor, call_id, org_id),
+            ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"No call with id {call_id}")
+    n_audio = _clear_playback_audio(org_id, [call_id])
+    applog.event(log, "call_deleted", call_id=call_id, deleted_by=actor, audio=n_audio)
+    log.info("call %d deleted by %s (%d audio item(s) removed)", call_id, actor, n_audio)
+    return {"status": "ok", "call_id": call_id}
 
 
 def _recap_export_fields(recap: dict | None) -> tuple[str, str, str]:
@@ -1453,7 +1485,7 @@ def _load_scorecard_records(org_id: str) -> list[dict]:
               a.findings
             FROM calls c
             {join_sql}
-            WHERE c.org_id = %s
+            WHERE c.org_id = %s AND c.deleted_at IS NULL
               AND (c.status = 'completed' OR c.status IS NULL OR c.status = '')
             ORDER BY c.id ASC
             """,
@@ -1495,7 +1527,7 @@ def list_flagged_calls(request: Request):
               a.created_at AS audited_at
             FROM calls c
             {join_sql}
-            WHERE c.org_id = %s
+            WHERE c.org_id = %s AND c.deleted_at IS NULL
             ORDER BY c.id DESC
             """,
             (*join_params, org_id),
@@ -1584,7 +1616,7 @@ def export_calls(request: Request, format: str = "csv"):
               a.created_at AS audited_at
             FROM calls c
             {audit_store.latest_default_join_sql(inner=True)}
-            WHERE c.org_id = %s
+            WHERE c.org_id = %s AND c.deleted_at IS NULL
               AND (c.status = 'completed' OR c.status IS NULL OR c.status = '')
             ORDER BY c.id ASC
             """,
@@ -1686,6 +1718,13 @@ def _hydrate_audit_segments(audit: dict, call_id: int, org_id: str) -> dict:
 @app.get("/api/calls/{call_id}/audit")
 def get_audit(call_id: int, request: Request, refresh: bool = False):
     org_id = _org(request)
+    with _conn() as c:
+        exists = c.execute(
+            "SELECT 1 FROM calls WHERE id = %s AND org_id = %s AND deleted_at IS NULL",
+            (call_id, org_id),
+        ).fetchone()
+    if not exists:
+        raise HTTPException(status_code=404, detail=f"No call with id {call_id}")
     rh = _rubric_hash()
     if not refresh:
         with _conn() as c:

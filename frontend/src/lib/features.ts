@@ -32,4 +32,11 @@ export const TRIAL_FLAGS: TrialFlag[] = [
       "Use Whisper + pyannote on this host instead of PyAI Hear. Off until you turn it on for this org.",
     defaultEnabled: false,
   },
+  {
+    key: "enable_bulk_call_clear",
+    label: "Bulk call clear",
+    description:
+      "Lets this org run Clear cache, which soft-deletes every call and removes their recordings at once. Off until you turn it on for this org.",
+    defaultEnabled: false,
+  },
 ]

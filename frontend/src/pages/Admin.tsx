@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch, fmtUsd, readError } from '../lib/api'
 import { adminFlagOn, TRIAL_FLAGS, type FeatureMap } from '../lib/features'
-import { formatTime } from '../lib/format'
+import { formatTime, formatBytes } from '../lib/format'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { isAdminHost } from '../lib/adminHost'
@@ -50,6 +50,10 @@ type OrgCallRow = {
   audited: boolean
   uploaded_by: string | null
   requested_by: string | null
+  deleted: boolean
+  deleted_at: string | null
+  deleted_by_short_id: number | null
+  data_size_bytes: number
 }
 
 type OrgDetailPayload = {
@@ -58,11 +62,12 @@ type OrgDetailPayload = {
   audited_count: number
   calls: OrgCallRow[]
   calls_truncated: boolean
+  total_data_size_bytes: number
 }
 
 type ActivityEvent = {
   at: string | null
-  kind: 'upload' | 'audit' | 'flag_change'
+  kind: 'upload' | 'audit' | 'flag_change' | 'delete'
   actor: string | null
   call_id: number | null
   filename: string | null
@@ -105,6 +110,7 @@ function weekAgo(): string {
 function activityLabel(e: ActivityEvent): string {
   if (e.kind === 'upload') return e.filename || (e.call_id != null ? `Call ${e.call_id}` : 'Upload')
   if (e.kind === 'audit') return e.call_id != null ? `Call ${e.call_id}` : 'Audit'
+  if (e.kind === 'delete') return e.filename || (e.call_id != null ? `Call ${e.call_id}` : 'Delete')
   const flag = e.feature_key || 'flag'
   if (e.enabled === true) return `${flag} on`
   if (e.enabled === false) return `${flag} off`
@@ -114,6 +120,7 @@ function activityLabel(e: ActivityEvent): string {
 function activityKind(kind: ActivityEvent['kind']): string {
   if (kind === 'upload') return 'Upload'
   if (kind === 'audit') return 'Audit'
+  if (kind === 'delete') return 'Delete'
   return 'Flag'
 }
 
@@ -645,6 +652,10 @@ export function Admin() {
                         <dt>Audited</dt>
                         <dd>{orgDetail.audited_count}</dd>
                       </div>
+                      <div>
+                        <dt>Data stored</dt>
+                        <dd>{formatBytes(orgDetail.total_data_size_bytes)}</dd>
+                      </div>
                     </dl>
                     <div className="admin-table-wrap">
                       <table className="admin-table">
@@ -655,8 +666,10 @@ export function Admin() {
                             <th>Length</th>
                             <th>Engine</th>
                             <th>Audited</th>
+                            <th>Size</th>
                             <th>Uploaded by</th>
                             <th>Requested by</th>
+                            <th>Status</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -671,8 +684,19 @@ export function Admin() {
                               </td>
                               <td>{c.mode === 'selfhosted' ? 'Self-hosted' : 'PyAI'}</td>
                               <td>{c.audited ? 'Yes' : 'No'}</td>
+                              <td>{formatBytes(c.data_size_bytes)}</td>
                               <td>{c.uploaded_by || '—'}</td>
                               <td>{c.requested_by || '—'}</td>
+                              <td>
+                                {c.deleted ? (
+                                  <span className="admin-deleted-badge">
+                                    Deleted
+                                    {c.deleted_by_short_id != null ? ` by #${c.deleted_by_short_id}` : ''}
+                                  </span>
+                                ) : (
+                                  '—'
+                                )}
+                              </td>
                             </tr>
                           ))}
                         </tbody>

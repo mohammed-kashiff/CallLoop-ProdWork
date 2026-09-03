@@ -362,10 +362,13 @@ def new_pyai_call_id():
 
 
 def find_existing_call(conn, identity, *, org_id: str):
+    """Excludes soft-deleted calls (AC-17) — a re-upload of previously
+    deleted audio should start a fresh call, not resurrect the old one."""
     return conn.execute(
         """
         SELECT id, pyai_call_id FROM calls
         WHERE org_id = %s AND audio_url = %s AND status = 'completed'
+          AND deleted_at IS NULL
         """,
         (org_id, identity),
     ).fetchone()
@@ -374,22 +377,24 @@ def find_existing_call(conn, identity, *, org_id: str):
 def find_existing_external(
     conn, source: str, external_id: str, *, org_id: str,
 ):
+    """Excludes soft-deleted calls (AC-17), same reasoning as find_existing_call."""
     return conn.execute(
         """
         SELECT id, pyai_call_id FROM calls
         WHERE org_id = %s AND source = %s AND external_id = %s AND status = 'completed'
+          AND deleted_at IS NULL
         """,
         (org_id, source, str(external_id)),
     ).fetchone()
 
 
 def get_call(conn, call_id: int, *, org_id: str):
-    """Return the call row if it belongs to this org, else None."""
+    """Return the call row if it belongs to this org and isn't soft-deleted, else None."""
     return conn.execute(
         """
         SELECT id, filename, status, audio_url, pyai_call_id
         FROM calls
-        WHERE id = %s AND org_id = %s
+        WHERE id = %s AND org_id = %s AND deleted_at IS NULL
         """,
         (call_id, org_id),
     ).fetchone()

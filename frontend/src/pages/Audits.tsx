@@ -44,6 +44,8 @@ export function Audits() {
   const [flagFilter, setFlagFilter] = useState<FlagFilter>('all')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(10)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -91,6 +93,23 @@ export function Audits() {
     navigate(`/audits/${id}`)
   }
 
+  const deleteCall = async (id: number) => {
+    if (!window.confirm('Delete this call? The recording will be removed and this cannot be undone.')) {
+      return
+    }
+    setDeleteError(null)
+    setDeletingId(id)
+    try {
+      const r = await apiFetch(`/api/calls/${id}`, { method: 'DELETE' })
+      if (!r.ok) throw new Error(await readError(r, 'Could not delete this call.'))
+      setCalls((prev) => prev.filter((c) => c.id !== id))
+    } catch (e: unknown) {
+      setDeleteError(e instanceof Error ? e.message : 'Could not delete this call.')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <>
       <header className="page-bar">
@@ -103,6 +122,11 @@ export function Audits() {
       {error ? (
         <p className="upload-error" role="alert">
           {error}
+        </p>
+      ) : null}
+      {deleteError ? (
+        <p className="upload-error" role="alert">
+          {deleteError}
         </p>
       ) : null}
       {loading ? <p className="panel-lede">Loading audits…</p> : null}
@@ -143,6 +167,7 @@ export function Audits() {
                       <th>Churn</th>
                       <th>Flagged</th>
                       <th>Source</th>
+                      <th aria-label="Actions" />
                     </tr>
                   </thead>
                   <tbody>
@@ -173,6 +198,20 @@ export function Audits() {
                           </td>
                           <td>{row.flagged ? 'Flagged' : '—'}</td>
                           <td>{sourceLabel(row.source)}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="audit-delete-btn"
+                              aria-label={`Delete call #${row.id}`}
+                              disabled={deletingId === row.id}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                void deleteCall(row.id)
+                              }}
+                            >
+                              {deletingId === row.id ? '…' : '×'}
+                            </button>
+                          </td>
                         </tr>
                       )
                     })}

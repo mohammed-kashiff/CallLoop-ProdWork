@@ -3111,6 +3111,17 @@ html[data-color-mode='dark'] .claude-cord-plug {
   text-decoration: underline;
 }
 
+.admin-deleted-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--fail);
+  background: color-mix(in srgb, var(--fail) 14%, transparent);
+  white-space: nowrap;
+}
+
 .admin-table tr.is-selected td {
   background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
@@ -3147,6 +3158,29 @@ html[data-color-mode='dark'] .claude-cord-plug {
   outline-offset: -2px;
 }
 
+.audit-delete-btn {
+  border: 0;
+  background: none;
+  padding: 0.1rem 0.4rem;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--ink);
+  opacity: 0.55;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.audit-delete-btn:hover {
+  opacity: 1;
+  color: var(--fail);
+  background: color-mix(in srgb, var(--fail) 12%, transparent);
+}
+
+.audit-delete-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 .crumb a {
   color: inherit;
   text-decoration: underline;
@@ -3177,7 +3211,7 @@ html[data-color-mode='dark'] .claude-cord-plug {
 
 .admin-stats {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 0.55rem 0.8rem;
   margin: 0.9rem 0;
 }

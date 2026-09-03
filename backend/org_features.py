@@ -6,7 +6,10 @@ rows onto FEATURE_KEYS; extra keys in the table are returned too so new flags
 do not need a migration.
 
 Exception: use_selfhosted_transcription is off when unset, so deploy does not
-silently move orgs off PyAI Hear.
+silently move orgs off PyAI Hear. enable_bulk_call_clear is off when unset too
+(AC-17) — org-wide hard-delete-adjacent "Clear cache" only runs for an org
+once a platform admin turns it on there; it is unrelated to the per-call
+delete a customer can always do from their own Audits list.
 
 org_id is the JWT tenant only. Do not read it from the request body here.
 """
@@ -31,10 +34,12 @@ FEATURE_KEYS = (
     "show_powered_by_pyai",
     "show_billed_usage_panel",
     "use_selfhosted_transcription",
+    "enable_bulk_call_clear",
 )
 
-# Missing key → on, except this engine switch. Unset must stay on PyAI.
-DEFAULT_OFF_KEYS = frozenset({"use_selfhosted_transcription"})
+# Missing key → on, except these. Unset must stay on PyAI, and bulk clear
+# must stay off until a platform admin opts an org in.
+DEFAULT_OFF_KEYS = frozenset({"use_selfhosted_transcription", "enable_bulk_call_clear"})
 
 
 def default_features() -> dict[str, bool]:

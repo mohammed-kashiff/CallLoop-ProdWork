@@ -216,11 +216,14 @@ class _Result:
 class _DetailFakeConn:
     """Answers exactly the queries call_detail() issues, org-scoped."""
 
-    def __init__(self, calls, audited_call_ids, requesters=None, members=None):
+    def __init__(
+        self, calls, audited_call_ids, requesters=None, members=None, audit_sizes=None,
+    ):
         self.calls = calls
         self.audited_call_ids = audited_call_ids
         self.requesters = requesters or []  # (org_id, call_id, requested_by, created_at)
-        self.members = members or []  # (org_id, user_id, first_name, last_name)
+        self.members = members or []  # (org_id, user_id, first_name, last_name[, short_id])
+        self.audit_sizes = audit_sizes or []  # (org_id, call_id, bytes)
         self.seen_org_ids: list[str] = []
 
     def execute(self, sql, params=None):
@@ -243,12 +246,21 @@ class _DetailFakeConn:
             return _Result(
                 [{"call_id": cid, "requested_by": v[0]} for cid, v in latest.items()]
             )
+        if "SUM(PG_COLUMN_SIZE(FINDINGS))" in norm:
+            for_org = [a for a in self.audit_sizes if a[0] == oid]
+            totals: dict[int, int] = {}
+            for org_id, call_id, n in for_org:
+                totals[call_id] = totals.get(call_id, 0) + n
+            return _Result([{"call_id": cid, "n": n} for cid, n in totals.items()])
         if "SELECT DISTINCT CALL_ID FROM AUDITS" in norm:
             return _Result([{"call_id": a[1]} for a in audited_for_org])
-        if "SELECT USER_ID, FIRST_NAME, LAST_NAME FROM ORG_MEMBERS" in norm:
+        if "SELECT USER_ID, FIRST_NAME, LAST_NAME, SHORT_ID FROM ORG_MEMBERS" in norm:
             return _Result(
                 [
-                    {"user_id": m[1], "first_name": m[2], "last_name": m[3]}
+                    {
+                        "user_id": m[1], "first_name": m[2], "last_name": m[3],
+                        "short_id": m[4] if len(m) > 4 else None,
+                    }
                     for m in self.members
                     if m[0] == oid
                 ]
@@ -333,6 +345,55 @@ def test_call_detail_resolves_uploaded_by_and_requested_by_to_names(monkeypatch)
     assert by_id[2]["requested_by"] is None
 
 
+def test_call_detail_flags_deleted_calls_with_deleter_short_id(monkeypatch):
+    """AC-17: deleted calls are NOT filtered out for admins (opposite of every
+    customer-facing list) — flagged deleted with the deleter's short_id."""
+    from backend.admin_console import call_detail
+
+    ada = str(uuid.uuid4())
+    calls = [
+        {"id": 1, "org_id": ORG_A, "filename": "a1.mp3", "job_id": "job_abc",
+         "created_at": "2026-01-01", "audio_seconds": 90,
+         "deleted_at": "2026-01-05T00:00:00Z", "deleted_by": ada},
+        {"id": 2, "org_id": ORG_A, "filename": "a2.mp3", "job_id": "job_def",
+         "created_at": "2026-01-02", "audio_seconds": 60,
+         "deleted_at": None, "deleted_by": None},
+    ]
+    members = [(ORG_A, ada, "Ada", "Lovelace", 42)]
+    conn = _DetailFakeConn(calls, [], members=members)
+    with _fake_detail_db(monkeypatch, conn):
+        out = call_detail(ORG_A)
+
+    by_id = {c["call_id"]: c for c in out["calls"]}
+    assert out["total_calls"] == 2  # deleted call still counted, not hidden
+    assert by_id[1]["deleted"] is True
+    assert by_id[1]["deleted_by_short_id"] == 42
+    assert by_id[2]["deleted"] is False
+    assert by_id[2]["deleted_by_short_id"] is None
+
+
+def test_call_detail_reports_data_size_bytes_from_transcript_and_findings(monkeypatch):
+    """Storage-size stat (AC-17): transcript raw_json + audit findings sizes,
+    in Postgres bytes — not the audio recording (not tracked here)."""
+    from backend.admin_console import call_detail
+
+    calls = [
+        {"id": 1, "org_id": ORG_A, "filename": "a1.mp3", "job_id": "job_abc",
+         "created_at": "2026-01-01", "audio_seconds": 90, "raw_json_bytes": 7000},
+        {"id": 2, "org_id": ORG_A, "filename": "a2.mp3", "job_id": "job_def",
+         "created_at": "2026-01-02", "audio_seconds": 60, "raw_json_bytes": 3000},
+    ]
+    audit_sizes = [(ORG_A, 1, 500), (ORG_A, 1, 200), (ORG_A, 2, 100)]
+    conn = _DetailFakeConn(calls, [], audit_sizes=audit_sizes)
+    with _fake_detail_db(monkeypatch, conn):
+        out = call_detail(ORG_A)
+
+    by_id = {c["call_id"]: c for c in out["calls"]}
+    assert by_id[1]["data_size_bytes"] == 7000 + 700
+    assert by_id[2]["data_size_bytes"] == 3000 + 100
+    assert out["total_data_size_bytes"] == 7000 + 700 + 3000 + 100
+
+
 def test_call_detail_route_is_gated_and_org_scoped(monkeypatch):
     monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
     seen: list[tuple] = []
@@ -382,12 +443,16 @@ def test_log_password_reset_route_does_not_call_supabase_admin():
 class _ActivityFakeConn:
     """Answers activity() queries, filtering by org_id and the date window."""
 
-    def __init__(self, *, shorts=None, calls=None, audits=None, flags=None, members=None):
+    def __init__(
+        self, *, shorts=None, calls=None, audits=None, flags=None, members=None,
+        deletes=None,
+    ):
         self.shorts = shorts or {}  # short_id -> org_id
         self.calls = calls or []
         self.audits = audits or []
         self.flags = flags or []
         self.members = members or []
+        self.deletes = deletes or []  # {"id", "org_id", "filename", "deleted_at", "deleted_by"}
         self.seen_org_ids: list[str] = []
 
     def execute(self, sql, params=None):
@@ -410,6 +475,12 @@ class _ActivityFakeConn:
             rows = [
                 c for c in self.calls
                 if c["org_id"] == oid and in_window(c["created_at"])
+            ]
+            return _Result(rows)
+        if "FROM CALLS" in norm and "DELETED_AT >=" in norm:
+            rows = [
+                d for d in self.deletes
+                if d["org_id"] == oid and in_window(d["deleted_at"])
             ]
             return _Result(rows)
         if "FROM AUDITS" in norm and "CREATED_AT >=" in norm:
@@ -479,6 +550,33 @@ def test_activity_never_returns_another_org_and_applies_dates(monkeypatch):
     assert all(e.get("actor") != "bob@x.com" for e in out["events"])
     upload = next(e for e in out["events"] if e["kind"] == "upload")
     assert upload["actor"] == "Ada Admin"
+
+
+def test_activity_includes_delete_events_org_scoped(monkeypatch):
+    from datetime import datetime, timezone
+
+    from backend.admin_console import activity
+
+    t_in = datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc)
+    t_out = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
+    uid = "11111111-1111-4111-8111-111111111111"
+    conn = _ActivityFakeConn(
+        deletes=[
+            {"id": 1, "org_id": ORG_A, "filename": "a.mp3", "deleted_at": t_in,
+             "deleted_by": uid},
+            {"id": 2, "org_id": ORG_A, "filename": "late.mp3", "deleted_at": t_out,
+             "deleted_by": uid},
+            {"id": 3, "org_id": ORG_B, "filename": "b.mp3", "deleted_at": t_in,
+             "deleted_by": uid},
+        ],
+        members=[(ORG_A, uid, "Ada", "Admin")],
+    )
+    with _fake_detail_db(monkeypatch, conn):
+        out = activity(ORG_A, since="2026-01-01", until="2026-01-31")
+    deletes = [e for e in out["events"] if e["kind"] == "delete"]
+    assert [e["filename"] for e in deletes] == ["a.mp3"]
+    assert deletes[0]["actor"] == "Ada Admin"
+    assert deletes[0]["call_id"] == 1
 
 
 def test_activity_resolves_short_id_to_that_org_only(monkeypatch):

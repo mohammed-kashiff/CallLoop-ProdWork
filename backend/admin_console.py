@@ -96,6 +96,15 @@ def call_detail(org_id: str | None, limit: int | None = None) -> dict:
     (AC-14) — both resolved to a display name via org_members, since email
     lives outside this app's normal role (Supabase auth, not org_members).
 
+    AC-17: deleted calls are NOT filtered out here (opposite of every
+    customer-facing list) — they're flagged `deleted` with the deleting
+    member's short_id, since that's what support/audit needs. Also reports
+    `data_size_bytes` per call: the transcript (raw_json) plus any stored
+    audit findings, in Postgres — the two pieces this app actually tracks
+    the byte size of. Audio recording size is not included; Storage object
+    size isn't tracked in Postgres and would need a separate per-file call
+    to Supabase Storage.
+
     Counts are true totals (COUNT(*)/COUNT(DISTINCT)), not capped by the
     per-call listing's limit, which stays reasonable for a single JSON
     response — callers needing the full list can page by created_at.
@@ -115,7 +124,9 @@ def call_detail(org_id: str | None, limit: int | None = None) -> dict:
             ).fetchone()
             call_rows = conn.execute(
                 """
-                SELECT id, filename, job_id, created_at, audio_seconds, uploaded_by
+                SELECT id, filename, job_id, created_at, audio_seconds, uploaded_by,
+                       deleted_at, deleted_by,
+                       pg_column_size(raw_json) AS raw_json_bytes
                 FROM calls
                 WHERE org_id = %s
                 ORDER BY created_at DESC
@@ -135,8 +146,15 @@ def call_detail(org_id: str | None, limit: int | None = None) -> dict:
                 """,
                 (oid,),
             ).fetchall()
+            audit_size_rows = conn.execute(
+                """
+                SELECT call_id, SUM(pg_column_size(findings)) AS n
+                FROM audits WHERE org_id = %s GROUP BY call_id
+                """,
+                (oid,),
+            ).fetchall()
             member_rows = conn.execute(
-                "SELECT user_id, first_name, last_name FROM org_members WHERE org_id = %s",
+                "SELECT user_id, first_name, last_name, short_id FROM org_members WHERE org_id = %s",
                 (oid,),
             ).fetchall()
     audited = {int(r["call_id"]) for r in audited_ids or [] if r.get("call_id") is not None}
@@ -145,13 +163,25 @@ def call_detail(org_id: str | None, limit: int | None = None) -> dict:
         for r in requester_rows or []
         if r.get("call_id") is not None and r.get("requested_by") is not None
     }
+    audit_bytes_by_call = {
+        int(r["call_id"]): int(r.get("n") or 0)
+        for r in audit_size_rows or []
+        if r.get("call_id") is not None
+    }
     names = {str(r["user_id"]): _member_name(r) for r in member_rows or [] if r.get("user_id")}
+    short_ids = {
+        str(r["user_id"]): r.get("short_id") for r in member_rows or [] if r.get("user_id")
+    }
     total_calls = int((total_row or {}).get("n") or 0)
     calls = []
+    total_data_size_bytes = 0
     for row in call_rows or []:
         call_id = int(row["id"])
         uploaded_by = row.get("uploaded_by")
         requested_by = requested_by_call.get(call_id)
+        deleted_by = row.get("deleted_by")
+        data_size_bytes = int(row.get("raw_json_bytes") or 0) + audit_bytes_by_call.get(call_id, 0)
+        total_data_size_bytes += data_size_bytes
         calls.append(
             {
                 "call_id": call_id,
@@ -162,6 +192,10 @@ def call_detail(org_id: str | None, limit: int | None = None) -> dict:
                 "audited": call_id in audited,
                 "uploaded_by": names.get(str(uploaded_by)) if uploaded_by else None,
                 "requested_by": names.get(str(requested_by)) if requested_by else None,
+                "deleted": row.get("deleted_at") is not None,
+                "deleted_at": _json_value(row.get("deleted_at")),
+                "deleted_by_short_id": short_ids.get(str(deleted_by)) if deleted_by else None,
+                "data_size_bytes": data_size_bytes,
             }
         )
     return {
@@ -170,6 +204,7 @@ def call_detail(org_id: str | None, limit: int | None = None) -> dict:
         "audited_count": int((audited_row or {}).get("n") or 0),
         "calls": calls,
         "calls_truncated": total_calls > len(calls),
+        "total_data_size_bytes": total_data_size_bytes,
     }
 
 
@@ -269,6 +304,15 @@ def activity(
                 """,
                 (oid, start, stop),
             ).fetchall()
+            deletes = conn.execute(
+                """
+                SELECT id, filename, deleted_at, deleted_by
+                FROM calls
+                WHERE org_id = %s AND deleted_at >= %s AND deleted_at < %s
+                ORDER BY deleted_at DESC
+                """,
+                (oid, start, stop),
+            ).fetchall()
             member_rows = conn.execute(
                 "SELECT user_id, first_name, last_name FROM org_members WHERE org_id = %s",
                 (oid,),
@@ -315,6 +359,19 @@ def activity(
                 "filename": None,
                 "feature_key": row.get("feature_key"),
                 "enabled": bool(row.get("enabled")) if row.get("enabled") is not None else None,
+            }
+        )
+    for row in deletes or []:
+        actor_id = row.get("deleted_by")
+        events.append(
+            {
+                "at": _json_value(row.get("deleted_at")),
+                "kind": "delete",
+                "actor": names.get(str(actor_id)) if actor_id else None,
+                "call_id": int(row["id"]) if row.get("id") is not None else None,
+                "filename": row.get("filename"),
+                "feature_key": None,
+                "enabled": None,
             }
         )
     events.sort(key=lambda e: (e.get("at") or ""), reverse=True)

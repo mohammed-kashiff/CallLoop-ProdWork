@@ -124,10 +124,13 @@ def test_default_features_keeps_trial_on_and_selfhosted_off():
     flags = default_features()
     assert "use_selfhosted_transcription" in FEATURE_KEYS
     assert flags["use_selfhosted_transcription"] is False
+    assert "enable_bulk_call_clear" in FEATURE_KEYS
+    assert flags["enable_bulk_call_clear"] is False
+    off_by_default = {"use_selfhosted_transcription", "enable_bulk_call_clear"}
     assert all(
         flags[key] is True
         for key in FEATURE_KEYS
-        if key != "use_selfhosted_transcription"
+        if key not in off_by_default
     )
 
 
