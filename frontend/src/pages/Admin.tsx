@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { apiFetch, fmtUsd, readError } from '../lib/api'
 import { adminFlagOn, TRIAL_FLAGS, type FeatureMap } from '../lib/features'
-import { formatTime, formatBytes } from '../lib/format'
+import { formatBytes } from '../lib/format'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { isAdminHost } from '../lib/adminHost'
@@ -619,6 +619,25 @@ export function Admin() {
                     </div>
                   </dl>
                 ) : null}
+                {orgDetail ? (
+                  <dl className="admin-stats">
+                    <div>
+                      <dt>Total calls</dt>
+                      <dd>{orgDetail.total_calls}</dd>
+                    </div>
+                    <div>
+                      <dt>Audited</dt>
+                      <dd>{orgDetail.audited_count}</dd>
+                    </div>
+                    <div>
+                      <dt>Data stored</dt>
+                      <dd>{formatBytes(orgDetail.total_data_size_bytes)}</dd>
+                    </div>
+                  </dl>
+                ) : null}
+                <p className="admin-provision-hint">
+                  Per-call detail moved to <Link to="/call-logs">Call logs</Link>.
+                </p>
               </div>
 
               <div className="admin-card">
@@ -709,86 +728,6 @@ export function Admin() {
           )}
         </div>
       </div>
-
-      {selected ? (
-        <div className="admin-card admin-calls-full">
-          <h3>Calls</h3>
-          <div className="admin-calls">
-            {orgDetail ? (
-                  <>
-                    <dl className="admin-stats">
-                      <div>
-                        <dt>Total calls</dt>
-                        <dd>{orgDetail.total_calls}</dd>
-                      </div>
-                      <div>
-                        <dt>Audited</dt>
-                        <dd>{orgDetail.audited_count}</dd>
-                      </div>
-                      <div>
-                        <dt>Data stored</dt>
-                        <dd>{formatBytes(orgDetail.total_data_size_bytes)}</dd>
-                      </div>
-                    </dl>
-                    <div className="admin-table-wrap">
-                      <table className="admin-table">
-                        <thead>
-                          <tr>
-                            <th>Date</th>
-                            <th>Filename</th>
-                            <th>Length</th>
-                            <th>Engine</th>
-                            <th>Audited</th>
-                            <th>Size</th>
-                            <th>Uploaded by</th>
-                            <th>Requested by</th>
-                            <th>Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {orgDetail.calls.map((c) => (
-                            <tr key={c.call_id}>
-                              <td>
-                                {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}
-                              </td>
-                              <td>{c.filename || '—'}</td>
-                              <td>
-                                {c.audio_seconds != null ? formatTime(c.audio_seconds) : '—'}
-                              </td>
-                              <td>{c.mode === 'selfhosted' ? 'Self-hosted' : 'PyAI'}</td>
-                              <td>{c.audited ? 'Yes' : 'No'}</td>
-                              <td>{formatBytes(c.data_size_bytes)}</td>
-                              <td>{c.uploaded_by || '—'}</td>
-                              <td>{c.requested_by || '—'}</td>
-                              <td>
-                                {c.deleted ? (
-                                  <span className="admin-deleted-badge">
-                                    Deleted
-                                    {c.deleted_by_short_id != null ? ` by #${c.deleted_by_short_id}` : ''}
-                                  </span>
-                                ) : (
-                                  '—'
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {orgDetail.calls.length === 0 ? (
-                        <p className="empty-copy">No calls for this org.</p>
-                      ) : null}
-                      {orgDetail.calls_truncated ? (
-                        <p className="admin-provision-hint">
-                          Showing the {orgDetail.calls.length} most recent of{' '}
-                          {orgDetail.total_calls} calls.
-                        </p>
-                      ) : null}
-                    </div>
-                  </>
-                ) : null}
-          </div>
-        </div>
-      ) : null}
     </>
   )
 }

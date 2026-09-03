@@ -383,3 +383,155 @@ def activity(
         "events": events[:cap],
         "truncated": truncated,
     }
+
+
+_CALL_LOGS_LIMIT_MAX = 5000
+_CALL_LOGS_LIMIT_DEFAULT = 500
+
+
+def _resolve_call_log_scope(query: str) -> tuple[str, str | None, dict]:
+    """Resolve an email, org id, or short id into (org_id, uploaded_by_filter, matched).
+
+    A bare org id always scopes to the whole org. A short id or email
+    resolves to one org_member: the account owner's calls ARE the whole
+    org's, since there's nothing to scope down to; a regular member's
+    calls are filtered to just what they uploaded.
+    """
+    q = (query or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="query is required.")
+
+    oid = parse_org_id(q)
+    if oid:
+        return oid, None, {"org_id": oid, "user_id": None, "role": None, "scope": "org"}
+
+    sid = _parse_short_id(q)
+    with db.connection() as conn:
+        if sid is not None:
+            row = conn.execute(
+                """
+                SELECT org_id, user_id, role, first_name, last_name
+                FROM org_members WHERE short_id = %s
+                """,
+                (sid,),
+            ).fetchone()
+            email = None
+        else:
+            rows = conn.execute(
+                "SELECT * FROM public.admin_search_directory(%s)", (q,),
+            ).fetchall()
+            row = next(
+                (r for r in rows or [] if (r.get("email") or "").strip().lower() == q.lower()),
+                None,
+            )
+            email = row.get("email") if row else None
+
+    org_id = parse_org_id((row or {}).get("org_id"))
+    if not row or not org_id:
+        raise HTTPException(
+            status_code=404, detail="No match for that email, org id, or short id.",
+        )
+    user_id = str(row.get("user_id")) if row.get("user_id") else None
+    role = (row.get("role") or "").strip().lower()
+    matched = {
+        "org_id": org_id,
+        "user_id": user_id,
+        "role": role or None,
+        "name": _member_name(row),
+        "email": email,
+    }
+    if role == "owner":
+        return org_id, None, {**matched, "scope": "org"}
+    return org_id, user_id, {**matched, "scope": "member"}
+
+
+def _call_logs_rows(org_id: str, uploaded_by: str | None, *, limit: int) -> tuple[list[dict], int]:
+    """Call rows for the resolved scope, newest first. Returns (rows, total_count)."""
+    with org_scope(org_id):
+        with db.connection() as conn:
+            where = "c.org_id = %s"
+            params: list = [org_id]
+            if uploaded_by:
+                where += " AND c.uploaded_by = %s"
+                params.append(uploaded_by)
+            total_row = conn.execute(
+                f"SELECT COUNT(*) AS n FROM calls c WHERE {where}", params,
+            ).fetchone()
+            rows = conn.execute(
+                f"""
+                SELECT c.id, c.filename, c.job_id, c.created_at, c.audio_seconds,
+                       c.uploaded_by, c.deleted_at, c.deleted_by,
+                       pg_column_size(c.raw_json) AS raw_json_bytes
+                FROM calls c
+                WHERE {where}
+                ORDER BY c.created_at DESC
+                LIMIT %s
+                """,
+                [*params, limit],
+            ).fetchall()
+            audit_size_rows = conn.execute(
+                f"""
+                SELECT a.call_id, SUM(pg_column_size(a.findings)) AS n
+                FROM audits a JOIN calls c ON c.id = a.call_id
+                WHERE {where}
+                GROUP BY a.call_id
+                """,
+                params,
+            ).fetchall()
+            member_rows = conn.execute(
+                "SELECT user_id, first_name, last_name, short_id FROM org_members WHERE org_id = %s",
+                (org_id,),
+            ).fetchall()
+    names = {str(r["user_id"]): _member_name(r) for r in member_rows or [] if r.get("user_id")}
+    short_ids = {
+        str(r["user_id"]): r.get("short_id") for r in member_rows or [] if r.get("user_id")
+    }
+    audit_bytes_by_call = {
+        int(r["call_id"]): int(r.get("n") or 0)
+        for r in audit_size_rows or []
+        if r.get("call_id") is not None
+    }
+    out = []
+    for row in rows or []:
+        call_id = int(row["id"])
+        uploader = row.get("uploaded_by")
+        deleted_by = row.get("deleted_by")
+        out.append(
+            {
+                "call_id": call_id,
+                "filename": row.get("filename"),
+                "created_at": _json_value(row.get("created_at")),
+                "audio_seconds": row.get("audio_seconds"),
+                "mode": _call_mode(row.get("job_id")),
+                "uploaded_by": names.get(str(uploader)) if uploader else None,
+                "data_size_bytes": int(row.get("raw_json_bytes") or 0)
+                + audit_bytes_by_call.get(call_id, 0),
+                "deleted": row.get("deleted_at") is not None,
+                "deleted_by_short_id": short_ids.get(str(deleted_by)) if deleted_by else None,
+            }
+        )
+    return out, int((total_row or {}).get("n") or 0)
+
+
+def call_logs(query: str, limit: int | None = None) -> dict:
+    """Search calls by email, org id, or short id.
+
+    Owner id (or a bare org id) returns the whole org's calls; a regular
+    member's id is scoped to only what that person uploaded.
+    """
+    org_id, uploaded_by, matched = _resolve_call_log_scope(query)
+    cap = max(1, min(int(limit or _CALL_LOGS_LIMIT_DEFAULT), _CALL_LOGS_LIMIT_MAX))
+    calls, total = _call_logs_rows(org_id, uploaded_by, limit=cap)
+    return {
+        "matched": matched,
+        "calls": calls,
+        "total_calls": total,
+        "calls_truncated": total > len(calls),
+    }
+
+
+def call_logs_csv_rows(query: str) -> tuple[list[dict], dict]:
+    """Same resolution as call_logs(), uncapped for export."""
+    org_id, uploaded_by, matched = _resolve_call_log_scope(query)
+    calls, _total = _call_logs_rows(org_id, uploaded_by, limit=_CALL_LOGS_LIMIT_MAX)
+    return calls, matched

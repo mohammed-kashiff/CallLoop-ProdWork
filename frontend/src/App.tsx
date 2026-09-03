@@ -10,6 +10,7 @@ import { Admin } from './pages/Admin'
 import { AgentsPulse } from './pages/AgentsPulse'
 import { AuditDetail } from './pages/AuditDetail'
 import { Audits } from './pages/Audits'
+import { CallLogs } from './pages/CallLogs'
 import { ChurnRisk } from './pages/ChurnRisk'
 import { Feedbacks } from './pages/Feedbacks'
 import { FlaggedForReview } from './pages/FlaggedForReview'
@@ -60,6 +61,7 @@ function App() {
                     <Route path="integrations" element={<Integrations />} />
                     <Route path="training" element={<Training />} />
                     <Route path="admin" element={<Admin />} />
+                    <Route path="call-logs" element={<CallLogs />} />
                     <Route path="profile" element={<Profile />} />
                     <Route path="pyai" element={<Pyai />} />
                     <Route path="*" element={<Navigate to={home} replace />} />

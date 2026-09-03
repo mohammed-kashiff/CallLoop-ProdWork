@@ -402,6 +402,43 @@ def admin_password_events(user_id: str, request: Request):
     return {"user_id": uid, "events": password_events.history_for_user(uid)}
 
 
+@app.get("/api/admin/call-logs")
+def admin_call_logs(request: Request, query: str = "", limit: int | None = None):
+    """Search calls by email, org id, or short id."""
+    auth.require_platform_admin(request)
+    return admin_console.call_logs(query, limit=limit)
+
+
+@app.get("/api/admin/call-logs/export")
+def admin_call_logs_export(request: Request, query: str = ""):
+    """CSV download of the same search."""
+    auth.require_platform_admin(request)
+    calls, matched = admin_console.call_logs_csv_rows(query)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    buf = io.StringIO()
+    fields = [
+        "call_id", "filename", "created_at", "audio_seconds", "mode",
+        "uploaded_by", "data_size_bytes", "deleted", "deleted_by_short_id",
+    ]
+    writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    for rec in calls:
+        writer.writerow(rec)
+    applog.event(
+        log, "admin_call_logs_exported",
+        count=len(calls), scope=matched.get("scope"), org_id=matched.get("org_id"),
+    )
+    # UTF-8 BOM helps Excel open the CSV cleanly
+    content = "\ufeff" + buf.getvalue()
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="callproof-call-logs-{stamp}.csv"',
+        },
+    )
+
+
 # --- end platform admin ---
 
 

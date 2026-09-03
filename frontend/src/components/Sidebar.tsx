@@ -229,6 +229,15 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
             >
               Admin
             </NavLink>
+            <NavLink
+              to="/call-logs"
+              className={({ isActive }) =>
+                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+              }
+              onClick={onNavigate}
+            >
+              Call logs
+            </NavLink>
           </nav>
         ) : (
           <>
@@ -322,15 +331,26 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               ))
             : null}
           {isPlatformAdmin ? (
-            <NavLink
-              to="/admin"
-              className={({ isActive }) =>
-                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
-              }
-              onClick={onNavigate}
-            >
-              Admin
-            </NavLink>
+            <>
+              <NavLink
+                to="/admin"
+                className={({ isActive }) =>
+                  ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+                }
+                onClick={onNavigate}
+              >
+                Admin
+              </NavLink>
+              <NavLink
+                to="/call-logs"
+                className={({ isActive }) =>
+                  ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+                }
+                onClick={onNavigate}
+              >
+                Call logs
+              </NavLink>
+            </>
           ) : null}
         </nav>
           </>
