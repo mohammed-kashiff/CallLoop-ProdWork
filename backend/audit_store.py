@@ -228,55 +228,138 @@ def insert_weighted_version(
     }
 
 
-def insert_custom_definition(conn, *, org_id: str, definition: Mapping[str, Any]) -> dict[str, Any]:
-    """Insert a new active rubric version with a caller-built definition.
-
-    Self-serve rubric builder: the dimension SET itself can change (not just
-    weights on the existing 4) — the caller already composed `definition`
-    from a team's own built-in/custom picks. Same versioning/name-reuse/
-    one-transaction discipline as insert_weighted_version (CR-13), kept as a
-    separate function rather than refactored into it so Command Center's
-    admin-only reweighting tool stays untouched.
-    """
-    active = conn.execute(
+def list_rubric_lineages(conn, *, org_id: str) -> list[dict[str, Any]]:
+    """One row per distinct rubric NAME for this org — its latest version and
+    whether that name is the one currently active. A "lineage" is a named,
+    independently-versioned rubric a team saved; multiple can coexist, only
+    one is ever active org-wide."""
+    rows = conn.execute(
         """
-        SELECT id, name, version
+        SELECT DISTINCT ON (name)
+            id, name, version, is_active, updated_at
         FROM rubrics
-        WHERE org_id = %s AND is_active
-        ORDER BY version DESC
-        LIMIT 1
-        FOR UPDATE
+        WHERE org_id = %s
+        ORDER BY name, version DESC
         """,
         (org_id,),
+    ).fetchall()
+    return [
+        {
+            "rubric_id": str(r["id"]),
+            "name": str(r["name"]),
+            "version": int(r["version"]),
+            "is_active": bool(r["is_active"]),
+            "updated_at": r.get("updated_at"),
+        }
+        for r in rows or []
+    ]
+
+
+def fetch_rubric_by_name(conn, *, org_id: str, name: str) -> dict[str, Any] | None:
+    """Latest version of one named lineage, regardless of active status."""
+    row = conn.execute(
+        """
+        SELECT id, name, version, definition, is_active, updated_at
+        FROM rubrics
+        WHERE org_id = %s AND name = %s
+        ORDER BY version DESC
+        LIMIT 1
+        """,
+        (org_id, name),
     ).fetchone()
-    name = (str(active["name"] or "") if active else "") or LEGACY_RUBRIC_NAME
+    if not row:
+        return None
+    definition = decode_findings(row.get("definition"))
+    return {
+        "rubric_id": str(row["id"]),
+        "name": str(row["name"]),
+        "version": int(row["version"]),
+        "is_active": bool(row["is_active"]),
+        "updated_at": row.get("updated_at"),
+        "definition": definition if isinstance(definition, dict) else load_v8_definition(),
+    }
+
+
+def save_named_rubric(
+    conn, *, org_id: str, name: str, definition: Mapping[str, Any], activate: bool,
+) -> dict[str, Any]:
+    """Insert a new version under this specific name (a library entry, not
+    just "whatever's currently active" — the caller resolves that name
+    itself, e.g. rubric_builder.save_rubric's default-name fallback, when
+    it wants that older single-rubric behavior).
+
+    activate=True deactivates whatever else is active for this org (any
+    name) first, in the same transaction, so at most one rubric is ever
+    active org-wide — same invariant the scoring path (fetch_active_rubric)
+    already depends on.
+    """
     max_row = conn.execute(
         "SELECT COALESCE(MAX(version), 0) AS v FROM rubrics WHERE org_id = %s AND name = %s",
         (org_id, name),
     ).fetchone()
     version = int((max_row or {}).get("v") or 0) + 1
-    conn.execute(
-        "UPDATE rubrics SET is_active = false, updated_at = now() WHERE org_id = %s AND is_active",
-        (org_id,),
-    )
+    if activate:
+        conn.execute(
+            "UPDATE rubrics SET is_active = false, updated_at = now() WHERE org_id = %s AND is_active",
+            (org_id,),
+        )
     rubric_id = str(uuid.uuid4())
     inserted = conn.execute(
         """
         INSERT INTO rubrics (
             id, org_id, name, version, definition, is_active, created_at, updated_at
         )
-        VALUES (%s, %s, %s, %s, %s, true, now(), now())
-        RETURNING id, name, version, updated_at
+        VALUES (%s, %s, %s, %s, %s, %s, now(), now())
+        RETURNING id, name, version, is_active, updated_at
         """,
-        (rubric_id, org_id, name, version, Json(dict(definition))),
+        (rubric_id, org_id, name, version, Json(dict(definition)), activate),
     ).fetchone()
-    row = inserted or {"id": rubric_id, "name": name, "version": version, "updated_at": None}
+    row = inserted or {
+        "id": rubric_id, "name": name, "version": version,
+        "is_active": activate, "updated_at": None,
+    }
     return {
         "rubric_id": str(row["id"]),
         "name": str(row["name"]),
         "version": int(row["version"]),
+        "is_active": bool(row["is_active"]),
         "updated_at": row.get("updated_at"),
         "definition": definition,
+    }
+
+
+def activate_rubric_by_name(conn, *, org_id: str, name: str) -> dict[str, Any]:
+    """Switch which saved rubric is active — no dimension change, just a
+    swap. 404-equivalent (ValueError) if that name has no rows for this org."""
+    latest = conn.execute(
+        """
+        SELECT id, version, definition, updated_at
+        FROM rubrics
+        WHERE org_id = %s AND name = %s
+        ORDER BY version DESC
+        LIMIT 1
+        FOR UPDATE
+        """,
+        (org_id, name),
+    ).fetchone()
+    if not latest:
+        raise ValueError(f"No saved rubric named {name!r} for this org.")
+    conn.execute(
+        "UPDATE rubrics SET is_active = false, updated_at = now() WHERE org_id = %s AND is_active",
+        (org_id,),
+    )
+    conn.execute(
+        "UPDATE rubrics SET is_active = true, updated_at = now() WHERE id = %s",
+        (latest["id"],),
+    )
+    definition = decode_findings(latest.get("definition"))
+    return {
+        "rubric_id": str(latest["id"]),
+        "name": name,
+        "version": int(latest["version"]),
+        "is_active": True,
+        "updated_at": latest.get("updated_at"),
+        "definition": definition if isinstance(definition, dict) else load_v8_definition(),
     }
 
 

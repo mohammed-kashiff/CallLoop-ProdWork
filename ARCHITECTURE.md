@@ -8,12 +8,13 @@
 > Last written: 2026-09-03. Since the last pass: the admin console moved from
 > `idb.call-loop.com` to `commandcenter.call-loop.com` — still a
 > **shared-build** second origin (same SPA, host-gated UI — not a separate
-> admin compile). In progress: a self-serve rubric builder — each org's
-> account owner defines their own audit criteria (not just reweighting
-> CallLoop's fixed 4 dimensions), separate from Command Center's admin-only
-> reweighting tool, which stays as-is. Backend is live (`GET`/`POST
-> /api/rubric`, `backend/rubric_builder.py`, `qa_v8.evaluate_custom`); the
-> customer-facing UI to actually use it is not yet built.
+> admin compile). Also live: a self-serve rubric builder — each org's account
+> owner defines their own audit criteria (not just reweighting CallLoop's
+> fixed 4 dimensions), separate from Command Center's admin-only reweighting
+> tool, which stays as-is. A team can save a **library** of several named
+> rubrics and switch which one is active. Sidebar: "Rubric builder", next to
+> Audits (`frontend/src/pages/RubricBuilder.tsx`, `backend/rubric_builder.py`,
+> `qa_v8.evaluate_custom`).
 
 ---
 
@@ -151,7 +152,7 @@ request and scopes every downstream call to that org.
 | `db.py` | Opens Postgres connections, runs `SET LOCAL ROLE callproof_app` + sets the tenant GUCs (`app.current_org_id`, `app.current_user_id`) so RLS applies. `bypass_rls=True` is a narrowly-scoped escape hatch for specific admin/background paths only — see the comment in that file before ever reaching for it. |
 | `db_url.py` | Reads and normalizes `DATABASE_URL`/`SUPABASE_DB_URL`. Never logs it (embeds a password). |
 | `audit_store.py` | Reads/writes `audits` and `rubrics` rows; seeds the legacy rubric for new orgs. `insert_weighted_version()` (CR-13, Command Center reweighting) and `insert_custom_definition()` (self-serve builder, arbitrary dimension set) are separate functions on purpose — same versioning discipline, kept apart so the admin-only tool stays untouched by the self-serve one. |
-| `rubric_builder.py` | Self-serve rubric builder (customer-facing, gated by `auth.require_owner`, not admin): a team's own mix of built-in dimensions (reused unchanged from `rubric.json`, team picks which + weight) and free-text custom ones (`method: "custom_llm"`, Claude-judged). Deliberately separate from `admin_console.py`. |
+| `rubric_builder.py` | Self-serve rubric builder (customer-facing, gated by `auth.require_owner`, not admin): a team's own mix of built-in dimensions (reused unchanged from `rubric.json` unless the team edits their criteria text, which converts that one to a custom dimension — a built-in's deterministic logic isn't rewritable by text) and free-text custom ones (`method: "custom_llm"`, Claude-judged). A **multi-rubric library**: teams save several independently-versioned named rubrics (`audit_store.save_named_rubric`/`list_rubric_lineages`/`activate_rubric_by_name`), at most one active org-wide at a time — same `rubrics` schema, no migration. Deliberately separate from `admin_console.py`. |
 | `audio_store.py` | Uploads/downloads call recordings to/from the private Supabase Storage bucket; issues signed URLs. |
 | `audio_backfill.py` | One-off CLI (`python -m backend.audio_backfill`) to push any leftover local recordings into Storage. |
 | `org_vault.py` | Per-org JustCall credentials in Supabase Vault — `put_justcall`/`load_justcall`/`delete_justcall`. Plaintext keys never touch a table; only a key suffix is indexed in `org_credentials`. |
@@ -258,7 +259,11 @@ sequenceDiagram
 | GET | `/` | Health check |
 | GET | `/api/me` | Current user/org/role/features, plus `org_name` (CL-31) resolved from `orgs.name` for the caller's own org — RLS-scoped, never another org's |
 | GET | `/api/rubric` | Self-serve rubric builder: the caller's org's active rubric (built-in + custom dimension mix). Any authenticated org member. |
-| POST | `/api/rubric` | Self-serve rubric builder: save a new rubric version — any mix of built-in/custom dimensions, weights sum to 100. **Owner-only** (`require_owner`), separate gate from `require_platform_admin`. |
+| POST | `/api/rubric` | Self-serve rubric builder: save a new rubric version under whatever name is currently active (or the legacy default name on a first save) — any mix of built-in/custom dimensions, weights sum to 100. **Owner-only** (`require_owner`), separate gate from `require_platform_admin`. |
+| GET | `/api/rubrics` | Self-serve rubric builder: the library — every named rubric this org has saved, latest version + active flag each. |
+| GET | `/api/rubrics/{name}` | Self-serve rubric builder: one named rubric's latest version, for loading into the editor. |
+| POST | `/api/rubrics/{name}` | Self-serve rubric builder: save a new version under this specific name (a library entry, `activate: bool` in the body controls whether it also becomes the org's active rubric). **Owner-only.** |
+| POST | `/api/rubrics/{name}/activate` | Self-serve rubric builder: switch which saved rubric is active — no dimension change, just a swap. **Owner-only.** |
 | POST | `/api/admin/provision-user` | **Platform-admin only.** Create a login + org membership for a personal-email (Gmail, etc.) signup, org named by the admin; returns a one-time generated password. Gated by `require_platform_admin` — 403 for everyone else, checked before any Supabase call. |
 | GET | `/api/admin/directory` | **Platform-admin only.** Search `org_directory` (email/name/org id/user id/short id substring) via the `admin_search_directory` SQL function — `org_directory` itself is never granted to the app role. |
 | GET | `/api/admin/usage` | **Platform-admin only.** All-time PyAI/Anthropic call, poll, and estimated-cost totals for one *queried* org — not the caller's own. |

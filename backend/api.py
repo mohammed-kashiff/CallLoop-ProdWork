@@ -277,6 +277,48 @@ def save_rubric(request: Request, body: SaveRubricBody):
     )
 
 
+@app.get("/api/rubrics")
+def list_rubrics_route(request: Request):
+    """Self-serve rubric builder: every named rubric this org has saved —
+    the library view, one entry per name, latest version + active flag."""
+    return rubric_builder.list_rubrics(_org(request))
+
+
+@app.get("/api/rubrics/{name}")
+def get_rubric_by_name(request: Request, name: str):
+    """One named rubric's latest version, for loading into the editor."""
+    return rubric_builder.get_rubric(_org(request), name)
+
+
+class SaveNamedRubricBody(BaseModel):
+    dimensions: list[RubricDimensionBody]
+    activate: bool = True
+
+
+@app.post("/api/rubrics/{name}")
+def save_named_rubric_route(request: Request, name: str, body: SaveNamedRubricBody):
+    """Save a new version under this specific name — a library entry, not
+    necessarily replacing whatever's currently active. Owner-only."""
+    auth.require_owner(request)
+    return rubric_builder.save_rubric(
+        _org(request),
+        [d.model_dump() for d in body.dimensions],
+        changed_by=getattr(request.state, "email", None) or "",
+        name=name,
+        activate=body.activate,
+    )
+
+
+@app.post("/api/rubrics/{name}/activate")
+def activate_rubric_route(request: Request, name: str):
+    """Switch which saved rubric scores calls going forward — no dimension
+    change, just a swap. Owner-only."""
+    auth.require_owner(request)
+    return rubric_builder.activate_rubric(
+        _org(request), name, changed_by=getattr(request.state, "email", None) or "",
+    )
+
+
 # --- platform admin: target org from query/body, not the caller's JWT ---
 
 

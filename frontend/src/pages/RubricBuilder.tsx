@@ -12,14 +12,26 @@ type RubricDimension = {
   question?: string | null
 }
 
+type AvailableBuiltin = { id: string; name: string; default_question: string }
+
 type RubricPayload = {
   org_id: string
   source: 'custom' | 'legacy'
   rubric_id: string | null
+  name: string | null
   version: number | null
+  is_active?: boolean
   updated_at: string | null
   dimensions: RubricDimension[]
-  available_builtins: { id: string; name: string }[]
+  available_builtins: AvailableBuiltin[]
+}
+
+type LibraryEntry = {
+  rubric_id: string
+  name: string
+  version: number
+  is_active: boolean
+  updated_at: string | null
 }
 
 type DraftDimension = {
@@ -29,6 +41,7 @@ type DraftDimension = {
   name: string
   question: string
   weight: number
+  customized: boolean
 }
 
 function toDraft(dims: RubricDimension[]): DraftDimension[] {
@@ -39,18 +52,46 @@ function toDraft(dims: RubricDimension[]): DraftDimension[] {
     name: d.name || '',
     question: d.question || '',
     weight: d.weight,
+    customized: false,
   }))
 }
 
 export function RubricBuilder() {
   const { role } = useAuth()
   const isOwner = role === 'owner'
+
+  const [library, setLibrary] = useState<LibraryEntry[] | null>(null)
+  const [libraryError, setLibraryError] = useState<string | null>(null)
+
   const [data, setData] = useState<RubricPayload | null>(null)
   const [draft, setDraft] = useState<DraftDimension[]>([])
+  const [rubricName, setRubricName] = useState('')
+  const [activateOnSave, setActivateOnSave] = useState(true)
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [switching, setSwitching] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saveInfo, setSaveInfo] = useState<string | null>(null)
+
+  const loadLibrary = () => {
+    setLibraryError(null)
+    apiFetch('/api/rubrics')
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await readError(r, 'Could not load your saved rubrics.'))
+        return r.json() as Promise<{ rubrics: LibraryEntry[] }>
+      })
+      .then((payload) => setLibrary(payload.rubrics))
+      .catch((e: unknown) =>
+        setLibraryError(e instanceof Error ? e.message : 'Could not load your saved rubrics.'),
+      )
+  }
+
+  const applyPayload = (payload: RubricPayload) => {
+    setData(payload)
+    setDraft(toDraft(payload.dimensions))
+    setRubricName(payload.name || '')
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -62,8 +103,7 @@ export function RubricBuilder() {
       })
       .then((payload) => {
         if (cancelled) return
-        setData(payload)
-        setDraft(toDraft(payload.dimensions))
+        applyPayload(payload)
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load your rubric.')
@@ -71,6 +111,7 @@ export function RubricBuilder() {
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
+    loadLibrary()
     return () => {
       cancelled = true
     }
@@ -99,6 +140,7 @@ export function RubricBuilder() {
         name: builtin.name,
         question: '',
         weight: 0,
+        customized: false,
       },
     ])
   }
@@ -106,36 +148,82 @@ export function RubricBuilder() {
   const addCustom = () => {
     setDraft((prev) => [
       ...prev,
-      { key: `custom-new-${Date.now()}`, kind: 'custom', id: null, name: '', question: '', weight: 0 },
+      {
+        key: `custom-new-${Date.now()}`,
+        kind: 'custom',
+        id: null,
+        name: '',
+        question: '',
+        weight: 0,
+        customized: false,
+      },
     ])
   }
 
+  const startCustomizing = (key: string) => {
+    const row = draft.find((d) => d.key === key)
+    const builtin = data?.available_builtins.find((b) => b.id === row?.id)
+    updateDraft(key, { customized: true, question: builtin?.default_question || '' })
+  }
+
+  const loadNamed = async (name: string) => {
+    setError(null)
+    try {
+      const r = await apiFetch(`/api/rubrics/${encodeURIComponent(name)}`)
+      if (!r.ok) throw new Error(await readError(r, 'Could not load that rubric.'))
+      applyPayload((await r.json()) as RubricPayload)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not load that rubric.')
+    }
+  }
+
+  const activateNamed = async (name: string) => {
+    setSwitching(name)
+    setError(null)
+    try {
+      const r = await apiFetch(`/api/rubrics/${encodeURIComponent(name)}/activate`, { method: 'POST' })
+      if (!r.ok) throw new Error(await readError(r, 'Could not switch rubrics.'))
+      const payload = (await r.json()) as RubricPayload
+      if (payload.name === data?.name) applyPayload(payload)
+      loadLibrary()
+      setSaveInfo(`"${name}" is now active.`)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not switch rubrics.')
+    } finally {
+      setSwitching(null)
+    }
+  }
+
   const save = async () => {
-    if (!data || total !== 100) return
+    const name = rubricName.trim()
+    if (!name || total !== 100) return
     setSaving(true)
     setError(null)
     setSaveInfo(null)
     try {
-      const payload = draft.map((d) =>
-        d.kind === 'builtin'
-          ? { kind: 'builtin', id: d.id, weight: Number(d.weight) || 0 }
-          : {
-              kind: 'custom',
-              name: d.name.trim(),
-              question: d.question.trim(),
-              weight: Number(d.weight) || 0,
-            },
-      )
-      const r = await apiFetch('/api/rubric', {
+      const payload = draft.map((d) => {
+        if (d.kind === 'builtin' && !d.customized) {
+          return { kind: 'builtin', id: d.id, weight: Number(d.weight) || 0 }
+        }
+        return {
+          kind: 'custom',
+          name: d.name.trim() || 'Untitled criterion',
+          question: d.question.trim(),
+          weight: Number(d.weight) || 0,
+        }
+      })
+      const r = await apiFetch(`/api/rubrics/${encodeURIComponent(name)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dimensions: payload }),
+        body: JSON.stringify({ dimensions: payload, activate: activateOnSave }),
       })
       if (!r.ok) throw new Error(await readError(r, 'Could not save your rubric.'))
       const saved = (await r.json()) as RubricPayload
-      setData(saved)
-      setDraft(toDraft(saved.dimensions))
-      setSaveInfo(`Saved — version ${saved.version} active.`)
+      applyPayload(saved)
+      loadLibrary()
+      setSaveInfo(
+        `Saved "${saved.name}" — version ${saved.version}${saved.is_active ? ', now active' : ' (not active)'}.`,
+      )
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not save your rubric.')
     } finally {
@@ -160,6 +248,42 @@ export function RubricBuilder() {
           {error}
         </p>
       ) : null}
+
+      {library && library.length > 0 ? (
+        <div className="admin-card rubric-builder-library">
+          <h3>Your saved rubrics</h3>
+          {libraryError ? (
+            <p className="upload-error" role="alert">
+              {libraryError}
+            </p>
+          ) : null}
+          <ul className="rubric-builder-library-list">
+            {library.map((entry) => (
+              <li key={entry.name} className="rubric-builder-library-row">
+                <span className="rubric-builder-library-name">
+                  {entry.name}
+                  {entry.is_active ? <span className="rubric-builder-active-badge">Active</span> : null}
+                </span>
+                <span className="admin-provision-hint">v{entry.version}</span>
+                <button type="button" className="ghost-btn" onClick={() => void loadNamed(entry.name)}>
+                  Load
+                </button>
+                {isOwner && !entry.is_active ? (
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    disabled={switching === entry.name}
+                    onClick={() => void activateNamed(entry.name)}
+                  >
+                    {switching === entry.name ? 'Switching…' : 'Make active'}
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {loading ? <p className="panel-lede">Loading your rubric…</p> : null}
 
       {!loading && data ? (
@@ -171,7 +295,7 @@ export function RubricBuilder() {
           ) : null}
           <p className="panel-lede">
             {data.source === 'custom'
-              ? `Custom — version ${data.version}, updated ${
+              ? `"${data.name}" — version ${data.version}, updated ${
                   data.updated_at ? new Date(data.updated_at).toLocaleString() : '—'
                 }.`
               : "You haven't customized your rubric yet — showing CallLoop's default criteria."}
@@ -180,10 +304,21 @@ export function RubricBuilder() {
           <div className="rubric-builder-list">
             {draft.map((d) => (
               <div className="rubric-builder-row" key={d.key}>
-                {d.kind === 'builtin' ? (
-                  <span className="rubric-builder-name">
-                    {d.name} <span className="admin-provision-hint">(built-in)</span>
-                  </span>
+                {d.kind === 'builtin' && !d.customized ? (
+                  <div className="rubric-builder-builtin-block">
+                    <span className="rubric-builder-name">
+                      {d.name} <span className="admin-provision-hint">(built-in)</span>
+                    </span>
+                    {isOwner ? (
+                      <button
+                        type="button"
+                        className="ghost-btn rubric-builder-customize-btn"
+                        onClick={() => startCustomizing(d.key)}
+                      >
+                        Customize criteria
+                      </button>
+                    ) : null}
+                  </div>
                 ) : (
                   <div className="rubric-builder-custom-fields">
                     <input
@@ -199,6 +334,12 @@ export function RubricBuilder() {
                       disabled={!isOwner}
                       onChange={(e) => updateDraft(d.key, { question: e.target.value })}
                     />
+                    {d.kind === 'builtin' && d.customized ? (
+                      <p className="admin-provision-hint">
+                        Editing this switches it from CallLoop's built-in check to your own
+                        AI-judged one.
+                      </p>
+                    ) : null}
                   </div>
                 )}
                 <input
@@ -253,14 +394,33 @@ export function RubricBuilder() {
           </p>
 
           {isOwner ? (
-            <button
-              type="button"
-              className="start-btn"
-              disabled={total !== 100 || saving || draft.length === 0}
-              onClick={() => void save()}
-            >
-              {saving ? 'Saving…' : 'Save'}
-            </button>
+            <div className="rubric-builder-save-row">
+              <label className="rubric-builder-name-field">
+                <span>Save as</span>
+                <input
+                  type="text"
+                  placeholder="e.g. Sales calls"
+                  value={rubricName}
+                  onChange={(e) => setRubricName(e.target.value)}
+                />
+              </label>
+              <label className="rubric-builder-activate-field">
+                <input
+                  type="checkbox"
+                  checked={activateOnSave}
+                  onChange={(e) => setActivateOnSave(e.target.checked)}
+                />
+                Make this the active rubric
+              </label>
+              <button
+                type="button"
+                className="start-btn"
+                disabled={total !== 100 || saving || draft.length === 0 || !rubricName.trim()}
+                onClick={() => void save()}
+              >
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
           ) : null}
           {saveInfo ? (
             <p className="auth-info" role="status">

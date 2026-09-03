@@ -160,12 +160,13 @@ def test_current_rubric_custom_source_reports_the_saved_mix(monkeypatch):
     ])
     definition = _wrap_definition(dims)
     conn = _FakeConn(row={
-        "id": str(uuid.uuid4()), "version": 2, "definition": definition,
+        "id": str(uuid.uuid4()), "name": "Sales calls", "version": 2, "definition": definition,
         "updated_at": datetime(2026, 4, 1, tzinfo=timezone.utc),
     })
     with _fake_db(monkeypatch, conn):
         out = current_rubric(ORG_A)
     assert out["source"] == "custom"
+    assert out["name"] == "Sales calls"
     kinds = {d["kind"] for d in out["dimensions"]}
     assert kinds == {"builtin", "custom"}
     custom = next(d for d in out["dimensions"] if d["kind"] == "custom")
