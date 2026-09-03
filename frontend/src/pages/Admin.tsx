@@ -582,66 +582,139 @@ export function Admin() {
           {rows.length === 0 ? <p className="empty-copy">No matches.</p> : null}
         </div>
 
-        <aside className="admin-panel">
+        <div className="admin-detail">
           {!selected ? (
             <p className="empty-copy">Select a row to see usage, cost, and flags.</p>
           ) : (
             <>
-              <h2>{selected.org_name || 'Organization'}</h2>
-              <p className="admin-id">{selected.org_id}</p>
-              {busy ? <p className="empty-copy">Loading…</p> : null}
-              {usage ? (
-                <dl className="admin-stats">
-                  <div>
-                    <dt>PyAI calls</dt>
-                    <dd>{pyai?.hits ?? 0}</dd>
+              <div className="admin-card">
+                <h2>{selected.org_name || 'Organization'}</h2>
+                <p className="admin-id">{selected.org_id}</p>
+                {busy ? <p className="empty-copy">Loading…</p> : null}
+                {usage ? (
+                  <dl className="admin-stats">
+                    <div>
+                      <dt>PyAI calls</dt>
+                      <dd>{pyai?.hits ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt>PyAI polls</dt>
+                      <dd>{pyai?.polls ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt>Anthropic calls</dt>
+                      <dd>{claude?.hits ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt>Est. spend</dt>
+                      <dd>{fmtUsd(usage.cost.total_usd)}</dd>
+                    </div>
+                    <div>
+                      <dt>PyAI</dt>
+                      <dd>{fmtUsd(usage.cost.pyai_usd)}</dd>
+                    </div>
+                    <div>
+                      <dt>Claude</dt>
+                      <dd>{fmtUsd(usage.cost.claude_usd)}</dd>
+                    </div>
+                  </dl>
+                ) : null}
+              </div>
+
+              <div className="admin-card">
+                <h3>Feature flags</h3>
+                <ul className="admin-flags">
+                  {TRIAL_FLAGS.map((flag) => {
+                    const on = adminFlagOn(usage?.features, flag)
+                    return (
+                      <li key={flag.key}>
+                        <div className="admin-flag-row">
+                          <span className="admin-flag-label">{flag.label}</span>
+                          <span className="toggle-switch">
+                            <input
+                              type="checkbox"
+                              checked={on}
+                              disabled={!usage || busy}
+                              onChange={(e) => void toggle(flag.key, e.target.checked)}
+                              aria-label={flag.label}
+                            />
+                            <span className="toggle-track" />
+                            <span className="toggle-thumb" />
+                          </span>
+                        </div>
+                        {flag.description ? (
+                          <p className="admin-provision-hint">{flag.description}</p>
+                        ) : null}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+
+              <div className="admin-card admin-support">
+                <h3>Account recovery</h3>
+                <p className="admin-id">{selected.email || 'No email on this row'}</p>
+                <p className="admin-provision-hint">
+                  Sends the same reset link as Forgot password. You never see
+                  or set the new password — they finish it from the email.
+                </p>
+                <div className="admin-support-actions">
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    disabled={
+                      resetEmailBusy || !selected.email || !supabaseConfigured
+                    }
+                    onClick={() => void sendResetEmail()}
+                  >
+                    {resetEmailBusy ? 'Sending…' : 'Send reset email'}
+                  </button>
+                </div>
+                {resetEmailError ? (
+                  <p className="upload-error" role="alert">
+                    {resetEmailError}
+                  </p>
+                ) : null}
+                {resetEmailInfo ? (
+                  <p className="auth-info" role="status">
+                    {resetEmailInfo}
+                  </p>
+                ) : null}
+                {pwEvents && pwEvents.length > 0 ? (
+                  <div className="admin-table-wrap">
+                    <table className="admin-table">
+                      <thead>
+                        <tr>
+                          <th>When</th>
+                          <th>Event</th>
+                          <th>IP</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pwEvents.map((e, i) => (
+                          <tr key={i}>
+                            <td>{e.created_at ? new Date(e.created_at).toLocaleString() : '—'}</td>
+                            <td>{passwordEventLabel(e)}</td>
+                            <td>{e.ip_address || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                  <div>
-                    <dt>PyAI polls</dt>
-                    <dd>{pyai?.polls ?? 0}</dd>
-                  </div>
-                  <div>
-                    <dt>Anthropic calls</dt>
-                    <dd>{claude?.hits ?? 0}</dd>
-                  </div>
-                  <div>
-                    <dt>Est. spend</dt>
-                    <dd>{fmtUsd(usage.cost.total_usd)}</dd>
-                  </div>
-                  <div>
-                    <dt>PyAI</dt>
-                    <dd>{fmtUsd(usage.cost.pyai_usd)}</dd>
-                  </div>
-                  <div>
-                    <dt>Claude</dt>
-                    <dd>{fmtUsd(usage.cost.claude_usd)}</dd>
-                  </div>
-                </dl>
-              ) : null}
-              <ul className="admin-flags">
-                {TRIAL_FLAGS.map((flag) => {
-                  const on = adminFlagOn(usage?.features, flag)
-                  return (
-                    <li key={flag.key}>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={on}
-                          disabled={!usage || busy}
-                          onChange={(e) => void toggle(flag.key, e.target.checked)}
-                        />
-                        {flag.label}
-                      </label>
-                      {flag.description ? (
-                        <p className="admin-provision-hint">{flag.description}</p>
-                      ) : null}
-                    </li>
-                  )
-                })}
-              </ul>
-              <div className="admin-calls">
-                <h3>Calls</h3>
-                {orgDetail ? (
+                ) : pwEvents && pwEvents.length === 0 ? (
+                  <p className="empty-copy">No password changes recorded.</p>
+                ) : null}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {selected ? (
+        <div className="admin-card admin-calls-full">
+          <h3>Calls</h3>
+          <div className="admin-calls">
+            {orgDetail ? (
                   <>
                     <dl className="admin-stats">
                       <div>
@@ -713,66 +786,9 @@ export function Admin() {
                     </div>
                   </>
                 ) : null}
-              </div>
-
-              <div className="admin-support">
-                <h3>Account recovery</h3>
-                <p className="admin-id">{selected.email || 'No email on this row'}</p>
-                <p className="admin-provision-hint">
-                  Sends the same reset link as Forgot password. You never see
-                  or set the new password — they finish it from the email.
-                </p>
-                <div className="admin-support-actions">
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    disabled={
-                      resetEmailBusy || !selected.email || !supabaseConfigured
-                    }
-                    onClick={() => void sendResetEmail()}
-                  >
-                    {resetEmailBusy ? 'Sending…' : 'Send reset email'}
-                  </button>
-                </div>
-                {resetEmailError ? (
-                  <p className="upload-error" role="alert">
-                    {resetEmailError}
-                  </p>
-                ) : null}
-                {resetEmailInfo ? (
-                  <p className="auth-info" role="status">
-                    {resetEmailInfo}
-                  </p>
-                ) : null}
-                {pwEvents && pwEvents.length > 0 ? (
-                  <div className="admin-table-wrap">
-                    <table className="admin-table">
-                      <thead>
-                        <tr>
-                          <th>When</th>
-                          <th>Event</th>
-                          <th>IP</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pwEvents.map((e, i) => (
-                          <tr key={i}>
-                            <td>{e.created_at ? new Date(e.created_at).toLocaleString() : '—'}</td>
-                            <td>{passwordEventLabel(e)}</td>
-                            <td>{e.ip_address || '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : pwEvents && pwEvents.length === 0 ? (
-                  <p className="empty-copy">No password changes recorded.</p>
-                ) : null}
-              </div>
-            </>
-          )}
-        </aside>
-      </div>
+          </div>
+        </div>
+      ) : null}
     </>
   )
 }

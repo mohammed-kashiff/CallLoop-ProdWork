@@ -3198,15 +3198,26 @@ html[data-color-mode='dark'] .claude-cord-plug {
   word-break: break-all;
 }
 
-.admin-panel {
+.admin-detail {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+
+.admin-card {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 0.9rem 1rem;
 }
 
-.admin-panel h2 {
+.admin-card h2,
+.admin-card h3 {
   margin: 0 0 0.25rem;
   font-size: 1.05rem;
+}
+
+.admin-calls-full {
+  margin-top: 1.25rem;
 }
 
 .admin-stats {
@@ -3234,41 +3245,89 @@ html[data-color-mode='dark'] .claude-cord-plug {
   gap: 0.65rem;
 }
 
-.admin-flags label {
+.admin-flag-row {
   display: flex;
-  gap: 0.45rem;
   align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.admin-flag-label {
   font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .admin-flags .admin-provision-hint {
-  margin: 0.15rem 0 0 1.45rem;
+  margin: 0.2rem 0 0;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 2.4rem;
+  height: 1.35rem;
+  flex: none;
+}
+
+.toggle-switch input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.toggle-switch input:disabled {
+  cursor: default;
+}
+
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
+  transition: background 0.15s ease;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 0.15rem;
+  left: 0.15rem;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background: var(--paper);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s ease;
+}
+
+.toggle-switch input:checked ~ .toggle-track {
+  background: var(--teal);
+}
+
+.toggle-switch input:checked ~ .toggle-thumb {
+  transform: translateX(1.05rem);
+}
+
+.toggle-switch input:disabled ~ .toggle-track {
+  opacity: 0.45;
+}
+
+.toggle-switch input:focus-visible ~ .toggle-track {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
 }
 
 .admin-calls {
-  margin: 0.95rem 0 0;
-  padding-top: 0.85rem;
-  border-top: 1px solid var(--line);
   display: grid;
   gap: 0.6rem;
-}
-
-.admin-calls h3 {
-  margin: 0;
-  font-size: 0.92rem;
+  margin-top: 0.6rem;
 }
 
 .admin-support {
-  margin: 0.95rem 0 0;
-  padding-top: 0.85rem;
-  border-top: 1px solid var(--line);
   display: grid;
   gap: 0.45rem;
-}
-
-.admin-support h3 {
-  margin: 0;
-  font-size: 0.92rem;
 }
 
 .admin-support-actions {
