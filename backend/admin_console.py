@@ -9,19 +9,26 @@ org — never bypass_rls.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
 
+from . import applog
+from . import audit_store
 from . import cost_estimate
 from . import db
 from . import org_features
 from . import pyai_usage
+from . import qa_v8
 from .org_ids import org_scope, parse_org_id
 
 _ALL_TIME = "1970-01-01T00:00:00Z"
 _Q_MAX = 80
+_WEIGHT_SUM = 100
+
+log = logging.getLogger("callproof.admin")
 
 
 def _json_value(value):
@@ -535,3 +542,102 @@ def call_logs_csv_rows(query: str) -> tuple[list[dict], dict]:
     org_id, uploaded_by, matched = _resolve_call_log_scope(query)
     calls, _total = _call_logs_rows(org_id, uploaded_by, limit=_CALL_LOGS_LIMIT_MAX)
     return calls, matched
+
+
+def rubric_for_org(org_id: str | None) -> dict:
+    """Current active rubric weights for an org's Rubric tab (CR-14).
+
+    Read-only GET — POST /api/admin/orgs/{org_id}/rubric (CR-13) saves a new
+    version on the same resource (body {"weights": {...}}, same response shape).
+    """
+    oid = parse_org_id(org_id)
+    if not oid:
+        raise HTTPException(status_code=400, detail="org_id is required.")
+    with org_scope(oid):
+        with db.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, version, definition, updated_at
+                FROM rubrics WHERE org_id = %s AND is_active LIMIT 1
+                """,
+                (oid,),
+            ).fetchone()
+    if row:
+        definition = audit_store.decode_findings(row.get("definition"))
+        source, rubric_id, version = "custom", str(row["id"]), int(row["version"])
+        updated_at = _json_value(row.get("updated_at"))
+    else:
+        definition, source, rubric_id, version, updated_at = None, "legacy", None, None, None
+    if not isinstance(definition, dict):
+        definition = audit_store.load_v8_definition()
+    weights = {d["id"]: d.get("weight") for d in qa_v8.list_dimensions(definition)}
+    return {
+        "org_id": oid,
+        "source": source,
+        "rubric_id": rubric_id,
+        "version": version,
+        "updated_at": updated_at,
+        "weights": weights,
+    }
+
+
+def _normalize_rubric_weights(raw) -> dict[str, int]:
+    ids = tuple(
+        d["id"] for d in qa_v8.list_dimensions(audit_store.load_v8_definition())
+    )
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="weights is required.")
+    unknown = set(raw) - set(ids)
+    missing = set(ids) - set(raw)
+    if unknown or missing:
+        raise HTTPException(
+            status_code=400,
+            detail="weights must include each scoring dimension.",
+        )
+    out: dict[str, int] = {}
+    for did in ids:
+        val = raw[did]
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            raise HTTPException(
+                status_code=400, detail="Each weight must be a whole number.",
+            )
+        if val < 0 or int(val) != val:
+            raise HTTPException(
+                status_code=400, detail="Each weight must be a whole number.",
+            )
+        out[did] = int(val)
+    if sum(out.values()) != _WEIGHT_SUM:
+        raise HTTPException(status_code=400, detail="Weights must sum to 100.")
+    return out
+
+
+def save_org_rubric(org_id: str | None, weights) -> dict:
+    """Insert a new weighted rubric version for the target org (CR-13).
+
+    Validates the four dimension weights before opening a connection so a
+    bad payload cannot write anything. The deactivate + insert live in the
+    same db.connection() transaction.
+    """
+    oid = parse_org_id(org_id)
+    if not oid:
+        raise HTTPException(status_code=400, detail="org_id is required.")
+    normalized = _normalize_rubric_weights(weights)
+    with org_scope(oid):
+        with db.connection() as conn:
+            saved = audit_store.insert_weighted_version(
+                conn, org_id=oid, weights=normalized,
+            )
+    applog.event(
+        log, "rubric_weights_saved",
+        org_id=oid,
+        rubric_id=saved["rubric_id"],
+        version=saved["version"],
+    )
+    return {
+        "org_id": oid,
+        "source": "custom",
+        "rubric_id": saved["rubric_id"],
+        "version": saved["version"],
+        "updated_at": _json_value(saved.get("updated_at")),
+        "weights": saved["weights"],
+    }

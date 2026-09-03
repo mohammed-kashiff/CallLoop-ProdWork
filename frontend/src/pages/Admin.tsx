@@ -65,6 +65,22 @@ type OrgDetailPayload = {
   total_data_size_bytes: number
 }
 
+type RubricPayload = {
+  org_id: string
+  source: 'custom' | 'legacy'
+  rubric_id: string | null
+  version: number | null
+  updated_at: string | null
+  weights: Record<string, number>
+}
+
+const RUBRIC_DIMENSIONS: { id: string; label: string }[] = [
+  { id: 'resolution_effectiveness', label: 'Resolution Effectiveness' },
+  { id: 'ownership_next_steps', label: 'Ownership & Next Steps' },
+  { id: 'active_listening', label: 'Active Listening' },
+  { id: 'tone_empathy_professionalism', label: 'Tone, Empathy & Professionalism' },
+]
+
 type ActivityEvent = {
   at: string | null
   kind: 'upload' | 'audit' | 'flag_change' | 'delete'
@@ -158,6 +174,12 @@ export function Admin() {
   const [resetEmailError, setResetEmailError] = useState<string | null>(null)
   const [pwEvents, setPwEvents] = useState<PasswordEvent[] | null>(null)
 
+  const [rubric, setRubric] = useState<RubricPayload | null>(null)
+  const [rubricDraft, setRubricDraft] = useState<Record<string, number>>({})
+  const [rubricSaving, setRubricSaving] = useState(false)
+  const [rubricError, setRubricError] = useState<string | null>(null)
+  const [rubricSaveInfo, setRubricSaveInfo] = useState<string | null>(null)
+
   const search = useCallback(async (needle: string) => {
     const r = await apiFetch(`/api/admin/directory?q=${encodeURIComponent(needle)}`)
     if (!r.ok) throw new Error(await readError(r, 'Could not search the directory.'))
@@ -237,16 +259,27 @@ export function Admin() {
     setResetEmailError(null)
     setActOrg(row.org_id)
     setPwEvents(null)
+    setRubric(null)
+    setRubricError(null)
+    setRubricSaveInfo(null)
     setBusy(true)
     try {
-      const [usageRes, detailRes] = await Promise.all([
+      const [usageRes, detailRes, rubricRes] = await Promise.all([
         apiFetch(`/api/admin/usage?org_id=${encodeURIComponent(row.org_id)}`),
         apiFetch(`/api/admin/orgs/${encodeURIComponent(row.org_id)}/detail`),
+        apiFetch(`/api/admin/orgs/${encodeURIComponent(row.org_id)}/rubric`),
       ])
       if (!usageRes.ok) throw new Error(await readError(usageRes, 'Could not load usage.'))
       if (!detailRes.ok) throw new Error(await readError(detailRes, 'Could not load org detail.'))
       setUsage((await usageRes.json()) as UsagePayload)
       setOrgDetail((await detailRes.json()) as OrgDetailPayload)
+      if (rubricRes.ok) {
+        const data = (await rubricRes.json()) as RubricPayload
+        setRubric(data)
+        setRubricDraft(data.weights)
+      } else {
+        setRubricError(await readError(rubricRes, 'Could not load the rubric.'))
+      }
     } catch (e: unknown) {
       setUsage(null)
       setOrgDetail(null)
@@ -255,6 +288,34 @@ export function Admin() {
       setBusy(false)
     }
     void loadPasswordEvents(row.user_id)
+  }
+
+  const rubricTotal = RUBRIC_DIMENSIONS.reduce(
+    (sum, dim) => sum + (rubricDraft[dim.id] ?? 0),
+    0,
+  )
+
+  const saveRubric = async () => {
+    if (!selected || rubricTotal !== 100) return
+    setRubricSaving(true)
+    setRubricError(null)
+    setRubricSaveInfo(null)
+    try {
+      const r = await apiFetch(`/api/admin/orgs/${encodeURIComponent(selected.org_id)}/rubric`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weights: rubricDraft }),
+      })
+      if (!r.ok) throw new Error(await readError(r, 'Could not save the rubric.'))
+      const data = (await r.json()) as RubricPayload
+      setRubric(data)
+      setRubricDraft(data.weights)
+      setRubricSaveInfo(`Saved — version ${data.version} active.`)
+    } catch (e: unknown) {
+      setRubricError(e instanceof Error ? e.message : 'Could not save the rubric.')
+    } finally {
+      setRubricSaving(false)
+    }
   }
 
   const loadActivity = async (e: FormEvent) => {
@@ -668,6 +729,70 @@ export function Admin() {
                     )
                   })}
                 </ul>
+              </div>
+
+              <div className="admin-card">
+                <h3>Rubric</h3>
+                <p className="admin-org">{selected.org_name || 'Organization'}</p>
+                <p className="admin-id">{selected.org_id}</p>
+                {rubricError ? (
+                  <p className="upload-error" role="alert">
+                    {rubricError}
+                  </p>
+                ) : null}
+                {rubric ? (
+                  <>
+                    <p className="admin-provision-hint">
+                      {rubric.source === 'custom'
+                        ? `Custom — version ${rubric.version}, updated ${
+                            rubric.updated_at ? new Date(rubric.updated_at).toLocaleString() : '—'
+                          }.`
+                        : 'Not yet customized — showing default weights.'}
+                    </p>
+                    <div className="admin-rubric-grid">
+                      {RUBRIC_DIMENSIONS.map((dim) => (
+                        <label key={dim.id} className="admin-rubric-field">
+                          <span>{dim.label}</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={rubricDraft[dim.id] ?? 0}
+                            disabled={rubricSaving}
+                            onChange={(e) =>
+                              setRubricDraft((prev) => ({
+                                ...prev,
+                                [dim.id]: Number(e.target.value) || 0,
+                              }))
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <p
+                      className={
+                        rubricTotal === 100 ? 'admin-rubric-total' : 'admin-rubric-total is-off'
+                      }
+                    >
+                      Total: {rubricTotal} / 100
+                    </p>
+                    <button
+                      type="button"
+                      className="start-btn"
+                      disabled={rubricTotal !== 100 || rubricSaving}
+                      onClick={() => void saveRubric()}
+                    >
+                      {rubricSaving ? 'Saving…' : 'Save'}
+                    </button>
+                    {rubricSaveInfo ? (
+                      <p className="auth-info" role="status">
+                        {rubricSaveInfo}
+                      </p>
+                    ) : null}
+                  </>
+                ) : !rubricError ? (
+                  <p className="empty-copy">Loading…</p>
+                ) : null}
               </div>
 
               <div className="admin-card admin-support">

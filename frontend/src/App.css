@@ -3338,6 +3338,40 @@ html[data-color-mode='dark'] .claude-cord-plug {
   gap: 0.5rem;
 }
 
+.admin-rubric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.7rem;
+  margin: 0.7rem 0 0;
+}
+
+.admin-rubric-field {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.admin-rubric-field input {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  width: 100%;
+}
+
+.admin-rubric-total {
+  margin: 0.7rem 0 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.admin-rubric-total.is-off {
+  color: var(--fail);
+}
+
 .profile-card {
   width: min(36rem, 100%);
   display: grid;

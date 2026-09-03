@@ -439,6 +439,24 @@ def admin_call_logs_export(request: Request, query: str = ""):
     )
 
 
+@app.get("/api/admin/orgs/{org_id}/rubric")
+def admin_org_rubric(request: Request, org_id: str):
+    """Current active rubric weights for the Rubric tab (CR-14)."""
+    auth.require_platform_admin(request)
+    return admin_console.rubric_for_org(org_id)
+
+
+class AdminRubricWeightsBody(BaseModel):
+    weights: dict[str, int]
+
+
+@app.post("/api/admin/orgs/{org_id}/rubric")
+def admin_org_rubric_save(request: Request, org_id: str, body: AdminRubricWeightsBody):
+    """Insert a new weighted rubric version (CR-13). Never mutates an existing row."""
+    auth.require_platform_admin(request)
+    return admin_console.save_org_rubric(org_id, body.weights)
+
+
 # --- end platform admin ---
 
 

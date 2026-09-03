@@ -28,6 +28,7 @@ reference it — bump ``version`` and insert a new rubric row.
 
 from __future__ import annotations
 
+import copy
 import json
 import uuid
 from collections.abc import Mapping
@@ -125,6 +126,104 @@ def seed_legacy_rubric(
             Json(load_v8_definition()),
         ),
     )
+
+
+def _iter_dimensions(definition: dict):
+    for bucket in ("technical_skills", "soft_skills"):
+        for dim in ((definition.get(bucket) or {}).get("dimensions") or []):
+            yield dim
+
+
+def apply_dimension_weights(definition: dict, weights: Mapping[str, int]) -> dict[str, Any]:
+    """Copy `definition` and set each known dimension's weight. Never mutates in place."""
+    out = copy.deepcopy(definition)
+    seen: set[str] = set()
+    for dim in _iter_dimensions(out):
+        did = dim.get("id")
+        if did in weights:
+            dim["weight"] = weights[did]
+            seen.add(did)
+    if seen != set(weights):
+        missing = ", ".join(sorted(set(weights) - seen)) or "dimension"
+        raise ValueError(f"rubric is missing scoring dimension: {missing}")
+    return out
+
+
+def insert_weighted_version(
+    conn,
+    *,
+    org_id: str,
+    weights: Mapping[str, int],
+) -> dict[str, Any]:
+    """Insert a new active rubric version; deactivate every prior active row.
+
+    Reuses the current active row's `name` (or LEGACY_RUBRIC_NAME when the org
+    has no row yet). Inventing a new name would dodge uq_rubrics_org_name_active
+    and leave two active rows for one org. Never UPDATEs definition in place.
+    Caller must hold a transaction that commits both writes together.
+    """
+    active = conn.execute(
+        """
+        SELECT id, name, version, definition
+        FROM rubrics
+        WHERE org_id = %s AND is_active
+        ORDER BY version DESC
+        LIMIT 1
+        FOR UPDATE
+        """,
+        (org_id,),
+    ).fetchone()
+    if active:
+        name = str(active["name"] or "") or LEGACY_RUBRIC_NAME
+        base = decode_findings(active.get("definition"))
+        if not isinstance(base, dict):
+            base = load_v8_definition()
+    else:
+        name = LEGACY_RUBRIC_NAME
+        base = load_v8_definition()
+    definition = apply_dimension_weights(base, weights)
+    max_row = conn.execute(
+        """
+        SELECT COALESCE(MAX(version), 0) AS v
+        FROM rubrics
+        WHERE org_id = %s AND name = %s
+        """,
+        (org_id, name),
+    ).fetchone()
+    version = int((max_row or {}).get("v") or 0) + 1
+    conn.execute(
+        """
+        UPDATE rubrics
+        SET is_active = false, updated_at = now()
+        WHERE org_id = %s AND is_active
+        """,
+        (org_id,),
+    )
+    rubric_id = str(uuid.uuid4())
+    inserted = conn.execute(
+        """
+        INSERT INTO rubrics (
+            id, org_id, name, version, definition, is_active, created_at, updated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, true, now(), now())
+        RETURNING id, name, version, updated_at
+        """,
+        (rubric_id, org_id, name, version, Json(definition)),
+    ).fetchone()
+    row = inserted or {
+        "id": rubric_id,
+        "name": name,
+        "version": version,
+        "updated_at": None,
+    }
+    return {
+        "rubric_id": str(row["id"]),
+        "name": str(row["name"]),
+        "version": int(row["version"]),
+        "updated_at": row.get("updated_at"),
+        "weights": dict(weights),
+        "definition": definition,
+    }
 
 
 def fetch_latest_for_rubric(
