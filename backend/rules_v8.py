@@ -1226,12 +1226,17 @@ WEIGHTS = {
 VERDICT_POINTS = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
 
 
-def aggregate_score(dimension_verdicts, tone_hostile_override=False):
+def aggregate_score(dimension_verdicts, tone_hostile_override=False, weights=None):
     """dimension_verdicts: {dimension_id: 'pass'|'partial'|'fail'}
     If tone_hostile_override is True, score is capped at 60 regardless of
     the weighted average -- same override behavior the old standalone gate
-    provided, now living inside the tone dimension's own detection function."""
-    weighted_sum = sum(WEIGHTS[dim_id] * VERDICT_POINTS[verdict] for dim_id, verdict in dimension_verdicts.items())
+    provided, now living inside the tone dimension's own detection function.
+
+    `weights` is {dimension_id: points}. Defaults to WEIGHTS so legacy callers
+    keep working; the real scoring path must pass the rubric's own weights.
+    """
+    table = WEIGHTS if weights is None else weights
+    weighted_sum = sum(table[dim_id] * VERDICT_POINTS[verdict] for dim_id, verdict in dimension_verdicts.items())
     score = round(weighted_sum, 1)
     if tone_hostile_override:
         score = min(score, 60)

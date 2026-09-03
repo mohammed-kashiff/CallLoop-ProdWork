@@ -326,6 +326,7 @@ def score_v8(results):
     verdicts = {}
     tally = {}
     hostile = False
+    weights = {}
     for dim, res in results:
         v = res.get("verdict") or "error"
         tally[v] = tally.get(v, 0) + 1
@@ -335,10 +336,11 @@ def score_v8(results):
             verdicts[dim["id"]] = "fail"
         if res.get("hostile_override"):
             hostile = True
-    # Fill missing weights as fail so aggregate_score always has all keys
-    for dim_id in rv8.WEIGHTS:
+        weights[dim["id"]] = dim["weight"]
+    # Fill missing dimensions as fail so aggregate_score always has all keys
+    for dim_id in weights:
         verdicts.setdefault(dim_id, "fail")
-    score = rv8.aggregate_score(verdicts, tone_hostile_override=hostile)
+    score = rv8.aggregate_score(verdicts, tone_hostile_override=hostile, weights=weights)
     return score, tally, hostile
 
 
