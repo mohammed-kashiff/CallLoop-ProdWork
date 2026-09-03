@@ -432,3 +432,14 @@ def require_platform_admin(request: Request) -> None:
     """Allowlist of JWT emails. Empty PLATFORM_ADMIN_EMAILS denies everyone."""
     if not is_platform_admin(request):
         raise HTTPException(status_code=403, detail="Not authorized.")
+
+
+def require_owner(request: Request) -> None:
+    """Self-serve rubric builder: only the org's account owner may edit it.
+
+    org_members.role is only "owner" or "member" today — no team-admin tier
+    yet (see the roles hierarchy doc). Owner-only until that ships.
+    """
+    role = (getattr(request.state, "role", None) or "").strip().lower()
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Only the account owner can do this.")

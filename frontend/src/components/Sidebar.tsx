@@ -16,7 +16,13 @@ const LOOP_NAV = [
   { to: '/training', label: 'Training', end: false, icon: 'training', soon: true },
 ] as const
 
-type NavIconName = typeof HOME.icon | (typeof LOOP_NAV)[number]['icon'] | 'pulse' | 'neighbourhood' | 'audits'
+type NavIconName =
+  | typeof HOME.icon
+  | (typeof LOOP_NAV)[number]['icon']
+  | 'pulse'
+  | 'neighbourhood'
+  | 'audits'
+  | 'rubric'
 
 function NavIcon({ name }: { name: NavIconName }) {
   if (name === 'home') {
@@ -92,6 +98,22 @@ function NavIcon({ name }: { name: NavIconName }) {
           strokeLinecap="round"
           d="M8.5 9h7M8.5 12.5h7M8.5 16h4.5"
         />
+      </svg>
+    )
+  }
+  if (name === 'rubric') {
+    return (
+      <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          d="M5 6.5h9M5 12h6M5 17.5h11"
+        />
+        <circle cx="16.5" cy="6.5" r="1.8" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <circle cx="13" cy="12" r="1.8" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <circle cx="18.5" cy="17.5" r="1.8" fill="none" stroke="currentColor" strokeWidth="1.8" />
       </svg>
     )
   }
@@ -312,6 +334,16 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
           >
             <NavIcon name="audits" />
             Audits
+          </NavLink>
+          <NavLink
+            to="/rubric-builder"
+            className={({ isActive }) =>
+              ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+            }
+            onClick={onNavigate}
+          >
+            <NavIcon name="rubric" />
+            Rubric builder
           </NavLink>
           {showGrowth
             ? LOOP_NAV.map((item) => (

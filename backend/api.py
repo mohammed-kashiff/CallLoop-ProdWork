@@ -49,6 +49,7 @@ from . import justcall
 from . import org_features
 from . import org_vault
 from . import password_events
+from . import rubric_builder
 from . import sentry_report
 from .config import cors_origins, load_env, skip_startup
 
@@ -242,6 +243,38 @@ def patch_me(request: Request, body: ProfileNameBody):
 def me_usage(request: Request):
     """Same payload as /api/admin/usage, always the caller's JWT org."""
     return admin_console.usage_for_org(_org(request))
+
+
+@app.get("/api/rubric")
+def get_rubric(request: Request):
+    """Self-serve rubric builder: the caller's org's active rubric, described
+    as builtin/custom dimension picks. Any authenticated org member can view."""
+    return rubric_builder.current_rubric(_org(request))
+
+
+class RubricDimensionBody(BaseModel):
+    kind: str
+    id: str | None = None
+    name: str | None = None
+    question: str | None = None
+    weight: int
+
+
+class SaveRubricBody(BaseModel):
+    dimensions: list[RubricDimensionBody]
+
+
+@app.post("/api/rubric")
+def save_rubric(request: Request, body: SaveRubricBody):
+    """Self-serve rubric builder: save a new version of the org's own rubric
+    (mix of built-in and custom dimensions, weights summing to 100).
+    Owner-only — no team-admin tier yet."""
+    auth.require_owner(request)
+    return rubric_builder.save_rubric(
+        _org(request),
+        [d.model_dump() for d in body.dimensions],
+        changed_by=getattr(request.state, "email", None) or "",
+    )
 
 
 # --- platform admin: target org from query/body, not the caller's JWT ---
@@ -454,7 +487,10 @@ class AdminRubricWeightsBody(BaseModel):
 def admin_org_rubric_save(request: Request, org_id: str, body: AdminRubricWeightsBody):
     """Insert a new weighted rubric version (CR-13). Never mutates an existing row."""
     auth.require_platform_admin(request)
-    return admin_console.save_org_rubric(org_id, body.weights)
+    return admin_console.save_org_rubric(
+        org_id, body.weights,
+        changed_by=getattr(request.state, "email", None) or "",
+    )
 
 
 # --- end platform admin ---

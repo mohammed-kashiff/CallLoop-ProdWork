@@ -20,6 +20,7 @@ import { Login } from './pages/Login'
 import { Neighbourhood } from './pages/Neighbourhood'
 import { Profile } from './pages/Profile'
 import { ResetPassword } from './pages/ResetPassword'
+import { RubricBuilder } from './pages/RubricBuilder'
 import { Pyai } from './pages/Pyai'
 import { Training } from './pages/Training'
 import { appHomePath, isAdminHost } from './lib/adminHost'
@@ -56,6 +57,7 @@ function App() {
                     <Route path="agents-pulse/flagged" element={<FlaggedForReview />} />
                     <Route path="audits" element={<Audits />} />
                     <Route path="audits/:callId" element={<AuditDetail />} />
+                    <Route path="rubric-builder" element={<RubricBuilder />} />
                     <Route path="feedbacks" element={<Feedbacks />} />
                     <Route path="churn-risk" element={<ChurnRisk />} />
                     <Route path="integrations" element={<Integrations />} />

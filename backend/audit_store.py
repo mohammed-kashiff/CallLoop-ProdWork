@@ -181,6 +181,7 @@ def insert_weighted_version(
     else:
         name = LEGACY_RUBRIC_NAME
         base = load_v8_definition()
+    previous_weights = {dim.get("id"): dim.get("weight") for dim in _iter_dimensions(base)}
     definition = apply_dimension_weights(base, weights)
     max_row = conn.execute(
         """
@@ -222,6 +223,59 @@ def insert_weighted_version(
         "version": int(row["version"]),
         "updated_at": row.get("updated_at"),
         "weights": dict(weights),
+        "previous_weights": previous_weights,
+        "definition": definition,
+    }
+
+
+def insert_custom_definition(conn, *, org_id: str, definition: Mapping[str, Any]) -> dict[str, Any]:
+    """Insert a new active rubric version with a caller-built definition.
+
+    Self-serve rubric builder: the dimension SET itself can change (not just
+    weights on the existing 4) — the caller already composed `definition`
+    from a team's own built-in/custom picks. Same versioning/name-reuse/
+    one-transaction discipline as insert_weighted_version (CR-13), kept as a
+    separate function rather than refactored into it so Command Center's
+    admin-only reweighting tool stays untouched.
+    """
+    active = conn.execute(
+        """
+        SELECT id, name, version
+        FROM rubrics
+        WHERE org_id = %s AND is_active
+        ORDER BY version DESC
+        LIMIT 1
+        FOR UPDATE
+        """,
+        (org_id,),
+    ).fetchone()
+    name = (str(active["name"] or "") if active else "") or LEGACY_RUBRIC_NAME
+    max_row = conn.execute(
+        "SELECT COALESCE(MAX(version), 0) AS v FROM rubrics WHERE org_id = %s AND name = %s",
+        (org_id, name),
+    ).fetchone()
+    version = int((max_row or {}).get("v") or 0) + 1
+    conn.execute(
+        "UPDATE rubrics SET is_active = false, updated_at = now() WHERE org_id = %s AND is_active",
+        (org_id,),
+    )
+    rubric_id = str(uuid.uuid4())
+    inserted = conn.execute(
+        """
+        INSERT INTO rubrics (
+            id, org_id, name, version, definition, is_active, created_at, updated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, true, now(), now())
+        RETURNING id, name, version, updated_at
+        """,
+        (rubric_id, org_id, name, version, Json(dict(definition))),
+    ).fetchone()
+    row = inserted or {"id": rubric_id, "name": name, "version": version, "updated_at": None}
+    return {
+        "rubric_id": str(row["id"]),
+        "name": str(row["name"]),
+        "version": int(row["version"]),
+        "updated_at": row.get("updated_at"),
         "definition": definition,
     }
 

@@ -15,6 +15,7 @@ EXPECTED_ROUTES = {
     "/healthz",
     "/api/me",
     "/api/me/usage",
+    "/api/rubric",
     "/api/admin/provision-user",
     "/api/admin/directory",
     "/api/admin/usage",

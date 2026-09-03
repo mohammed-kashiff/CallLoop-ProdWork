@@ -3372,6 +3372,76 @@ html[data-color-mode='dark'] .claude-cord-plug {
   color: var(--fail);
 }
 
+.rubric-builder-list {
+  display: grid;
+  gap: 0.7rem;
+  margin: 1rem 0;
+}
+
+.rubric-builder-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: start;
+  gap: 0.7rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--control-bg);
+}
+
+.rubric-builder-name {
+  font-weight: 700;
+  align-self: center;
+}
+
+.rubric-builder-custom-fields {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.rubric-builder-custom-fields input,
+.rubric-builder-custom-fields textarea {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  width: 100%;
+  resize: vertical;
+}
+
+.rubric-builder-custom-fields textarea {
+  min-height: 3.5rem;
+}
+
+.rubric-builder-weight {
+  width: 5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0.5rem 0.5rem;
+  font: inherit;
+}
+
+.rubric-builder-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.5rem 0;
+}
+
+.rubric-builder-add select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--control-bg);
+  color: var(--ink);
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+}
+
 .profile-card {
   width: min(36rem, 100%);
   display: grid;

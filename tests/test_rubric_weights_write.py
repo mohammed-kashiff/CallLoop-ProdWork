@@ -151,7 +151,7 @@ def test_weights_not_summing_to_100_writes_nothing(monkeypatch):
     conn = _TxConn([_seed_row()])
     with _tx_db(monkeypatch, conn):
         with pytest.raises(HTTPException) as exc:
-            save_org_rubric(ORG_A, BAD_SUM)
+            save_org_rubric(ORG_A, BAD_SUM, changed_by="tester@example.com")
     assert exc.value.status_code == 400
     assert "100" in str(exc.value.detail)
     assert conn.sql == []
@@ -166,7 +166,7 @@ def test_mid_write_failure_leaves_exactly_one_active(monkeypatch):
     conn = _TxConn([seed], fail_on_insert=True)
     with _tx_db(monkeypatch, conn):
         with pytest.raises(RuntimeError, match="forced mid-write failure"):
-            save_org_rubric(ORG_A, CUSTOM_WEIGHTS)
+            save_org_rubric(ORG_A, CUSTOM_WEIGHTS, changed_by="tester@example.com")
     active = _active(conn)
     assert len(active) == 1
     assert active[0]["id"] == seed["id"]
@@ -180,7 +180,7 @@ def test_two_sequential_saves_never_leave_two_active_and_reuse_name(monkeypatch)
     seed = _seed_row(name="Keep this name")
     conn = _TxConn([seed])
     with _tx_db(monkeypatch, conn):
-        first = save_org_rubric(ORG_A, CUSTOM_WEIGHTS)
+        first = save_org_rubric(ORG_A, CUSTOM_WEIGHTS, changed_by="tester@example.com")
         second = save_org_rubric(
             ORG_A,
             {
@@ -189,6 +189,7 @@ def test_two_sequential_saves_never_leave_two_active_and_reuse_name(monkeypatch)
                 "active_listening": 30,
                 "tone_empathy_professionalism": 30,
             },
+            changed_by="tester@example.com",
         )
     names = {r["name"] for r in conn.rows if r["org_id"] == ORG_A}
     assert names == {"Keep this name"}
@@ -234,8 +235,8 @@ def test_route_is_gated_and_forwards_org(monkeypatch):
     monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
     seen: list[tuple] = []
 
-    def _save(org_id, weights):
-        seen.append((org_id, dict(weights)))
+    def _save(org_id, weights, *, changed_by):
+        seen.append((org_id, dict(weights), changed_by))
         return {
             "org_id": org_id, "source": "custom", "rubric_id": "rid",
             "version": 2, "updated_at": None, "weights": weights,
@@ -251,7 +252,7 @@ def test_route_is_gated_and_forwards_org(monkeypatch):
         json={"weights": CUSTOM_WEIGHTS},
     )
     assert r.status_code == 200
-    assert seen == [(ORG_A, CUSTOM_WEIGHTS)]
+    assert seen == [(ORG_A, CUSTOM_WEIGHTS, "tester@example.com")]
     assert r.json()["org_id"] == ORG_A
 
 

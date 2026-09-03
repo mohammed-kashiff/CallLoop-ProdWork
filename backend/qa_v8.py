@@ -286,6 +286,34 @@ def evaluate_tone(dim, segments, agent, transcript_text, call_claude, parse_json
     }
 
 
+def evaluate_custom(dim, segments, agent, transcript_text, call_claude, parse_json,
+                    build_prompt, validate_evidence):
+    """A team-authored, free-text-judged dimension (self-serve rubric builder).
+
+    Reuses the exact pipeline the built-in LLM dimensions use (build_prompt ->
+    call_claude -> validate_evidence) — no bespoke prompt engineering needed
+    per custom criterion, the same mechanism that already powers Resolution
+    Effectiveness just pointed at the team's own question text.
+    """
+    question = (dim.get("question") or "").strip()
+    if not question:
+        return {
+            "verdict": "error",
+            "reasoning": "This custom dimension has no criteria text.",
+            "evidence_text": None,
+            "evidence_seq": None,
+            "evidence_verified": False,
+            "coaching_note": None,
+            "method_used": "custom_llm",
+        }
+    res = _run_standard_llm(
+        call_claude, parse_json, build_prompt, validate_evidence,
+        question, transcript_text, segments,
+    )
+    res.setdefault("method_used", "custom_llm")
+    return res
+
+
 def evaluate_dimension(dim, segments, agent, transcript_text, call_claude, parse_json,
                        build_prompt, validate_evidence, llm_enabled=True):
     did = dim["id"]
@@ -307,6 +335,11 @@ def evaluate_dimension(dim, segments, agent, transcript_text, call_claude, parse
             dim, segments, agent, transcript_text, call_claude, parse_json,
             build_prompt, validate_evidence,
             llm_enabled=llm_enabled,
+        )
+    elif dim.get("method") == "custom_llm":
+        res = evaluate_custom(
+            dim, segments, agent, transcript_text, call_claude, parse_json,
+            build_prompt, validate_evidence,
         )
     else:
         res = {

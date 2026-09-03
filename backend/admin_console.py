@@ -611,16 +611,26 @@ def _normalize_rubric_weights(raw) -> dict[str, int]:
     return out
 
 
-def save_org_rubric(org_id: str | None, weights) -> dict:
+def save_org_rubric(org_id: str | None, weights, *, changed_by: str) -> dict:
     """Insert a new weighted rubric version for the target org (CR-13).
 
     Validates the four dimension weights before opening a connection so a
     bad payload cannot write anything. The deactivate + insert live in the
-    same db.connection() transaction.
+    same db.connection() transaction. changed_by is required, matching
+    org_features.set_feature's convention for admin-mediated writes.
+
+    CR-15: logs org, admin, old weights, new weights (timestamp is
+    automatic via applog) via the same applog.event pattern already
+    shipped for org_feature_changed/cache_cleared/call_deleted — rubrics
+    has no changed_by column (no migration in this epic per the PRD), so
+    this structured log is the audit trail, not a new Activity-feed row.
     """
     oid = parse_org_id(org_id)
     if not oid:
         raise HTTPException(status_code=400, detail="org_id is required.")
+    actor = (changed_by or "").strip().lower()
+    if not actor or len(actor) > 254:
+        raise HTTPException(status_code=400, detail="changed_by is required.")
     normalized = _normalize_rubric_weights(weights)
     with org_scope(oid):
         with db.connection() as conn:
@@ -632,6 +642,9 @@ def save_org_rubric(org_id: str | None, weights) -> dict:
         org_id=oid,
         rubric_id=saved["rubric_id"],
         version=saved["version"],
+        changed_by=actor,
+        old_weights=saved["previous_weights"],
+        new_weights=saved["weights"],
     )
     return {
         "org_id": oid,
