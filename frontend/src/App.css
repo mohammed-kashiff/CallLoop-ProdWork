@@ -18,6 +18,30 @@
   min-height: 100vh;
 }
 
+.impersonation-banner {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 0.55rem 1rem;
+  background: color-mix(in srgb, var(--fail) 16%, var(--paper));
+  color: var(--fail);
+  font-size: 0.85rem;
+  font-weight: 650;
+  border-bottom: 1px solid color-mix(in srgb, var(--fail) 35%, transparent);
+}
+
+.impersonation-banner-exit {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-weight: 700;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+}
+
 .atmosphere {
   display: none;
 }

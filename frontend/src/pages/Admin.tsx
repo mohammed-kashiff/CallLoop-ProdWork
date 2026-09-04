@@ -5,7 +5,7 @@ import { adminFlagOn, TRIAL_FLAGS, type FeatureMap } from '../lib/features'
 import { formatBytes } from '../lib/format'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { isAdminHost } from '../lib/adminHost'
+import { CUSTOMER_ORIGIN, isAdminHost } from '../lib/adminHost'
 
 type ProvisionResult = {
   email: string
@@ -172,6 +172,8 @@ export function Admin() {
   const [resetEmailBusy, setResetEmailBusy] = useState(false)
   const [resetEmailInfo, setResetEmailInfo] = useState<string | null>(null)
   const [resetEmailError, setResetEmailError] = useState<string | null>(null)
+  const [impersonateBusy, setImpersonateBusy] = useState(false)
+  const [impersonateError, setImpersonateError] = useState<string | null>(null)
   const [pwEvents, setPwEvents] = useState<PasswordEvent[] | null>(null)
 
   const [rubric, setRubric] = useState<RubricPayload | null>(null)
@@ -403,6 +405,45 @@ export function Admin() {
       setResetEmailError('Could not send the reset email.')
     } finally {
       setResetEmailBusy(false)
+    }
+  }
+
+  const logInAs = async () => {
+    if (!selected) return
+    setImpersonateError(null)
+    setImpersonateBusy(true)
+    try {
+      const r = await apiFetch(`/api/admin/users/${encodeURIComponent(selected.user_id)}/impersonate`, {
+        method: 'POST',
+      })
+      if (!r.ok) throw new Error(await readError(r, 'Could not start impersonation session.'))
+      const body = (await r.json()) as {
+        org_name: string | null
+        target_email: string
+        access_token: string
+        refresh_token: string
+        expires_in: number | null
+        token_type: string
+      }
+      const hash = new URLSearchParams({
+        access_token: body.access_token,
+        refresh_token: body.refresh_token,
+        token_type: body.token_type || 'bearer',
+        type: 'magiclink',
+        ...(body.expires_in ? { expires_in: String(body.expires_in) } : {}),
+      })
+      const query = new URLSearchParams({
+        impersonated: '1',
+        org: body.org_name || selected.org_name || 'this org',
+        as: body.target_email,
+      })
+      window.open(`${CUSTOMER_ORIGIN}/?${query.toString()}#${hash.toString()}`, '_blank')
+    } catch (e) {
+      setImpersonateError(
+        e instanceof Error ? e.message : 'Could not start impersonation session.',
+      )
+    } finally {
+      setImpersonateBusy(false)
     }
   }
 
@@ -847,6 +888,31 @@ export function Admin() {
                   </div>
                 ) : pwEvents && pwEvents.length === 0 ? (
                   <p className="empty-copy">No password changes recorded.</p>
+                ) : null}
+              </div>
+
+              <div className="admin-card admin-support">
+                <h3>Log in as</h3>
+                <p className="admin-id">{selected.email || 'No email on this row'}</p>
+                <p className="admin-provision-hint">
+                  Opens a new tab signed in as this person. Logged permanently
+                  (admin, org, timestamp) — not shown to the customer, but
+                  never deleted.
+                </p>
+                <div className="admin-support-actions">
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    disabled={impersonateBusy || !selected.email}
+                    onClick={() => void logInAs()}
+                  >
+                    {impersonateBusy ? 'Starting…' : 'Log in as'}
+                  </button>
+                </div>
+                {impersonateError ? (
+                  <p className="upload-error" role="alert">
+                    {impersonateError}
+                  </p>
                 ) : null}
               </div>
             </>

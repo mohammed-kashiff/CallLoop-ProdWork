@@ -4,6 +4,7 @@ import { useColorMode } from '../context/ColorMode'
 import { AccountMenu } from './AccountMenu'
 import { BrandLogo } from './BrandLogo'
 import { ColorModeToggle } from './ColorModeToggle'
+import { ImpersonationBanner } from './ImpersonationBanner'
 import { KeysPanel } from './KeysPanel'
 import { LiveTicker } from './LiveTicker'
 import { Sidebar } from './Sidebar'
@@ -29,6 +30,7 @@ export function AppLayout() {
 
   return (
     <div className="app-shell layout-shell" data-theme={theme} data-color-mode={mode}>
+      {adminHost ? null : <ImpersonationBanner />}
       <Sidebar open={navOpen} onNavigate={() => setNavOpen(false)} />
 
       <div className="content-shell">

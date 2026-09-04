@@ -45,6 +45,7 @@ from . import auth
 from . import db
 from . import env_keys
 from . import error_notify
+from . import impersonation
 from . import justcall
 from . import org_features
 from . import org_vault
@@ -475,6 +476,23 @@ def admin_password_events(user_id: str, request: Request):
     except (ValueError, TypeError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid user_id.")
     return {"user_id": uid, "events": password_events.history_for_user(uid)}
+
+
+@app.post("/api/admin/users/{user_id}/impersonate")
+def admin_impersonate(user_id: str, request: Request):
+    """Log in as this org member (CC-1). Admin-only, no live consent step —
+    impersonation_log is the accountability record, not a gate."""
+    auth.require_platform_admin(request)
+    try:
+        uid = str(uuid.UUID((user_id or "").strip()))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid user_id.")
+    admin_email = getattr(request.state, "email", None) or ""
+    return impersonation.start_impersonation(
+        uid,
+        admin_email=admin_email,
+        ip_address=request.client.host if request.client else None,
+    )
 
 
 @app.get("/api/admin/call-logs")

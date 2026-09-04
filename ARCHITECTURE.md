@@ -5,7 +5,7 @@
 > picking up work in this repo, read this file first — it exists so you don't
 > have to reverse-engineer the codebase from scratch.
 >
-> Last written: 2026-09-03. Since the last pass: the admin console moved from
+> Last written: 2026-09-04. Since the last pass: the admin console moved from
 > `idb.call-loop.com` to `commandcenter.call-loop.com` — still a
 > **shared-build** second origin (same SPA, host-gated UI — not a separate
 > admin compile). Also live: a self-serve rubric builder — each org's account
@@ -18,7 +18,20 @@
 > audit, re-scoring it (`?refresh=true`, or a retranscribe) is blocked by
 > default — Claude isn't perfectly deterministic, so a re-run could change
 > the score. `org_features.enable_call_rescoring` (off by default) lifts
-> that per org.
+> that per org. Recap and feedback (sentiment-tagged Strength/Improve) now
+> render on the per-call Audit Detail page too, not just Agent Pulse.
+>
+> **Built but not yet shipped** (in the working tree, not committed): admin
+> impersonation — a platform admin can "Log in as" any org member from
+> Command Center's Admin page, minting a real Supabase session via the
+> Admin API (`backend/impersonation.py`, `POST
+> /api/admin/users/{user_id}/impersonate`), logged permanently and
+> admin-only in a new `impersonation_log` table (migration `0020`, not yet
+> applied to any database). See §6 and §4 for details, and Jira epic AC-18
+> for the four sub-tickets. Flagged risk: the exact JSON shape of Supabase's
+> `generate_link` response isn't fully pinned down by public docs — see
+> `impersonation.py`'s module docstring — recommend a manual smoke test
+> against the real Supabase project before relying on this.
 
 ---
 
@@ -170,6 +183,7 @@ request and scopes every downstream call to that org.
 | `cost_estimate.py` | Estimates spend from usage counters, using cost-per-unit knobs from `.env`. |
 | `email_notify.py` | Opens a prefilled Gmail compose tab for a churn/stakeholder alert — no email is sent server-side. |
 | `error_notify.py` | Local desktop error notification helper (macOS banner on API 5xx during dev). |
+| `impersonation.py` | AC-18, **built, not yet shipped.** Platform-admin "log in as": mints a real Supabase session for an org member via the Admin REST API (`generate_link` + `verify`, raw `httpx`, matching `admin_provision.py`'s pattern — not the `supabase-py` SDK), records one permanent `impersonation_log` row only after both Supabase calls succeed. Admin-only, no live consent step — the log is the accountability mechanism, not a gate. |
 | `sentry_report.py` | Sentry init + `before_send` scrubbing hook — drops 4xx, strips PII/secrets, tags `org_id`. |
 | `applog.py` | Structured event logging (`applog.event(...)`) plus secret redaction for anything written to the log file. |
 
@@ -276,6 +290,7 @@ sequenceDiagram
 | GET | `/api/admin/orgs/{org_id}/rubric` | **Platform-admin only.** Current dimension weights for an org (CR-14). |
 | POST | `/api/admin/orgs/{org_id}/rubric` | **Platform-admin only.** Insert a new weighted rubric version (CR-13). Weights must sum to 100; never mutates an existing row. |
 | POST | `/api/admin/log-password-reset-request` | **Platform-admin only.** (AC-9) Writes an audit log line for an admin-triggered reset email — never logs the password, never calls Supabase's admin/service-role API itself. |
+| POST | `/api/admin/users/{user_id}/impersonate` | **Platform-admin only.** (AC-18, built, not yet shipped.) Mints a real Supabase session for this org member via the Admin API and returns the tokens; records one permanent `impersonation_log` row. No live consent step — admin-only, logged. |
 | GET | `/api/pyai/status` | PyAI connectivity/quota status |
 | POST | `/api/keys` | Update host-configured API keys |
 | GET | `/api/dev/logs` | Tail recent log lines (dev/debug) |

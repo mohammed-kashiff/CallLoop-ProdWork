@@ -2,6 +2,7 @@
 
 export const ADMIN_ORIGIN = 'https://commandcenter.call-loop.com'
 export const ADMIN_HOST = 'commandcenter.call-loop.com'
+export const CUSTOMER_ORIGIN = 'https://call-loop.com'
 
 /**
  * Shared-build host check (AC-12). Same JS bundle as call-loop.com.

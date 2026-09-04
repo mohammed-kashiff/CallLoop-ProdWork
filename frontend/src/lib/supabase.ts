@@ -31,6 +31,65 @@ export function hasPasswordRecoveryHint(): boolean {
   }
 }
 
+const IMPERSONATION_HINT = 'callloop_impersonating'
+
+export type ImpersonationInfo = { orgName: string; targetEmail: string }
+
+/** Session flag only — the access/refresh tokens themselves are Supabase's
+ * own hash-fragment params and are handled entirely by detectSessionInUrl.
+ * This just remembers "that session-establishing load was an admin
+ * impersonation" so the banner can render after the hash is consumed. */
+export function markImpersonating(info: ImpersonationInfo): void {
+  try {
+    sessionStorage.setItem(IMPERSONATION_HINT, JSON.stringify(info))
+  } catch {
+    /* private mode */
+  }
+}
+
+export function clearImpersonating(): void {
+  try {
+    sessionStorage.removeItem(IMPERSONATION_HINT)
+  } catch {
+    /* ignore */
+  }
+}
+
+export function getImpersonating(): ImpersonationInfo | null {
+  try {
+    const raw = sessionStorage.getItem(IMPERSONATION_HINT)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<ImpersonationInfo>
+    if (!parsed.orgName || !parsed.targetEmail) return null
+    return { orgName: parsed.orgName, targetEmail: parsed.targetEmail }
+  } catch {
+    return null
+  }
+}
+
+/** Picks the one-time ?impersonated=1&org=..&as=.. query params off a fresh
+ * "Log in as" tab (the access/refresh tokens ride in the hash instead, where
+ * detectSessionInUrl already reads them) and strips them from the URL. */
+function adoptImpersonationUrl(): void {
+  if (typeof window === 'undefined') return
+  const query = new URLSearchParams(window.location.search)
+  if (query.get('impersonated') !== '1') return
+  const orgName = query.get('org') || ''
+  const targetEmail = query.get('as') || ''
+  if (orgName && targetEmail) markImpersonating({ orgName, targetEmail })
+  query.delete('impersonated')
+  query.delete('org')
+  query.delete('as')
+  const rest = query.toString()
+  window.history.replaceState(
+    null,
+    '',
+    `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`,
+  )
+}
+
+adoptImpersonationUrl()
+
 function isResetPasswordPath(pathname: string): boolean {
   const path = pathname.replace(/\/+$/, '') || '/'
   return path === '/reset-password'
