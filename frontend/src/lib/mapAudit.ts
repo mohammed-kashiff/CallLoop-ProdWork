@@ -5,6 +5,8 @@ import type {
   CheckType,
   ChurnLevel,
   CriterionFinding,
+  FeedbackItem,
+  FeedbackSentiment,
   PerformanceBand,
   TranscriptSegment,
   Verdict,
@@ -76,17 +78,23 @@ function mapChurn(level: unknown): ChurnLevel {
   return 'none'
 }
 
-function feedbackLines(items: unknown): string[] {
+function mapSentiment(value: unknown): FeedbackSentiment {
+  const v = String(value || '').toLowerCase()
+  if (v === 'positive' || v === 'negative') return v
+  return 'neutral'
+}
+
+function feedbackLines(items: unknown): FeedbackItem[] {
   if (!Array.isArray(items)) return []
   return items
     .map((it) => {
       const row = asRecord(it)
       const summary = asString(row.summary)
       const quote = asString(row.quote)
-      if (summary && quote) return `${summary} — “${quote}”`
-      return summary || quote
+      const text = summary && quote ? `${summary} — “${quote}”` : summary || quote
+      return { text, sentiment: mapSentiment(row.sentiment) }
     })
-    .filter(Boolean)
+    .filter((item) => Boolean(item.text))
 }
 
 export function emptyReport(): AuditReport {

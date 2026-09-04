@@ -25,6 +25,13 @@ export function capWords(raw: string | null | undefined): string {
   return s.replace(/\b([a-z])/g, (ch) => ch.toUpperCase())
 }
 
+/** Label for a feedback item's sentiment tag (Strength / Improve). Neutral items get no tag. */
+export function sentimentLabel(sentiment: string): string | null {
+  if (sentiment === 'positive') return 'Strength'
+  if (sentiment === 'negative') return 'Improve'
+  return null
+}
+
 /**
  * Discrete score colors:
  * 90–100 green · 80–89 yellow · 70–79 light orange · 60–69 dark orange · <60 red

@@ -1929,6 +1929,28 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   color: var(--na);
 }
 
+.feedback-tag {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 0.14rem 0.5rem;
+  border: 1px solid currentColor;
+  font-family: var(--mono);
+  margin-right: 0.5rem;
+  vertical-align: 1px;
+}
+.feedback-tag.is-positive {
+  color: var(--pass);
+  background: rgba(15, 118, 110, 0.08);
+}
+.feedback-tag.is-negative {
+  color: var(--fail);
+  background: rgba(180, 35, 24, 0.08);
+}
+
 .evidence {
   margin: 0.7rem 0 0;
   padding: 0.75rem 0.9rem;

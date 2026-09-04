@@ -12,7 +12,7 @@ import { Workspace, callNoteScopeKey } from '../components/Workspace'
 import { useAudit } from '../context/AuditContext'
 import { useAuth } from '../context/AuthContext'
 import { flagEnabled } from '../lib/features'
-import { capFirst, capWords, formatTime, scoreHue } from '../lib/format'
+import { capFirst, capWords, formatTime, scoreHue, sentimentLabel } from '../lib/format'
 import { stripSpeakerTags } from '../lib/speakerText'
 import type { BulkJob, CallListItem, JobStatus } from '../types'
 
@@ -298,7 +298,16 @@ export function AgentsPulse() {
                               <h4 className="improvement-label">Service</h4>
                               <ul className="feedback-list">
                                 {report.feedback.aboutAgent.map((item) => (
-                                  <li key={item}>{capFirst(item)}</li>
+                                  <li key={item.text}>
+                                    {sentimentLabel(item.sentiment) && (
+                                      <span
+                                        className={`feedback-tag is-${item.sentiment}`}
+                                      >
+                                        {sentimentLabel(item.sentiment)}
+                                      </span>
+                                    )}
+                                    {capFirst(item.text)}
+                                  </li>
                                 ))}
                               </ul>
                             </div>
@@ -306,7 +315,16 @@ export function AgentsPulse() {
                               <h4 className="improvement-label">Product</h4>
                               <ul className="feedback-list">
                                 {report.feedback.aboutProduct.map((item) => (
-                                  <li key={item}>{capFirst(item)}</li>
+                                  <li key={item.text}>
+                                    {sentimentLabel(item.sentiment) && (
+                                      <span
+                                        className={`feedback-tag is-${item.sentiment}`}
+                                      >
+                                        {sentimentLabel(item.sentiment)}
+                                      </span>
+                                    )}
+                                    {capFirst(item.text)}
+                                  </li>
                                 ))}
                               </ul>
                             </div>

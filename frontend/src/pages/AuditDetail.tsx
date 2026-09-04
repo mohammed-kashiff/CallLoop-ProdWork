@@ -4,7 +4,7 @@ import { CriteriaFindings } from '../components/CriteriaFindings'
 import { ScoreOverview } from '../components/ScoreOverview'
 import { TranscriptPlayer } from '../components/TranscriptPlayer'
 import { apiFetch, readError } from '../lib/api'
-import { capFirst } from '../lib/format'
+import { capFirst, sentimentLabel } from '../lib/format'
 import { mapAudit } from '../lib/mapAudit'
 import { stripSpeakerTags } from '../lib/speakerText'
 import type { AuditReport } from '../types'
@@ -161,7 +161,14 @@ export function AuditDetail() {
                       <h4 className="improvement-label">Service</h4>
                       <ul className="feedback-list">
                         {report.feedback.aboutAgent.map((item) => (
-                          <li key={item}>{capFirst(item)}</li>
+                          <li key={item.text}>
+                            {sentimentLabel(item.sentiment) && (
+                              <span className={`feedback-tag is-${item.sentiment}`}>
+                                {sentimentLabel(item.sentiment)}
+                              </span>
+                            )}
+                            {capFirst(item.text)}
+                          </li>
                         ))}
                       </ul>
                     </div>
@@ -169,7 +176,14 @@ export function AuditDetail() {
                       <h4 className="improvement-label">Product</h4>
                       <ul className="feedback-list">
                         {report.feedback.aboutProduct.map((item) => (
-                          <li key={item}>{capFirst(item)}</li>
+                          <li key={item.text}>
+                            {sentimentLabel(item.sentiment) && (
+                              <span className={`feedback-tag is-${item.sentiment}`}>
+                                {sentimentLabel(item.sentiment)}
+                              </span>
+                            )}
+                            {capFirst(item.text)}
+                          </li>
                         ))}
                       </ul>
                     </div>

@@ -61,9 +61,16 @@ export interface TranscriptSegment {
   text: string
 }
 
+export type FeedbackSentiment = 'positive' | 'negative' | 'neutral'
+
+export interface FeedbackItem {
+  text: string
+  sentiment: FeedbackSentiment
+}
+
 export interface CustomerFeedback {
-  aboutAgent: string[]
-  aboutProduct: string[]
+  aboutAgent: FeedbackItem[]
+  aboutProduct: FeedbackItem[]
   status?: string
 }
 

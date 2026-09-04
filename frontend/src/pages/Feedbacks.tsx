@@ -5,7 +5,7 @@ import { FeedbackCue } from '../components/LoopCues'
 import { SketchWallpaper } from '../components/SketchWallpaper'
 import { KpiCard } from '../components/KpiCard'
 import { Workspace, callNoteScopeKey } from '../components/Workspace'
-import { capFirst, capWords } from '../lib/format'
+import { capFirst, capWords, sentimentLabel } from '../lib/format'
 import { useAudit } from '../context/AuditContext'
 
 export function Feedbacks() {
@@ -169,7 +169,14 @@ export function Feedbacks() {
                   panel: (
                     <ul className="feedback-list">
                       {report.feedback.aboutAgent.map((item) => (
-                        <li key={item}>{capFirst(item)}</li>
+                        <li key={item.text}>
+                          {sentimentLabel(item.sentiment) && (
+                            <span className={`feedback-tag is-${item.sentiment}`}>
+                              {sentimentLabel(item.sentiment)}
+                            </span>
+                          )}
+                          {capFirst(item.text)}
+                        </li>
                       ))}
                     </ul>
                   ),
@@ -180,7 +187,14 @@ export function Feedbacks() {
                   panel: (
                     <ul className="feedback-list">
                       {report.feedback.aboutProduct.map((item) => (
-                        <li key={item}>{capFirst(item)}</li>
+                        <li key={item.text}>
+                          {sentimentLabel(item.sentiment) && (
+                            <span className={`feedback-tag is-${item.sentiment}`}>
+                              {sentimentLabel(item.sentiment)}
+                            </span>
+                          )}
+                          {capFirst(item.text)}
+                        </li>
                       ))}
                     </ul>
                   ),
