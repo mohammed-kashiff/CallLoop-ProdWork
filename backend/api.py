@@ -44,6 +44,7 @@ from . import audio_store
 from . import auth
 from . import db
 from . import env_keys
+from . import call_trail
 from . import error_notify
 from . import impersonation
 from . import justcall
@@ -65,7 +66,7 @@ from . import qa_engine as qa
 from . import qa_v8
 from . import recap as pyai_recap
 from . import transcribe
-from .org_ids import integration_org_id, org_scope
+from .org_ids import integration_org_id, org_scope, parse_org_id
 
 logging.basicConfig(
     level=logging.INFO,
@@ -502,6 +503,36 @@ def admin_call_logs(request: Request, query: str = "", limit: int | None = None)
     return admin_console.call_logs(query, limit=limit)
 
 
+@app.get("/api/admin/calls/{call_id}/trail")
+def admin_call_trail(call_id: int, org_id: str, request: Request):
+    """Full pipeline audit trail for one call (AC-24) — upload/transcription,
+    per-criterion scoring, recap, final result, and every time it was
+    served, in order. Platform-admin only. org_id comes from the caller
+    (Call Logs already has it per row from its own search) rather than
+    being resolved server-side — this file must never bypass RLS directly
+    (see test_rls.py); a legitimate cross-org call_id->org_id lookup would
+    need its own SECURITY DEFINER SQL function, same as admin_search_directory,
+    which isn't worth adding when the caller already has the answer."""
+    auth.require_platform_admin(request)
+    oid = parse_org_id(org_id)
+    if not oid:
+        raise HTTPException(status_code=400, detail="org_id is required.")
+    with org_scope(oid):
+        with db.connection() as c:
+            row = c.execute(
+                "SELECT filename FROM calls WHERE id = %s AND org_id = %s",
+                (call_id, oid),
+            ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"No call with id {call_id}")
+    return {
+        "call_id": call_id,
+        "org_id": oid,
+        "filename": row.get("filename"),
+        "events": call_trail.history(call_id, oid),
+    }
+
+
 @app.get("/api/admin/call-logs/export")
 def admin_call_logs_export(request: Request, query: str = ""):
     """CSV download of the same search."""
@@ -695,6 +726,7 @@ def analyze_call(call_id, org_id: str, agent_override=None, *, rubric: dict):
     two (PRD edge case)."""
     started = time.perf_counter()
     applog.event(log, "audit_started", call_id=call_id)
+    call_trail.record(call_id, org_id, "scoring", "started")
 
     with _conn() as c:
         exists = c.execute(
@@ -709,6 +741,10 @@ def analyze_call(call_id, org_id: str, agent_override=None, *, rubric: dict):
             log, "audit_failed", level=logging.ERROR,
             call_id=call_id, error="call_not_found_or_incomplete",
         )
+        call_trail.record(
+            call_id, org_id, "scoring", "failed",
+            error="call_not_found_or_incomplete",
+        )
         raise HTTPException(
             status_code=404, detail=f"No completed call with id {call_id}"
         )
@@ -719,6 +755,7 @@ def analyze_call(call_id, org_id: str, agent_override=None, *, rubric: dict):
             log, "audit_failed", level=logging.ERROR,
             call_id=call_id, error="no_segments",
         )
+        call_trail.record(call_id, org_id, "scoring", "failed", error="no_segments")
         raise HTTPException(
             status_code=422, detail=f"Call {call_id} has no segments"
         )
@@ -743,13 +780,23 @@ def analyze_call(call_id, org_id: str, agent_override=None, *, rubric: dict):
         )
         criteria_arg = rubric["criteria"]
 
+    def _on_dimension_event(dim, status, detail):
+        did = dim.get("id") or "unknown"
+        call_trail.record(
+            call_id, org_id, f"criterion:{did}", status,
+            detail=detail if status != "failed" else None,
+            error=(detail or {}).get("error") if status == "failed" else None,
+        )
+
     # One parallel wave: dimensions/criteria + churn + Recap.
     # Retention email and areas of improvement are on-demand.
+    call_trail.record(call_id, org_id, "recap", "started")
     with ThreadPoolExecutor(max_workers=2) as pool:
         wave_f = pool.submit(
             qa.run_parallel_claude_wave,
             criteria_arg, segments, agent, transcript_text,
             None, rubric,
+            on_dimension_event=_on_dimension_event,
         )
         recap_f = pool.submit(
             pyai_recap.ensure_recap,
@@ -759,12 +806,17 @@ def analyze_call(call_id, org_id: str, agent_override=None, *, rubric: dict):
         wave = wave_f.result()
         try:
             call_recap = recap_f.result()
+            call_trail.record(
+                call_id, org_id, "recap", "succeeded",
+                detail={"status": (call_recap or {}).get("status")},
+            )
         except Exception as e:  # noqa: BLE001
             log.error("recap failed for call %d: %s", call_id, e)
             applog.event(
                 log, "recap_failure", level=logging.ERROR,
                 call_id=call_id, error=str(e),
             )
+            call_trail.record(call_id, org_id, "recap", "failed", error=str(e))
             call_recap = {"status": "error", "error": str(e)}
 
     churn = wave.get("churn")
@@ -815,6 +867,10 @@ def analyze_call(call_id, org_id: str, agent_override=None, *, rubric: dict):
         manager_review_count=len(manager_review),
         audit_mode=qa.audit_mode(),
         agent_speaker=agent,
+    )
+    call_trail.record(
+        call_id, org_id, "scoring", "succeeded",
+        detail={"score": score, "grade": grade, "flagged": flagged},
     )
 
     return {
@@ -1901,6 +1957,10 @@ def get_audit(call_id: int, request: Request, refresh: bool = False):
                 "cache HIT  call %d (score %s) - returning stored audit",
                 call_id, cached.get("score"),
             )
+            call_trail.record(
+                call_id, org_id, "result_served", "succeeded",
+                detail={"source": "cache", "score": cached.get("score")},
+            )
             return _attach_filename(
                 _hydrate_audit_segments(cached, call_id, org_id), call_id, org_id,
             )
@@ -1914,6 +1974,10 @@ def get_audit(call_id: int, request: Request, refresh: bool = False):
         requested_by=getattr(request.state, "user_id", None),
     )
     log.info("cached audit for call %d (score %s)", call_id, audit["score"])
+    call_trail.record(
+        call_id, org_id, "result_served", "succeeded",
+        detail={"source": "fresh", "score": audit.get("score")},
+    )
     return _attach_filename(
         _hydrate_audit_segments(audit, call_id, org_id), call_id, org_id,
     )
@@ -2202,12 +2266,18 @@ def _ingest_audio_file(
                         "upload deduped to existing call %d (no re-transcription)",
                         call_id,
                     )
+                    call_trail.record(
+                        call_id, org_id, "transcription", "succeeded",
+                        detail={"deduped": True, "filename": source_name},
+                    )
                     return call_id, True
 
         pyai_id = transcribe.new_pyai_call_id()
+        transcribe_started = time.perf_counter()
         job_id, result, mode = transcribe.transcribe_audio(
             src_path, hear_tmp, call_id=pyai_id, org_id=org_id,
         )
+        transcribe_ms = round((time.perf_counter() - transcribe_started) * 1000, 1)
         with _db_lock:
             with db.connection() as conn:
                 existing = None
@@ -2223,6 +2293,13 @@ def _ingest_audio_file(
                     call_id = int(existing["id"])
                     transcribe.set_filename_if_empty(
                         conn, call_id, source_name, org_id=org_id,
+                    )
+                    call_trail.record(
+                        call_id, org_id, "transcription", "succeeded",
+                        detail={
+                            "deduped": True, "race": True, "mode": mode,
+                            "filename": source_name,
+                        },
                     )
                     return call_id, True
                 try:
@@ -2246,6 +2323,13 @@ def _ingest_audio_file(
                     transcribe.set_filename_if_empty(
                         conn, call_id, source_name, org_id=org_id,
                     )
+                    call_trail.record(
+                        call_id, org_id, "transcription", "succeeded",
+                        detail={
+                            "deduped": True, "race": True, "mode": mode,
+                            "filename": source_name,
+                        },
+                    )
                     return call_id, True
         applog.event(
             log, "transcription_success",
@@ -2261,6 +2345,17 @@ def _ingest_audio_file(
         log.info(
             "transcription complete -> new call %d (filename=%s, pyai_call_id=%s)",
             call_id, source_name, pyai_id,
+        )
+        call_trail.record(
+            call_id, org_id, "transcription", "succeeded",
+            detail={
+                "mode": mode,
+                "segments": len(result.get("segments") or []),
+                "pyai_call_id": pyai_id,
+                "job_id": job_id,
+                "size_bytes": size,
+                "duration_ms": transcribe_ms,
+            },
         )
         return call_id, False
     finally:

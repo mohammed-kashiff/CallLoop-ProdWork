@@ -21,17 +21,28 @@
 > that per org. Recap and feedback (sentiment-tagged Strength/Improve) now
 > render on the per-call Audit Detail page too, not just Agent Pulse.
 >
-> **Built but not yet shipped** (in the working tree, not committed): admin
-> impersonation — a platform admin can "Log in as" any org member from
-> Command Center's Admin page, minting a real Supabase session via the
-> Admin API (`backend/impersonation.py`, `POST
+> Also live: admin impersonation — a platform admin can "Log in as" any org
+> member from Command Center's Admin page, minting a real Supabase session
+> via the Admin API (`backend/impersonation.py`, `POST
 > /api/admin/users/{user_id}/impersonate`), logged permanently and
-> admin-only in a new `impersonation_log` table (migration `0020`, not yet
-> applied to any database). See §6 and §4 for details, and Jira epic AC-18
-> for the four sub-tickets. Flagged risk: the exact JSON shape of Supabase's
-> `generate_link` response isn't fully pinned down by public docs — see
-> `impersonation.py`'s module docstring — recommend a manual smoke test
-> against the real Supabase project before relying on this.
+> admin-only in `impersonation_log` (migration `0020`). Smoke-tested
+> end-to-end against the real Supabase project — `generate_link`'s response
+> nests `hashed_token` top-level, not under `properties` (confirmed, not
+> assumed); `/verify` reuses the service-role key rather than needing a
+> separate anon key. Jira epic AC-18.
+>
+> **Built but not yet shipped** (in the working tree, not committed): a
+> per-call pipeline audit trail — every stage of upload -> transcribe ->
+> score -> serve, including every per-criterion LLM/deterministic dispatch
+> and result, and every failure with its cause, as queryable rows rather
+> than just log lines (`backend/call_trail.py`, new `call_pipeline_events`
+> table, migration `0021`). Viewable in Command Center: Call logs -> a
+> call's "View" trail link (`frontend/src/pages/CallTrail.tsx`,
+> `GET /api/admin/calls/{call_id}/trail`). "Result displayed" is tracked as
+> "the audit API actually served it" (`result_served` stage) — the
+> practical, backend-observable proxy; there's no way to know when
+> something rendered on a screen. Jira epic: AC-24 (see §4/§6 for the exact
+> instrumentation points).
 
 ---
 
@@ -183,7 +194,8 @@ request and scopes every downstream call to that org.
 | `cost_estimate.py` | Estimates spend from usage counters, using cost-per-unit knobs from `.env`. |
 | `email_notify.py` | Opens a prefilled Gmail compose tab for a churn/stakeholder alert — no email is sent server-side. |
 | `error_notify.py` | Local desktop error notification helper (macOS banner on API 5xx during dev). |
-| `impersonation.py` | AC-18, **built, not yet shipped.** Platform-admin "log in as": mints a real Supabase session for an org member via the Admin REST API (`generate_link` + `verify`, raw `httpx`, matching `admin_provision.py`'s pattern — not the `supabase-py` SDK), records one permanent `impersonation_log` row only after both Supabase calls succeed. Admin-only, no live consent step — the log is the accountability mechanism, not a gate. |
+| `impersonation.py` | AC-18. Platform-admin "log in as": mints a real Supabase session for an org member via the Admin REST API (`generate_link` + `verify`, raw `httpx`, matching `admin_provision.py`'s pattern — not the `supabase-py` SDK), records one permanent `impersonation_log` row only after both Supabase calls succeed. Admin-only, no live consent step — the log is the accountability mechanism, not a gate. |
+| `call_trail.py` | AC-24/AC-26, **built, not yet shipped.** `record(call_id, org_id, stage, status, *, detail=None, error=None)` — best-effort append to `call_pipeline_events` (never raises; a trail-write failure must not break the pipeline step it describes). Called alongside the existing `applog.event()` calls at each real stage — upload/transcription, per-criterion scoring (via `qa_v8.run_v8_wave`'s injected `on_dimension_event` callback), recap, final audit result, and every `result_served`. `history(call_id, org_id)` reads it back in order for the admin trail viewer. |
 | `sentry_report.py` | Sentry init + `before_send` scrubbing hook — drops 4xx, strips PII/secrets, tags `org_id`. |
 | `applog.py` | Structured event logging (`applog.event(...)`) plus secret redaction for anything written to the log file. |
 
@@ -290,7 +302,8 @@ sequenceDiagram
 | GET | `/api/admin/orgs/{org_id}/rubric` | **Platform-admin only.** Current dimension weights for an org (CR-14). |
 | POST | `/api/admin/orgs/{org_id}/rubric` | **Platform-admin only.** Insert a new weighted rubric version (CR-13). Weights must sum to 100; never mutates an existing row. |
 | POST | `/api/admin/log-password-reset-request` | **Platform-admin only.** (AC-9) Writes an audit log line for an admin-triggered reset email — never logs the password, never calls Supabase's admin/service-role API itself. |
-| POST | `/api/admin/users/{user_id}/impersonate` | **Platform-admin only.** (AC-18, built, not yet shipped.) Mints a real Supabase session for this org member via the Admin API and returns the tokens; records one permanent `impersonation_log` row. No live consent step — admin-only, logged. |
+| POST | `/api/admin/users/{user_id}/impersonate` | **Platform-admin only.** (AC-18.) Mints a real Supabase session for this org member via the Admin API and returns the tokens; records one permanent `impersonation_log` row. No live consent step — admin-only, logged. |
+| GET | `/api/admin/calls/{call_id}/trail?org_id=` | **Platform-admin only.** (AC-24/AC-27, built, not yet shipped.) Full pipeline audit trail for one call. `org_id` is a required, caller-supplied query param (Call Logs already has it per row) — this route must never `bypass_rls` (repo-wide guardrail in `test_rls.py`); every query is scoped through `org_scope(org_id)`. |
 | GET | `/api/pyai/status` | PyAI connectivity/quota status |
 | POST | `/api/keys` | Update host-configured API keys |
 | GET | `/api/dev/logs` | Tail recent log lines (dev/debug) |

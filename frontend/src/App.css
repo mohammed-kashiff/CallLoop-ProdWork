@@ -3133,6 +3133,91 @@ html[data-color-mode='dark'] .claude-cord-plug {
   overflow: auto;
 }
 
+.call-trail-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.call-trail-item {
+  display: flex;
+  gap: 0.65rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--control-bg);
+}
+
+.call-trail-icon {
+  flex: 0 0 auto;
+  width: 1.4rem;
+  height: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 750;
+  border: 1px solid currentColor;
+}
+.call-trail-item.is-succeeded .call-trail-icon {
+  color: var(--pass);
+  background: rgba(15, 118, 110, 0.08);
+}
+.call-trail-item.is-failed .call-trail-icon {
+  color: var(--fail);
+  background: rgba(180, 35, 24, 0.08);
+}
+.call-trail-item.is-started .call-trail-icon {
+  color: var(--unverified);
+}
+
+.call-trail-body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.call-trail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.call-trail-stage {
+  font-weight: 650;
+  font-size: 0.9rem;
+}
+
+.call-trail-time {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.call-trail-error {
+  margin: 0.35rem 0 0;
+  color: var(--fail);
+  font-size: 0.85rem;
+}
+
+.call-trail-detail {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--evidence-bg);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-family: var(--mono);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .admin-table {
   width: 100%;
   border-collapse: collapse;

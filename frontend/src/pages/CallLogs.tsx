@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { apiFetch, readError } from '../lib/api'
 import { isAdminHost } from '../lib/adminHost'
@@ -186,6 +186,7 @@ export function CallLogs() {
                     <th>Size</th>
                     <th>Uploaded by</th>
                     <th>Status</th>
+                    <th>Trail</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -208,6 +209,13 @@ export function CallLogs() {
                         ) : (
                           '—'
                         )}
+                      </td>
+                      <td>
+                        <Link
+                          to={`/call-logs/${c.call_id}/trail?org_id=${encodeURIComponent(data.matched.org_id)}`}
+                        >
+                          View
+                        </Link>
                       </td>
                     </tr>
                   ))}

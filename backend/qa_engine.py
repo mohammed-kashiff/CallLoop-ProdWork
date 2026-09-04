@@ -687,11 +687,17 @@ def draft_retention_email(transcript_text, segments):
     }
 
 
-def run_parallel_claude_wave(criteria, segments, agent_speaker, transcript_text, max_workers=None, rubric=None):
+def run_parallel_claude_wave(
+    criteria, segments, agent_speaker, transcript_text, max_workers=None, rubric=None,
+    on_dimension_event=None,
+):
     """
     Fire independent Claude work in one parallel wave (dimensions/criteria +
     churn). Retention email and areas of improvement are on-demand.
     Hybrid mode: Claude for resolution + churn (parallel); skip tone/ownership step-2.
+
+    on_dimension_event: passed straight through to qa_v8.run_v8_wave (v3-mode
+    criteria have no per-dimension event hook — legacy path, not extended).
     """
     mode = audit_mode()
     if rubric is not None and qa_v8.is_v8_rubric(rubric):
@@ -702,6 +708,7 @@ def run_parallel_claude_wave(criteria, segments, agent_speaker, transcript_text,
                 assess_churn, extract_feedback,
                 max_workers=max_workers,
                 audit_mode=mode,
+                on_dimension_event=on_dimension_event,
             )
         )
         return {

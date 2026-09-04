@@ -380,7 +380,12 @@ def score_v8(results):
 def run_v8_wave(rubric, segments, agent_speaker, transcript_text,
                 call_claude, parse_json, build_prompt, validate_evidence,
                 assess_churn, _extract_feedback=None,
-                max_workers=None, audit_mode="full"):
+                max_workers=None, audit_mode="full", on_dimension_event=None):
+    """on_dimension_event(dim, status, detail), status in
+    'started'/'succeeded'/'failed' — optional, dependency-injected the same
+    way call_claude/parse_json/build_prompt already are, so this module
+    stays decoupled from whatever records it (call_trail, in api.py).
+    Never allowed to break scoring: any exception it raises is swallowed."""
     dims = list_dimensions(rubric)
     n = len(dims)
     hybrid = audit_mode == "hybrid"
@@ -391,12 +396,34 @@ def run_v8_wave(rubric, segments, agent_speaker, transcript_text,
     churn = None
     t0 = time.perf_counter()
 
+    def _notify(dim, status, detail=None):
+        if on_dimension_event is None:
+            return
+        try:
+            on_dimension_event(dim, status, detail)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _eval(dim):
-        return evaluate_dimension(
-            dim, segments, agent_speaker, transcript_text,
-            call_claude, parse_json, build_prompt, validate_evidence,
-            llm_enabled=llm_enabled,
+        _notify(dim, "started", {
+            "method": dim.get("method"), "weight": dim.get("weight"),
+            "name": dim.get("name"),
+        })
+        try:
+            res = evaluate_dimension(
+                dim, segments, agent_speaker, transcript_text,
+                call_claude, parse_json, build_prompt, validate_evidence,
+                llm_enabled=llm_enabled,
+            )
+        except Exception as e:
+            _notify(dim, "failed", {"error": str(e)})
+            raise
+        verdict = res.get("verdict")
+        _notify(
+            dim, "failed" if verdict == "error" else "succeeded",
+            {"verdict": verdict, "reasoning": res.get("reasoning")},
         )
+        return res
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futs = {}

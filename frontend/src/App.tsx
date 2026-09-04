@@ -11,6 +11,7 @@ import { AgentsPulse } from './pages/AgentsPulse'
 import { AuditDetail } from './pages/AuditDetail'
 import { Audits } from './pages/Audits'
 import { CallLogs } from './pages/CallLogs'
+import { CallTrail } from './pages/CallTrail'
 import { ChurnRisk } from './pages/ChurnRisk'
 import { Feedbacks } from './pages/Feedbacks'
 import { FlaggedForReview } from './pages/FlaggedForReview'
@@ -64,6 +65,7 @@ function App() {
                     <Route path="training" element={<Training />} />
                     <Route path="admin" element={<Admin />} />
                     <Route path="call-logs" element={<CallLogs />} />
+                    <Route path="call-logs/:callId/trail" element={<CallTrail />} />
                     <Route path="profile" element={<Profile />} />
                     <Route path="pyai" element={<Pyai />} />
                     <Route path="*" element={<Navigate to={home} replace />} />
