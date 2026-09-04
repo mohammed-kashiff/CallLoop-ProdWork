@@ -68,11 +68,16 @@ def fetch_active_rubric(conn, *, org_id: str) -> tuple[str, int, dict[str, Any]]
     fallback until an admin saves a custom version (CR-13).
     """
     row = conn.execute(
-        "SELECT id, version, definition FROM rubrics WHERE org_id = %s AND is_active LIMIT 1",
+        "SELECT id, name, version, definition FROM rubrics WHERE org_id = %s AND is_active LIMIT 1",
         (org_id,),
     ).fetchone()
     definition = decode_findings((row or {}).get("definition"))
     if row and isinstance(definition, dict):
+        if not definition.get("name"):
+            # Self-serve rubrics (rubric_builder._wrap_definition) carry no
+            # top-level name — only rubrics.name does. Legacy/admin-managed
+            # definitions already embed one from rubric.json; leave those as-is.
+            definition = {**definition, "name": row["name"]}
         return str(row["id"]), int(row["version"]), definition
     return DEFAULT_RUBRIC_ID, LEGACY_RUBRIC_VERSION, load_v8_definition()
 

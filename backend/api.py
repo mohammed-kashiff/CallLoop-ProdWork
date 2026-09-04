@@ -803,7 +803,7 @@ def analyze_call(call_id, org_id: str, agent_override=None, *, rubric: dict):
         "call_id": call_id,
         "filename": _call_filename(call_id, org_id),
         "audio_seconds": meta.get("audio_seconds"),
-        "agent_speaker": agent, "rubric": rubric["name"],
+        "agent_speaker": agent, "rubric": rubric.get("name") or "Custom rubric",
         "rubric_id": rubric.get("rubric_id") or rubric.get("name"),
         "score": score, "grade": grade, "tally": tally,
         "gate_fails": gate_fails, "flagged": flagged,

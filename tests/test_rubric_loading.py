@@ -25,8 +25,9 @@ class _Result:
 
 
 class _FakeConn:
-    def __init__(self, rows_by_org):
+    def __init__(self, rows_by_org, names_by_org=None):
         self.rows_by_org = rows_by_org  # {org_id: (id, version, definition) or None}
+        self.names_by_org = names_by_org or {}
         self.queries: list[tuple] = []
 
     def execute(self, sql, params=None):
@@ -35,12 +36,14 @@ class _FakeConn:
         assert "FROM RUBRICS" in norm
         assert "ORG_ID = %S" in norm
         assert "IS_ACTIVE" in norm
+        assert "NAME" in norm
         org_id = params[0]
         row = self.rows_by_org.get(org_id)
         if row is None:
             return _Result([])
         rid, version, definition = row
-        return _Result([{"id": rid, "version": version, "definition": definition}])
+        name = self.names_by_org.get(org_id, "Saved rubric")
+        return _Result([{"id": rid, "name": name, "version": version, "definition": definition}])
 
 
 def test_fetch_active_rubric_falls_back_to_legacy_identity_when_no_active_row():
@@ -66,6 +69,45 @@ def test_fetch_active_rubric_returns_the_active_row_not_the_file():
     assert version == 2
     assert definition == custom
     assert definition != load_v8_definition()
+
+
+def test_fetch_active_rubric_fills_in_name_for_nameless_self_serve_definitions():
+    """rubric_builder._wrap_definition() (the self-serve rubric shape) never
+    sets a top-level "name" — only the rubrics.name column has it. Without
+    this, analyze_call's rubric["name"] KeyErrors the instant an org's
+    active rubric is a self-serve one (production incident, 2026-09-04)."""
+    from backend.rubric_builder import _wrap_definition
+    from backend.audit_store import fetch_active_rubric
+
+    nameless = _wrap_definition([
+        {"id": "d1", "name": "Custom check", "method": "custom_llm",
+         "weight": 100, "question": "Did it go well?"},
+    ])
+    assert "name" not in nameless
+    row_id = str(uuid.uuid4())
+    conn = _FakeConn(
+        {ORG_A: (row_id, 1, nameless)},
+        names_by_org={ORG_A: "My self-serve rubric"},
+    )
+    rubric_id, version, definition = fetch_active_rubric(conn, org_id=ORG_A)
+    assert rubric_id == row_id
+    assert definition["name"] == "My self-serve rubric"
+    assert definition["technical_skills"]["dimensions"][0]["id"] == "d1"
+
+
+def test_fetch_active_rubric_leaves_an_existing_name_untouched():
+    """Legacy/admin-managed definitions already embed a name from
+    rubric.json — the row's own name column must never override it."""
+    from backend.audit_store import fetch_active_rubric, load_v8_definition
+
+    named = load_v8_definition()
+    row_id = str(uuid.uuid4())
+    conn = _FakeConn(
+        {ORG_A: (row_id, 1, named)},
+        names_by_org={ORG_A: "Some other row name"},
+    )
+    _rid, _v, definition = fetch_active_rubric(conn, org_id=ORG_A)
+    assert definition["name"] == named["name"]
 
 
 def test_fetch_active_rubric_decodes_jsonb_as_string_too():
@@ -97,6 +139,19 @@ def test_analyze_call_takes_rubric_as_a_required_parameter():
     assert "open(qa.RUBRIC_PATH)" not in region
     assert "= audit_store.fetch_active_rubric(" not in region
     assert "*, rubric: dict" in region
+
+
+def test_analyze_call_never_hard_indexes_rubric_name():
+    """rubric["name"] KeyErrors on any self-serve (nameless) rubric —
+    production incident 2026-09-04, org 91c52bea-...ca34, call 624. Must
+    always tolerate a missing name rather than assuming every rubric shape
+    embeds one."""
+    src = (ROOT / "backend" / "api.py").read_text(encoding="utf-8")
+    start = src.index("def analyze_call(")
+    end = src.index("\ndef ", start + 1)
+    region = src[start:end]
+    assert 'rubric["name"]' not in region
+    assert 'rubric.get("name")' in region
 
 
 def test_live_org_with_no_row_falls_back_and_org_with_active_row_gets_it():
