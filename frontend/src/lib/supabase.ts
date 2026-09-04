@@ -74,6 +74,11 @@ function adoptImpersonationUrl(): void {
   if (typeof window === 'undefined') return
   const query = new URLSearchParams(window.location.search)
   if (query.get('impersonated') !== '1') return
+  // Mutually exclusive with password recovery — a stale recovery hint left
+  // over in this tab's sessionStorage from unrelated earlier use must never
+  // hijack a fresh admin-initiated session into RequireAuth's /reset-password
+  // redirect. The impersonation URL is explicit; it always wins.
+  clearPasswordRecovery()
   const orgName = query.get('org') || ''
   const targetEmail = query.get('as') || ''
   if (orgName && targetEmail) markImpersonating({ orgName, targetEmail })

@@ -3,7 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import { BrandLogo } from '../components/BrandLogo'
 import { useColorMode } from '../context/ColorMode'
 import { apiFetch } from '../lib/api'
-import { supabase, supabaseConfigured, markPasswordRecovery, clearPasswordRecovery, hasPasswordRecoveryHint } from '../lib/supabase'
+import {
+  supabase,
+  supabaseConfigured,
+  markPasswordRecovery,
+  clearPasswordRecovery,
+  hasPasswordRecoveryHint,
+  getImpersonating,
+} from '../lib/supabase'
 
 const INVALID_COPY =
   'This reset link is invalid or has expired. Request a new one from the login page.'
@@ -25,6 +32,13 @@ function decodeParam(value: string): string {
 }
 
 function captureRecoveryHint(params: URLSearchParams): void {
+  // An admin "Log in as" handoff also lands an access_token in the hash —
+  // mutually exclusive with password recovery. Check sessionStorage, not
+  // the URL's own ?impersonated=1 query param: adoptImpersonationUrl() (in
+  // lib/supabase.ts) runs first in the module graph and already strips
+  // that param via history.replaceState before this eager top-level call
+  // ever sees it, but it also sets this flag, which survives the rewrite.
+  if (getImpersonating()) return
   if (
     params.get('code') ||
     params.get('access_token') ||
