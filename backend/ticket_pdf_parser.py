@@ -133,6 +133,60 @@ def parse_turns(text: str) -> list[dict]:
     return turns
 
 
+def extract_pages_text(pdf_bytes: bytes) -> list[str]:
+    """Per-page plain text, one entry per page (unlike extract_text(),
+    which joins them into one string). Used by parse_turns_with_pages()
+    so each turn can be tagged with the page it started on."""
+    pages = []
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            pages.append(page.extract_text() or "")
+    return pages
+
+
+def parse_turns_with_pages(pdf_bytes: bytes) -> list[dict]:
+    """Same output as parse_turns(), plus a page_index (0-based) on every
+    turn — the page it started on. TA-5 uses this to place an extracted
+    embedded image (pypdfium2 reports which page it came from) at the
+    right point in the turn sequence, rather than only at the very end.
+    """
+    turns: list[dict] = []
+    current: dict | None = None
+    seq = 0
+    stopped = False
+    for page_index, page_text in enumerate(extract_pages_text(pdf_bytes)):
+        if stopped:
+            break
+        for raw_line in page_text.split("\n"):
+            line = raw_line.rstrip()
+            if _FOOTER_RE.match(line):
+                stopped = True
+                break
+            if not line.strip() or _DAY_RE.match(line):
+                continue
+            m = _TURN_RE.match(line)
+            if m:
+                if current is not None:
+                    turns.append(current)
+                _, raw_name, first_line = m.groups()
+                role = _speaker_role(raw_name)
+                current = {
+                    "seq": seq,
+                    "speaker": role,
+                    "speaker_name": _speaker_display_name(raw_name, role),
+                    "agent_user_id": None,
+                    "text": first_line,
+                    "page_index": page_index,
+                }
+                seq += 1
+                continue
+            if current is not None:
+                current["text"] += "\n" + line
+    if current is not None:
+        turns.append(current)
+    return turns
+
+
 def parse_ticket_pdf(pdf_bytes: bytes) -> list[dict]:
     """extract_text() + parse_turns(), gated on the known-template check.
 

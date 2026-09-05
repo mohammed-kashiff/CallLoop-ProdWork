@@ -4,6 +4,7 @@ ticket_pdf_parser.py's module docstring for the exact format)."""
 
 from __future__ import annotations
 
+import io
 import os
 
 import pytest
@@ -115,11 +116,11 @@ def test_parse_ticket_pdf_rejects_non_justcall_pdfs(monkeypatch):
         tpp.parse_ticket_pdf(b"irrelevant")
 
 
-def test_parse_ticket_pdf_end_to_end_with_a_real_pdf():
-    """Builds a minimal real PDF (hand-written, no external library) whose
-    content stream is exactly the confirmed template, and runs it through
-    the actual PDF-text-extraction step too, not just parse_turns()."""
-    content = SAMPLE_TEXT.replace("(", r"\(").replace(")", r"\)")
+def _build_single_page_pdf(text: str, page_height: int = 1600) -> bytes:
+    """Minimal real one-page PDF (hand-written, no external library) whose
+    content stream is exactly the given text — used to run real
+    PDF-text-extraction (pdfplumber), not just the string-level parser."""
+    content = text.replace("(", r"\(").replace(")", r"\)")
     lines = content.split("\n")
     stream_ops = ["BT", "/F1 10 Tf", "72 750 Td", "12 TL"]
     for line in lines:
@@ -132,12 +133,11 @@ def test_parse_ticket_pdf_end_to_end_with_a_real_pdf():
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> "
-        b"/MediaBox [0 0 612 1600] /Contents 5 0 R >>",
+        b"/MediaBox [0 0 612 %d] /Contents 5 0 R >>" % page_height,
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream),
     ]
-    import io as _io
-    out = _io.BytesIO()
+    out = io.BytesIO()
     out.write(b"%PDF-1.4\n")
     offsets = [0]
     for i, obj in enumerate(objects, start=1):
@@ -152,12 +152,65 @@ def test_parse_ticket_pdf_end_to_end_with_a_real_pdf():
         b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF"
         % (len(objects) + 1, xref_offset)
     )
-    pdf_bytes = out.getvalue()
+    return out.getvalue()
 
+
+def test_parse_ticket_pdf_end_to_end_with_a_real_pdf():
+    pdf_bytes = _build_single_page_pdf(SAMPLE_TEXT)
     turns = tpp.parse_ticket_pdf(pdf_bytes)
     assert len(turns) == 5
     assert turns[0]["speaker"] == "customer"
     assert turns[2]["speaker"] == "agent"
+
+
+def test_parse_turns_with_pages_tags_each_turn_with_its_starting_page(monkeypatch):
+    page_0 = "\n".join([
+        "--- August 19, 2026 ---",
+        "06:16 AM | Kevin Abraham: But why did it fail this time",
+        "06:17 AM | Welma Bot: Hi Mike,",
+    ])
+    page_1 = "\n".join([
+        "07:11 AM | Tanu from JustCall: Hello Kevin,",
+        "I hope you are doing well.",
+        "--- August 20, 2026 ---",
+        "03:32 PM | Dhruv from JustCall: Hi Kevin,",
+    ])
+    monkeypatch.setattr(tpp, "extract_pages_text", lambda pdf_bytes: [page_0, page_1])
+
+    turns = tpp.parse_turns_with_pages(b"irrelevant")
+    assert [t["page_index"] for t in turns] == [0, 0, 1, 1]
+    assert [t["seq"] for t in turns] == [0, 1, 2, 3]
+    # a message that wraps onto the next page still belongs to the turn
+    # that started on the earlier page
+    tanu_turn = turns[2]
+    assert tanu_turn["text"] == "Hello Kevin,\nI hope you are doing well."
+    assert tanu_turn["page_index"] == 1
+
+
+def test_parse_turns_with_pages_stops_at_the_footer_across_pages(monkeypatch):
+    page_0 = "06:16 AM | Kevin Abraham: hi"
+    page_1 = "Exported from JustCall on September 5, 2026 at 03:46 AM"
+    monkeypatch.setattr(tpp, "extract_pages_text", lambda pdf_bytes: [page_0, page_1])
+
+    turns = tpp.parse_turns_with_pages(b"irrelevant")
+    assert len(turns) == 1
+    assert turns[0]["text"] == "hi"
+
+
+def test_parse_turns_with_pages_matches_parse_turns_on_a_real_single_page_pdf():
+    """Sanity check against a real (hand-built) PDF: page-aware parsing
+    agrees with the plain string-level parser on everything except the
+    added page_index field, which must be 0 for every turn on one page."""
+    pdf_bytes = _build_single_page_pdf(SAMPLE_TEXT)
+    plain = tpp.parse_turns(tpp.extract_text(pdf_bytes))
+    with_pages = tpp.parse_turns_with_pages(pdf_bytes)
+    assert len(plain) == len(with_pages)
+    for a, b in zip(plain, with_pages):
+        assert a["seq"] == b["seq"]
+        assert a["speaker"] == b["speaker"]
+        assert a["speaker_name"] == b["speaker_name"]
+        assert a["text"] == b["text"]
+    assert all(t["page_index"] == 0 for t in with_pages)
 
 
 REAL_SAMPLE_PATH = os.path.expanduser(
