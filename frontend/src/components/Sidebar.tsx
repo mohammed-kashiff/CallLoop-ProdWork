@@ -382,6 +382,16 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               >
                 Call logs
               </NavLink>
+              <NavLink
+                to="/ticket-audit"
+                className={({ isActive }) =>
+                  ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+                }
+                onClick={onNavigate}
+              >
+                Ticket Audit
+                <span className="nav-soon">Scaffold</span>
+              </NavLink>
             </>
           ) : null}
         </nav>

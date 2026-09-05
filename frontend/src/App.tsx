@@ -23,6 +23,7 @@ import { Profile } from './pages/Profile'
 import { ResetPassword } from './pages/ResetPassword'
 import { RubricBuilder } from './pages/RubricBuilder'
 import { Pyai } from './pages/Pyai'
+import { TicketAudit } from './pages/TicketAudit'
 import { Training } from './pages/Training'
 import { appHomePath, isAdminHost } from './lib/adminHost'
 import './App.css'
@@ -66,6 +67,8 @@ function App() {
                     <Route path="admin" element={<Admin />} />
                     <Route path="call-logs" element={<CallLogs />} />
                     <Route path="call-logs/:callId/trail" element={<CallTrail />} />
+                    <Route path="ticket-audit" element={<TicketAudit />} />
+                    <Route path="ticket-audit/:ticketId" element={<TicketAudit />} />
                     <Route path="profile" element={<Profile />} />
                     <Route path="pyai" element={<Pyai />} />
                     <Route path="*" element={<Navigate to={home} replace />} />

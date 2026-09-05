@@ -1989,6 +1989,105 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   line-height: 1.55;
 }
 
+/* Ticket Audit (TA-10) — its own small block, not shared with the call
+   engine's score-ring/transcript styling above. */
+
+.scaffold-banner {
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius);
+  border: 1px dashed var(--partial);
+  color: var(--partial);
+  background: rgba(180, 83, 9, 0.06);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.score-headline {
+  font-family: var(--mono);
+  font-weight: 750;
+  font-size: 2.4rem;
+  line-height: 1;
+  margin: 0.2rem 0 1rem;
+}
+
+.score-headline span {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--muted-fg);
+  margin-left: 0.15rem;
+}
+
+.evidence.is-image {
+  margin: 0.7rem 0 0;
+  padding: 0.6rem;
+}
+
+.evidence.is-image img {
+  display: block;
+  max-width: 100%;
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.evidence.is-image figcaption {
+  margin-top: 0.5rem;
+  font-style: italic;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--muted-fg);
+}
+
+.evidence-unverified {
+  display: inline-block;
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--unverified);
+}
+
+.ticket-thread {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.ticket-turn {
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--radius);
+  background: var(--control-bg);
+  border: 1px solid var(--border);
+}
+
+.ticket-turn-speaker {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-fg);
+  margin-bottom: 0.25rem;
+}
+
+.ticket-turn.is-agent .ticket-turn-speaker {
+  color: var(--teal);
+}
+
+.ticket-turn p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.ticket-turn-image {
+  display: block;
+  max-width: 100%;
+  border-radius: calc(var(--radius) - 2px);
+  margin: 0.35rem 0;
+}
+
 .timestamp-btn {
   margin-top: 0.45rem;
   border: 0;
