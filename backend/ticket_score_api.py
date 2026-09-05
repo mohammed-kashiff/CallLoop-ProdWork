@@ -173,9 +173,10 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
         ticket_id=tid, score=result["score"], dimensions=len(result["findings"]),
         refresh=bool(refresh),
     )
-    return _payload(
+    payload = _payload(
         tid, result, cached=False, viewer_user_id=viewer_id, is_manager=is_manager,
     )
+    return _with_timeliness(payload, turns)
 
 
 def register(app) -> None:

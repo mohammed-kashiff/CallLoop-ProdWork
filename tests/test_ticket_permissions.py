@@ -230,6 +230,10 @@ def test_score_route_filters_findings_for_a_non_manager(monkeypatch):
     monkeypatch.setattr("backend.ticket_score_api.ticket_audit_store.fetch_latest", lambda *a, **k: None)
     monkeypatch.setattr("backend.ticket_score_api.ticket_audit_store.upsert", lambda *a, **k: "audit-id")
     monkeypatch.setattr(
+        "backend.ticket_score_api.ticket_rubric.ensure_ticket_rubric",
+        lambda org_id: {"id": "rubric-id", "name": "Ticket QA", "version": 1, "dimensions": []},
+    )
+    monkeypatch.setattr(
         "backend.ticket_score_api.ticket_scoring.score_ticket",
         lambda turns, dims, **k: {
             "score": 100.0, "primary_owner": agent_b,
@@ -249,7 +253,10 @@ def test_score_route_filters_findings_for_a_non_manager(monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["view_scope"] == "own"
-    assert [f["id"] for f in body["findings"]] == ["a"]
+    # "a" is agent_a's own finding; response_timeliness is always appended
+    # and always visible (a whole-thread metric, not one agent's score —
+    # never TA-12-filtered). "b" (agent_b's) must never appear.
+    assert [f["id"] for f in body["findings"]] == ["a", "response_timeliness"]
     assert len(body["spans"]) == 1
 
 

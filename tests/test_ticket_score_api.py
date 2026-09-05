@@ -91,6 +91,20 @@ def _no_prior_audit(monkeypatch):
         "backend.ticket_score_api.ticket_audit_store.upsert",
         lambda *a, **k: "audit-id",
     )
+    # TA-13: score_ticket_route calls ensure_ticket_rubric() before
+    # scoring — without this mock these "mocked" tests would silently
+    # hit the real rubrics table for DEFAULT_ORG_ID on every run. Reuses
+    # the real scaffold content (pure, no DB) rather than an empty list,
+    # since some tests inspect the dimensions actually passed through.
+    from backend.ticket_rubric import get_scaffold_rubric
+
+    monkeypatch.setattr(
+        "backend.ticket_score_api.ticket_rubric.ensure_ticket_rubric",
+        lambda org_id: {
+            "id": "rubric-id", "name": "Ticket QA", "version": 1,
+            "dimensions": get_scaffold_rubric(),
+        },
+    )
 
 
 def test_score_400_when_ticket_ingestion_failed(auth_client, monkeypatch):
@@ -266,13 +280,17 @@ def test_upload_then_score_live_end_to_end(monkeypatch):
         assert body["rubric_scaffold"] is True
         assert body["cached"] is False
         assert 0 <= body["score"] <= 100
-        assert len(body["findings"]) == 6  # the six scaffold dimensions
+        # 6 scaffold dimensions (TA-7/13) + Response Timeliness (TA-13,
+        # deterministic — appended fresh on every response, cached or not).
+        assert len(body["findings"]) == 7
         assert all("verdict" in f for f in body["findings"])
+        assert sum(1 for f in body["findings"] if f.get("deterministic")) == 1
 
         again = client.post(f"/api/tickets/{ticket_id}/score")
         assert again.status_code == 200, again.text
         assert again.json()["cached"] is True
         assert again.json()["score"] == body["score"]
+        assert len(again.json()["findings"]) == 7
 
         blocked = client.post(f"/api/tickets/{ticket_id}/score", params={"refresh": "true"})
         assert blocked.status_code == 403
