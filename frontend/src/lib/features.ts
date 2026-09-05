@@ -39,11 +39,18 @@ export const TRIAL_FLAGS: TrialFlag[] = [
       "Lets this org run Clear cache, which soft-deletes every call and removes their recordings at once. Off until you turn it on for this org.",
     defaultEnabled: false,
   },
-  {
-    key: "enable_call_rescoring",
-    label: "Call rescoring",
-    description:
-      "Lets an already-audited call be re-scored (refresh, or after a retranscribe). Off by default so a call's score stays fixed once set. Off until you turn it on for this org.",
-    defaultEnabled: false,
-  },
+    {
+        key: "enable_call_rescoring",
+        label: "Call rescoring",
+        description:
+          "Lets an already-audited call be re-scored (refresh, or after a retranscribe). Off by default so a call's score stays fixed once set. Off until you turn it on for this org.",
+        defaultEnabled: false,
+    },
+    {
+        key: "enable_ticket_rescoring",
+        label: "Ticket rescoring",
+        description:
+          "Lets an already-audited ticket be re-scored. Off by default so a ticket's score stays fixed once set. Off until you turn it on for this org.",
+        defaultEnabled: false,
+    },
 ]

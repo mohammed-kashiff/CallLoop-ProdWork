@@ -16,6 +16,10 @@ deterministic; re-running the same transcript could hand back a different
 number). Off by default means neither ?refresh=true nor a retranscribe can
 recompute an already-scored call's audit for an org until a platform admin
 opts that org in.
+enable_ticket_rescoring is the same rule for tickets (TA-11 / PRD §9).
+Off by default: an already-audited ticket is not silently re-scored;
+?refresh=true on POST /api/tickets/{id}/score is 403 until a platform
+admin opts the org in.
 
 org_id is the JWT tenant only. Do not read it from the request body here.
 """
@@ -42,12 +46,14 @@ FEATURE_KEYS = (
     "use_selfhosted_transcription",
     "enable_bulk_call_clear",
     "enable_call_rescoring",
+    "enable_ticket_rescoring",
 )
 
 # Missing key → on, except these. Unset must stay on PyAI, bulk clear and
-# call rescoring must stay off until a platform admin opts an org in.
+# rescoring must stay off until a platform admin opts an org in.
 DEFAULT_OFF_KEYS = frozenset({
-    "use_selfhosted_transcription", "enable_bulk_call_clear", "enable_call_rescoring",
+    "use_selfhosted_transcription", "enable_bulk_call_clear",
+    "enable_call_rescoring", "enable_ticket_rescoring",
 })
 
 
