@@ -45,6 +45,7 @@ type TicketAuditResult = {
   }>
   findings: TicketFinding[]
   created_at?: string
+  view_scope?: 'full' | 'own'
 }
 
 type TicketDetail = {
@@ -55,6 +56,7 @@ type TicketDetail = {
   messages: TicketMessage[]
   assets: TicketAsset[]
   audit: TicketAuditResult | null
+  view_scope?: 'full' | 'own'
 }
 
 function verdictSlug(verdict: string): string {
@@ -247,6 +249,13 @@ export function TicketAudit() {
         </p>
       ) : null}
 
+      {ticket && ticket.view_scope === 'own' ? (
+        <p className="scaffold-banner">
+          Showing only your own contribution to this ticket (TA-12) — not another agent's
+          turns or scores, even though this thread is shared.
+        </p>
+      ) : null}
+
       {ticket ? (
         <div className="eval-split">
           <div className="eval-pane">
@@ -320,9 +329,9 @@ export function TicketAudit() {
           </div>
           <div className="eval-pane is-transcript">
             <h2 className="panel-title">Ticket thread</h2>
-            {/* TA-12 is not built yet: a restricted "agent own-contribution"
-                view would filter this list to the viewer's own turns.
-                Every viewer currently sees the full thread (manager view). */}
+            {/* TA-12: the backend already filtered this list server-side —
+                the full thread for a manager (org owner), or only the
+                viewer's own span for anyone else. Nothing to filter here. */}
             <ul className="ticket-thread">
               {ticket.messages.map((m) => (
                 <li key={m.seq} className={`ticket-turn is-${m.speaker}`}>

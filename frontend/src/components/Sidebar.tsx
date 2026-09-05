@@ -209,6 +209,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
   const onHome = pathname === home
   const pulseOpen = pathname.startsWith('/agents-pulse')
   const auditsOpen = pathname.startsWith('/audits')
+  const ticketAuditOpen = pathname.startsWith('/ticket-audit')
   const showNeighbourhood = flagEnabled(features, 'show_neighbourhood_nav')
   const showGrowth = flagEnabled(features, 'show_growth_tools_nav')
   const showTicketAudit = flagEnabled(features, 'show_ticket_audit_nav')
@@ -347,16 +348,34 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
             Rubric builder
           </NavLink>
           {showTicketAudit ? (
-            <NavLink
-              to="/ticket-audit"
-              className={({ isActive }) =>
-                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
-              }
-              onClick={onNavigate}
-            >
-              Ticket Audit
-              <span className="nav-soon">Scaffold</span>
-            </NavLink>
+            <div className={['nav-branch', ticketAuditOpen ? 'is-open' : ''].filter(Boolean).join(' ')}>
+              <NavLink
+                to="/ticket-audit"
+                className={() =>
+                  ['sidebar-link', ticketAuditOpen ? 'is-active' : '', ticketAuditOpen ? 'is-open' : '']
+                    .filter(Boolean)
+                    .join(' ')
+                }
+                onClick={onNavigate}
+                aria-expanded={ticketAuditOpen}
+              >
+                Ticket Audit
+                <span className="nav-soon">Scaffold</span>
+              </NavLink>
+              {ticketAuditOpen ? (
+                <NavLink
+                  to="/ticket-audit-mine"
+                  className={({ isActive }) =>
+                    ['sidebar-link', 'is-child', isActive ? 'is-active' : '']
+                      .filter(Boolean)
+                      .join(' ')
+                  }
+                  onClick={onNavigate}
+                >
+                  My contributions
+                </NavLink>
+              ) : null}
+            </div>
           ) : null}
           {showGrowth
             ? LOOP_NAV.map((item) => (
