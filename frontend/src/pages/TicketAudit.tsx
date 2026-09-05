@@ -32,6 +32,9 @@ type TicketFinding = {
   evidence_verified: boolean
   attributed_to: string | null
   weight?: number
+  // TA-13: Response Timeliness is computed from real message timestamps,
+  // not judged by Claude — not folded into the weighted score above.
+  deterministic?: boolean
 }
 
 type TicketAuditResult = {
@@ -298,7 +301,14 @@ export function TicketAudit() {
                       return (
                         <li key={f.id} className="criterion">
                           <div className="criterion-top">
-                            <h3>{f.name || f.id}</h3>
+                            <h3>
+                              {f.name || f.id}
+                              {f.deterministic && (
+                                <span className="nav-soon" title="Computed from real message timestamps, not judged by Claude">
+                                  Measured
+                                </span>
+                              )}
+                            </h3>
                             <span className={`verdict verdict-${verdictSlug(f.verdict)}`}>
                               {verdictLabel(f.verdict)}
                             </span>
