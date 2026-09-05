@@ -22,6 +22,7 @@ from . import auth
 from . import sentry_report
 from . import ticket_image_store
 from . import ticket_ingest
+from . import ticket_permissions
 
 log = logging.getLogger("callproof.ticket_api")
 
@@ -145,12 +146,71 @@ def list_tickets(request: Request):
 
 
 def get_ticket(request: Request, ticket_id: str):
+    """TA-12: a manager (org owner) gets the row as ticket_ingest built it.
+    Anyone else gets only their own contribution — turns inside their own
+    agent span, the assets attached to those turns, and (if the ticket has
+    been scored) only their own findings/spans, never another agent's."""
     org_id = auth.org_id_from_request(request)
     tid = _parse_ticket_id(ticket_id)
     row = ticket_ingest.get_ticket(tid, org_id)
     if not row:
         raise HTTPException(status_code=404, detail="Ticket not found.")
-    return row
+
+    is_manager = auth.is_org_owner(request)
+    if is_manager:
+        return {**row, "view_scope": "full"}
+
+    viewer_id = auth.user_id_from_request(request)
+    turns = ticket_permissions.filter_turns_for_viewer(
+        row["messages"], viewer_user_id=viewer_id, is_manager=False,
+    )
+    visible_seqs = {t["seq"] for t in turns}
+    assets = [a for a in row["assets"] if a["seq"] in visible_seqs]
+    audit = row["audit"]
+    if audit is not None:
+        audit = {
+            **audit,
+            "findings": ticket_permissions.filter_findings_for_viewer(
+                audit.get("findings") or [], viewer_user_id=viewer_id, is_manager=False,
+            ),
+            "spans": ticket_permissions.filter_spans_for_viewer(
+                audit.get("spans") or [], viewer_user_id=viewer_id, is_manager=False,
+            ),
+        }
+    return {**row, "messages": turns, "assets": assets, "audit": audit, "view_scope": "own"}
+
+
+def my_ticket_contributions(request: Request):
+    """TA-12: an agent's own contribution rolled up across every ticket
+    they've touched — never another agent's turns or scores, even on a
+    thread shared with them. An org owner gets the same shape, scoped to
+    their own turns too — "manager" only changes what a single ticket's
+    GET returns, not what "mine" means here."""
+    org_id = auth.org_id_from_request(request)
+    viewer_id = auth.user_id_from_request(request)
+    tickets = []
+    for ticket_id in ticket_ingest.list_ticket_ids_for_agent(org_id, viewer_id):
+        row = ticket_ingest.get_ticket(ticket_id, org_id)
+        if not row:
+            continue
+        turns = ticket_permissions.filter_turns_for_viewer(
+            row["messages"], viewer_user_id=viewer_id, is_manager=False,
+        )
+        if not turns:
+            continue
+        findings = None
+        if row["audit"] is not None:
+            findings = ticket_permissions.filter_findings_for_viewer(
+                row["audit"].get("findings") or [], viewer_user_id=viewer_id, is_manager=False,
+            )
+        tickets.append({
+            "ticket_id": row["id"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "turns": turns,
+            "findings": findings,
+        })
+    return {"tickets": tickets}
 
 
 def get_ticket_asset(request: Request, ticket_id: str, seq: int):
@@ -183,6 +243,7 @@ def register(app) -> None:
     are registered first so `{ticket_id}` cannot swallow `upload`.
     """
     app.add_api_route("/api/tickets/upload", upload_ticket, methods=["POST"])
+    app.add_api_route("/api/tickets/mine", my_ticket_contributions, methods=["GET"])
     app.add_api_route("/api/tickets", list_tickets, methods=["GET"])
     app.add_api_route(
         "/api/tickets/{ticket_id}/assets/{seq}", get_ticket_asset, methods=["GET"],

@@ -370,3 +370,22 @@ def ticket_asset_meta(ticket_id: str, org_id: str, seq: int) -> dict | None:
         "height": int(row["height"]),
         "content_type": row["content_type"],
     }
+
+
+def list_ticket_ids_for_agent(org_id: str, agent_user_id: str) -> list[str]:
+    """TA-12: every ticket this agent has at least one turn on, most
+    recent first — the input to their own cross-ticket rollup view."""
+    with org_scope(org_id):
+        with db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT t.id, t.created_at
+                FROM tickets t
+                JOIN ticket_messages m
+                  ON m.ticket_id = t.id AND m.org_id = t.org_id
+                WHERE t.org_id = %s AND m.agent_user_id = %s
+                ORDER BY t.created_at DESC
+                """,
+                (org_id, agent_user_id),
+            ).fetchall()
+    return [str(r["id"]) for r in rows]

@@ -45,6 +45,7 @@ EXPECTED_ROUTES = {
     "/api/upload",
     "/api/upload-batch",
     "/api/tickets",
+    "/api/tickets/mine",
     "/api/tickets/upload",
     "/api/tickets/{ticket_id}",
     "/api/tickets/{ticket_id}/assets/{seq}",

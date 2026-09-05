@@ -36,6 +36,7 @@ from . import org_features
 from . import sentry_report
 from . import ticket_audit_store
 from . import ticket_ingest
+from . import ticket_permissions
 from . import ticket_rubric
 from . import ticket_scoring
 
@@ -53,18 +54,35 @@ def _parse_ticket_id(ticket_id: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid ticket id.") from None
 
 
-def _payload(tid: str, result: dict, *, cached: bool) -> dict:
+def _payload(
+    tid: str, result: dict, *, cached: bool, viewer_user_id: str, is_manager: bool,
+) -> dict:
+    """TA-12: a manager (org owner) gets every finding/span. Anyone else
+    gets only the ones attributed to their own agent_user_id — never
+    another agent's individual scores, even on a ticket they share."""
+    filtered = {
+        **result,
+        "findings": ticket_permissions.filter_findings_for_viewer(
+            result.get("findings") or [], viewer_user_id=viewer_user_id, is_manager=is_manager,
+        ),
+        "spans": ticket_permissions.filter_spans_for_viewer(
+            result.get("spans") or [], viewer_user_id=viewer_user_id, is_manager=is_manager,
+        ),
+    }
     return {
         "ticket_id": tid,
         "rubric_scaffold": True,
         "cached": cached,
-        **result,
+        "view_scope": "full" if is_manager else "own",
+        **filtered,
     }
 
 
 def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
     org_id = auth.org_id_from_request(request)
     tid = _parse_ticket_id(ticket_id)
+    viewer_id = auth.user_id_from_request(request)
+    is_manager = auth.is_org_owner(request)
 
     ticket = ticket_ingest.get_ticket(tid, org_id)
     if not ticket:
@@ -93,7 +111,9 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
                 log, "ticket_audit_cache",
                 result="HIT", ticket_id=tid, score=prior.get("score"),
             )
-            return _payload(tid, stored, cached=True)
+            return _payload(
+                tid, stored, cached=True, viewer_user_id=viewer_id, is_manager=is_manager,
+            )
 
     turns = [
         {
@@ -133,7 +153,9 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
         ticket_id=tid, score=result["score"], dimensions=len(result["findings"]),
         refresh=bool(refresh),
     )
-    return _payload(tid, result, cached=False)
+    return _payload(
+        tid, result, cached=False, viewer_user_id=viewer_id, is_manager=is_manager,
+    )
 
 
 def register(app) -> None:

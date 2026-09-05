@@ -434,12 +434,31 @@ def require_platform_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Not authorized.")
 
 
-def require_owner(request: Request) -> None:
-    """Self-serve rubric builder: only the org's account owner may edit it.
+def is_org_owner(request: Request) -> bool:
+    """True iff this org member's role is "owner".
 
     org_members.role is only "owner" or "member" today — no team-admin tier
-    yet (see the roles hierarchy doc). Owner-only until that ships.
+    yet (see the roles hierarchy doc). "Owner" stands in for "manager" until
+    that ships (TA-12: manager full-thread view vs. agent own-contribution
+    view — same narrow-then-broad shape as require_owner itself).
     """
     role = (getattr(request.state, "role", None) or "").strip().lower()
-    if role != "owner":
+    return role == "owner"
+
+
+def require_owner(request: Request) -> None:
+    """Self-serve rubric builder: only the org's account owner may edit it."""
+    if not is_org_owner(request):
         raise HTTPException(status_code=403, detail="Only the account owner can do this.")
+
+
+def user_id_from_request(request: Request) -> str:
+    """The calling member's own id from the verified JWT membership only.
+
+    Same contract as org_id_from_request: never reads query params, path
+    params, headers, or the request body — request.state.user_id only.
+    """
+    uid = parse_org_id(getattr(request.state, "user_id", None))
+    if not uid:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return uid
