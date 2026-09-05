@@ -7,9 +7,14 @@ scorecard to render: nothing else in this codebase wires TA-6
 added to ticket_api.py since that file is under active concurrent
 development; `register()` is called separately from api.py.
 
-POST /api/tickets/{ticket_id}/score scores every turn against TA-7's
-scaffold rubric (ticket_rubric.py — *** NOT the final rubric, see that
-module's own scaffolding warning ***) via ticket_scoring.score_ticket().
+POST /api/tickets/{ticket_id}/score scores every turn against the org's
+"Ticket QA" rubric — a real rubrics-table row (TA-13, PRD §10), created
+on first use via ticket_rubric.ensure_ticket_rubric() — via
+ticket_scoring.score_ticket(). *** Still not the final rubric design,
+see ticket_rubric.py's own scaffolding note. *** Response Timeliness
+(TA-13) is computed deterministically from real message timestamps and
+appended to the findings list separately — it is not part of
+score_ticket()'s weighted score for v1.
 
 TA-11 (PRD §9): the first successful POST persists the scorecard in
 ticket_audits. A later POST without ?refresh=true returns that stored
@@ -54,6 +59,18 @@ def _parse_ticket_id(ticket_id: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid ticket id.") from None
 
 
+def _with_timeliness(payload: dict, turns: list[dict]) -> dict:
+    """TA-13: Response Timeliness is deterministic, computed fresh from the
+    ticket's real message timestamps every time — never persisted, never
+    part of score_ticket()'s weighted score (v1; see ticket_rubric.
+    evaluate_response_timeliness()'s own docstring), and never filtered by
+    TA-12's own-contribution view: it's a whole-thread metric, not one
+    agent's individual score, so it's appended after _payload() has
+    already applied that filtering to everything else."""
+    timeliness = ticket_rubric.evaluate_response_timeliness(turns)
+    return {**payload, "findings": [*(payload.get("findings") or []), timeliness]}
+
+
 def _payload(
     tid: str, result: dict, *, cached: bool, viewer_user_id: str, is_manager: bool,
 ) -> dict:
@@ -96,6 +113,17 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
     if not ticket["messages"]:
         raise HTTPException(status_code=400, detail="This ticket has no messages to score.")
 
+    turns = [
+        {
+            "seq": m["seq"],
+            "speaker": m["speaker"],
+            "text": m["text"],
+            "agent_user_id": m["agent_user_id"],
+            "sent_at": m.get("sent_at"),
+        }
+        for m in ticket["messages"]
+    ]
+
     prior = ticket_audit_store.fetch_latest(tid, org_id)
     if prior is not None:
         stored = prior["findings"]
@@ -111,22 +139,14 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
                 log, "ticket_audit_cache",
                 result="HIT", ticket_id=tid, score=prior.get("score"),
             )
-            return _payload(
+            payload = _payload(
                 tid, stored, cached=True, viewer_user_id=viewer_id, is_manager=is_manager,
             )
-
-    turns = [
-        {
-            "seq": m["seq"],
-            "speaker": m["speaker"],
-            "text": m["text"],
-            "agent_user_id": m["agent_user_id"],
-        }
-        for m in ticket["messages"]
-    ]
+            return _with_timeliness(payload, turns)
 
     try:
-        result = ticket_scoring.score_ticket(turns, ticket_rubric.get_scaffold_rubric())
+        rubric = ticket_rubric.ensure_ticket_rubric(org_id)
+        result = ticket_scoring.score_ticket(turns, rubric["dimensions"])
     except Exception as e:  # noqa: BLE001
         applog.event(
             log, "ticket_scoring_failed", level=logging.ERROR,

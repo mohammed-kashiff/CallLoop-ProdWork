@@ -66,9 +66,22 @@ def fetch_active_rubric(conn, *, org_id: str) -> tuple[str, int, dict[str, Any]]
     DEFAULT_RUBRIC_ID / LEGACY_RUBRIC_VERSION / the rubric.json file. No
     proactive seeding — an org with nothing in rubrics yet stays on this
     fallback until an admin saves a custom version (CR-13).
+
+    Excludes definition->>'kind' = 'ticket' rows: PRD §10 puts the Ticket
+    QA rubric (TA-13) in this same table with no schema change, sharing
+    this org-wide is_active column — without this exclusion, an org
+    running both engines could have this query non-deterministically hand
+    a real call its ticket rubric instead. ticket_rubric.
+    fetch_active_ticket_rubric() makes the matching exclusion the other
+    way, so the two engines can never read each other's active rubric.
     """
     row = conn.execute(
-        "SELECT id, name, version, definition FROM rubrics WHERE org_id = %s AND is_active LIMIT 1",
+        """
+        SELECT id, name, version, definition FROM rubrics
+        WHERE org_id = %s AND is_active
+          AND COALESCE(definition->>'kind', 'call') <> 'ticket'
+        LIMIT 1
+        """,
         (org_id,),
     ).fetchone()
     definition = decode_findings((row or {}).get("definition"))

@@ -70,7 +70,12 @@ def set_ticket_status(ticket_id: str, org_id: str, status: str) -> None:
 
 def insert_ticket_messages(ticket_id: str, org_id: str, turns: list[dict]) -> None:
     """Bulk-insert parsed turns (ticket_pdf_parser's output shape) into
-    ticket_messages, in seq order. No-op for an empty list."""
+    ticket_messages, in seq order. No-op for an empty list.
+
+    sent_at (TA-13) is optional — turns.get("sent_at") — so callers that
+    don't have it (older test fixtures, hand-built turns) still work; the
+    column itself is nullable.
+    """
     if not turns:
         return
     with org_scope(org_id):
@@ -79,12 +84,12 @@ def insert_ticket_messages(ticket_id: str, org_id: str, turns: list[dict]) -> No
                 conn.execute(
                     """
                     INSERT INTO ticket_messages
-                        (ticket_id, org_id, seq, agent_user_id, speaker, text)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                        (ticket_id, org_id, seq, agent_user_id, speaker, text, sent_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         ticket_id, org_id, t["seq"], t["agent_user_id"],
-                        t["speaker"], t["text"],
+                        t["speaker"], t["text"], t.get("sent_at"),
                     ),
                 )
 
@@ -125,7 +130,7 @@ def interleave_images(turns: list[dict], images: list[dict], descriptions: list[
     callers can store it as a viewable asset without re-deriving it.
     """
     def _image_turn(image: dict, description: str, speaker: str,
-                     speaker_name: str, agent_user_id) -> dict:
+                     speaker_name: str, agent_user_id, sent_at) -> dict:
         return {
             "speaker": speaker,
             "speaker_name": speaker_name,
@@ -135,6 +140,7 @@ def interleave_images(turns: list[dict], images: list[dict], descriptions: list[
             "png_bytes": image["png_bytes"],
             "width": image["width"],
             "height": image["height"],
+            "sent_at": sent_at,
         }
 
     result: list[dict] = []
@@ -143,7 +149,7 @@ def interleave_images(turns: list[dict], images: list[dict], descriptions: list[
 
     if not turns:
         for image, desc in zip(images, descriptions):
-            result.append(_image_turn(image, desc, "customer", "customer", None))
+            result.append(_image_turn(image, desc, "customer", "customer", None, None))
         for i, t in enumerate(result):
             t["seq"] = i
         return result
@@ -151,6 +157,7 @@ def interleave_images(turns: list[dict], images: list[dict], descriptions: list[
     last_speaker = turns[0]["speaker"]
     last_speaker_name = turns[0]["speaker_name"]
     last_agent_user_id = turns[0]["agent_user_id"]
+    last_sent_at = turns[0].get("sent_at")
     n_turns = len(turns)
 
     for i, turn in enumerate(turns):
@@ -158,6 +165,7 @@ def interleave_images(turns: list[dict], images: list[dict], descriptions: list[
         last_speaker = turn["speaker"]
         last_speaker_name = turn["speaker_name"]
         last_agent_user_id = turn["agent_user_id"]
+        last_sent_at = turn.get("sent_at")
         # Flush pending images only once we've seen every turn on this
         # page — not after the first turn that merely reaches it — so an
         # image shares a page with several turns lands after the last one.
@@ -169,14 +177,14 @@ def interleave_images(turns: list[dict], images: list[dict], descriptions: list[
         while img_idx < n_images and images[img_idx]["page_index"] <= turn["page_index"]:
             result.append(_image_turn(
                 images[img_idx], descriptions[img_idx],
-                last_speaker, last_speaker_name, last_agent_user_id,
+                last_speaker, last_speaker_name, last_agent_user_id, last_sent_at,
             ))
             img_idx += 1
 
     while img_idx < n_images:
         result.append(_image_turn(
             images[img_idx], descriptions[img_idx],
-            last_speaker, last_speaker_name, last_agent_user_id,
+            last_speaker, last_speaker_name, last_agent_user_id, last_sent_at,
         ))
         img_idx += 1
 

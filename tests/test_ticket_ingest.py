@@ -105,9 +105,9 @@ def test_insert_ticket_messages_writes_one_row_per_turn_in_order(monkeypatch):
     with _fake_db(monkeypatch, conn):
         ticket_ingest.insert_ticket_messages("t1", ORG_A, turns)
     assert conn.messages == [
-        ("t1", ORG_A, 0, None, "customer", "hi"),
-        ("t1", ORG_A, 1, "u1", "agent", "hello"),
-        ("t1", ORG_A, 2, None, "bot", "beep"),
+        ("t1", ORG_A, 0, None, "customer", "hi", None),
+        ("t1", ORG_A, 1, "u1", "agent", "hello", None),
+        ("t1", ORG_A, 2, None, "bot", "beep", None),
     ]
 
 

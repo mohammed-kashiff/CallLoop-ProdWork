@@ -38,10 +38,12 @@ def test_never_bypasses_rls():
     assert "org_id_from_request" in src
 
 
-def test_uses_the_scaffold_rubric_not_a_hardcoded_one():
+def test_uses_the_orgs_ticket_qa_rubric_not_a_hardcoded_constant():
+    """TA-13: scoring reads the org's real rubrics-table row (seeded on
+    first use), not just the in-memory scaffold constant directly."""
     src = (ROOT / "backend" / "ticket_score_api.py").read_text(encoding="utf-8")
     assert "ticket_rubric" in src
-    assert "get_scaffold_rubric" in src
+    assert "ensure_ticket_rubric" in src
 
 
 def test_score_401_without_token():
@@ -292,6 +294,7 @@ def test_upload_then_score_live_end_to_end(monkeypatch):
         admin.execute("DELETE FROM ticket_message_assets WHERE org_id = %s", (org_id,))
         admin.execute("DELETE FROM ticket_messages WHERE org_id = %s", (org_id,))
         admin.execute("DELETE FROM tickets WHERE org_id = %s", (org_id,))
+        admin.execute("DELETE FROM rubrics WHERE org_id = %s", (org_id,))
         admin.execute("DELETE FROM api_usage WHERE org_id = %s", (org_id,))
         admin.execute("DELETE FROM orgs WHERE id = %s", (org_id,))
         admin.commit()

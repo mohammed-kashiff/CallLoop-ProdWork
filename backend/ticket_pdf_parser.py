@@ -43,21 +43,62 @@ user record — org_members has no stored display name to match against,
 only a Supabase user_id. The field stays in the output shape so
 ticket_messages / TA-6 don't need to change once that resolution exists;
 wiring it up is a separate piece of work.
+
+sent_at (TA-13): each turn's real timestamp, combined from its day
+header ("--- August 19, 2026 ---") and its own "HH:MM AM/PM", in the
+export's own stated UTC offset ("(GMT+0530)" in the header/footer —
+defaults to UTC if that's ever missing). This is the raw data Response
+Timeliness (TA-13's new rubric dimension) needs; a datetime.datetime or
+None per turn, never a string — callers insert it straight into
+ticket_messages.sent_at (TIMESTAMPTZ).
 """
 
 from __future__ import annotations
 
 import io
 import re
+from datetime import date, datetime, timedelta, timezone
 
 import pdfplumber
 
 _TURN_RE = re.compile(r"^(\d{1,2}:\d{2} (?:AM|PM)) \| (.+?): (.*)$")
 _TURN_RE_MULTILINE = re.compile(_TURN_RE.pattern, re.MULTILINE)
-_DAY_RE = re.compile(r"^--- .+ ---$")
+_DAY_RE = re.compile(r"^--- (.+) ---$")
 _FOOTER_RE = re.compile(r"^Exported from .+ on .+$")
+_TZ_OFFSET_RE = re.compile(r"GMT([+-])(\d{2})(\d{2})")
 _BOT_NAME = "Welma Bot"
 _AGENT_SUFFIX = " from JustCall"
+_DAY_DATE_FMT = "%B %d, %Y"
+_TURN_TIME_FMT = "%I:%M %p"
+
+
+def _extract_tz_offset(text: str) -> timezone:
+    """The export's own stated UTC offset, e.g. "(GMT+0530)". Defaults to
+    UTC if the header/footer doesn't have one — an approximate absolute
+    time is still more useful than none at all."""
+    m = _TZ_OFFSET_RE.search(text)
+    if not m:
+        return timezone.utc
+    sign, hh, mm = m.groups()
+    delta = timedelta(hours=int(hh), minutes=int(mm))
+    return timezone(-delta if sign == "-" else delta)
+
+
+def _parse_day_date(day_text: str) -> date | None:
+    try:
+        return datetime.strptime(day_text.strip(), _DAY_DATE_FMT).date()
+    except ValueError:
+        return None
+
+
+def _parse_turn_datetime(day: date | None, time_text: str, tz: timezone) -> datetime | None:
+    if day is None:
+        return None
+    try:
+        parsed_time = datetime.strptime(time_text.strip(), _TURN_TIME_FMT).time()
+    except ValueError:
+        return None
+    return datetime.combine(day, parsed_time, tzinfo=tz)
 
 
 def extract_text(pdf_bytes: bytes) -> str:
@@ -93,8 +134,10 @@ def _speaker_display_name(raw_name: str, role: str) -> str:
 
 def parse_turns(text: str) -> list[dict]:
     """The deterministic parser. Each item:
-    {seq, speaker, speaker_name, agent_user_id, text}.
-    speaker is one of 'agent' | 'customer' | 'bot'.
+    {seq, speaker, speaker_name, agent_user_id, text, sent_at}.
+    speaker is one of 'agent' | 'customer' | 'bot'. sent_at is a
+    datetime.datetime (export's own stated UTC offset) or None if the day
+    header or time couldn't be parsed.
 
     Everything before the first turn line (ticket header, Participants,
     Ticket Details) is skipped. A line that isn't a new turn header
@@ -102,20 +145,26 @@ def parse_turns(text: str) -> list[dict]:
     across lines with no other marker. Parsing stops at the export
     footer line so it's never folded into the last turn's text.
     """
+    tz = _extract_tz_offset(text)
     turns: list[dict] = []
     current: dict | None = None
+    current_date: date | None = None
     seq = 0
     for raw_line in text.split("\n"):
         line = raw_line.rstrip()
         if _FOOTER_RE.match(line):
             break
-        if not line.strip() or _DAY_RE.match(line):
+        if not line.strip():
+            continue
+        day_match = _DAY_RE.match(line)
+        if day_match:
+            current_date = _parse_day_date(day_match.group(1)) or current_date
             continue
         m = _TURN_RE.match(line)
         if m:
             if current is not None:
                 turns.append(current)
-            _, raw_name, first_line = m.groups()
+            time_str, raw_name, first_line = m.groups()
             role = _speaker_role(raw_name)
             current = {
                 "seq": seq,
@@ -123,6 +172,7 @@ def parse_turns(text: str) -> list[dict]:
                 "speaker_name": _speaker_display_name(raw_name, role),
                 "agent_user_id": None,
                 "text": first_line,
+                "sent_at": _parse_turn_datetime(current_date, time_str, tz),
             }
             seq += 1
             continue
@@ -145,16 +195,20 @@ def extract_pages_text(pdf_bytes: bytes) -> list[str]:
 
 
 def parse_turns_with_pages(pdf_bytes: bytes) -> list[dict]:
-    """Same output as parse_turns(), plus a page_index (0-based) on every
-    turn — the page it started on. TA-5 uses this to place an extracted
-    embedded image (pypdfium2 reports which page it came from) at the
-    right point in the turn sequence, rather than only at the very end.
+    """Same output as parse_turns() (including sent_at), plus a page_index
+    (0-based) on every turn — the page it started on. TA-5 uses this to
+    place an extracted embedded image (pypdfium2 reports which page it
+    came from) at the right point in the turn sequence, rather than only
+    at the very end.
     """
+    pages = extract_pages_text(pdf_bytes)
+    tz = _extract_tz_offset("\n".join(pages))
     turns: list[dict] = []
     current: dict | None = None
+    current_date: date | None = None
     seq = 0
     stopped = False
-    for page_index, page_text in enumerate(extract_pages_text(pdf_bytes)):
+    for page_index, page_text in enumerate(pages):
         if stopped:
             break
         for raw_line in page_text.split("\n"):
@@ -162,13 +216,17 @@ def parse_turns_with_pages(pdf_bytes: bytes) -> list[dict]:
             if _FOOTER_RE.match(line):
                 stopped = True
                 break
-            if not line.strip() or _DAY_RE.match(line):
+            if not line.strip():
+                continue
+            day_match = _DAY_RE.match(line)
+            if day_match:
+                current_date = _parse_day_date(day_match.group(1)) or current_date
                 continue
             m = _TURN_RE.match(line)
             if m:
                 if current is not None:
                     turns.append(current)
-                _, raw_name, first_line = m.groups()
+                time_str, raw_name, first_line = m.groups()
                 role = _speaker_role(raw_name)
                 current = {
                     "seq": seq,
@@ -177,6 +235,7 @@ def parse_turns_with_pages(pdf_bytes: bytes) -> list[dict]:
                     "agent_user_id": None,
                     "text": first_line,
                     "page_index": page_index,
+                    "sent_at": _parse_turn_datetime(current_date, time_str, tz),
                 }
                 seq += 1
                 continue
