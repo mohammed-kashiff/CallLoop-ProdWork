@@ -20,6 +20,10 @@ enable_ticket_rescoring is the same rule for tickets (TA-11 / PRD §9).
 Off by default: an already-audited ticket is not silently re-scored;
 ?refresh=true on POST /api/tickets/{id}/score is 403 until a platform
 admin opts the org in.
+show_ticket_audit_nav gates the "Ticket Audit" sidebar entry (TA-10) —
+off by default since the whole engine is still scaffolding (PRD §11: it
+must not be mistaken for production). A platform admin turns it on per
+org from Command Center to let a specific team try it.
 
 org_id is the JWT tenant only. Do not read it from the request body here.
 """
@@ -47,6 +51,7 @@ FEATURE_KEYS = (
     "enable_bulk_call_clear",
     "enable_call_rescoring",
     "enable_ticket_rescoring",
+    "show_ticket_audit_nav",
 )
 
 # Missing key → on, except these. Unset must stay on PyAI, bulk clear and
@@ -54,6 +59,7 @@ FEATURE_KEYS = (
 DEFAULT_OFF_KEYS = frozenset({
     "use_selfhosted_transcription", "enable_bulk_call_clear",
     "enable_call_rescoring", "enable_ticket_rescoring",
+    "show_ticket_audit_nav",
 })
 
 

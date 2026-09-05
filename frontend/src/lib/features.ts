@@ -53,4 +53,11 @@ export const TRIAL_FLAGS: TrialFlag[] = [
           "Lets an already-audited ticket be re-scored. Off by default so a ticket's score stays fixed once set. Off until you turn it on for this org.",
         defaultEnabled: false,
     },
+    {
+        key: "show_ticket_audit_nav",
+        label: "Ticket Audit nav",
+        description:
+          "Shows the Ticket Audit page in this org's sidebar. Off by default — the ticket-scoring engine is still scaffolding, not the final rubric. Turn on per org to let a team try it.",
+        defaultEnabled: false,
+    },
 ]

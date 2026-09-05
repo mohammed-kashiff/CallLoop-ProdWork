@@ -211,6 +211,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
   const auditsOpen = pathname.startsWith('/audits')
   const showNeighbourhood = flagEnabled(features, 'show_neighbourhood_nav')
   const showGrowth = flagEnabled(features, 'show_growth_tools_nav')
+  const showTicketAudit = flagEnabled(features, 'show_ticket_audit_nav')
 
   return (
     <>
@@ -345,6 +346,18 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
             <NavIcon name="rubric" />
             Rubric builder
           </NavLink>
+          {showTicketAudit ? (
+            <NavLink
+              to="/ticket-audit"
+              className={({ isActive }) =>
+                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+              }
+              onClick={onNavigate}
+            >
+              Ticket Audit
+              <span className="nav-soon">Scaffold</span>
+            </NavLink>
+          ) : null}
           {showGrowth
             ? LOOP_NAV.map((item) => (
                 <NavLink
@@ -381,16 +394,6 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
                 onClick={onNavigate}
               >
                 Call logs
-              </NavLink>
-              <NavLink
-                to="/ticket-audit"
-                className={({ isActive }) =>
-                  ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
-                }
-                onClick={onNavigate}
-              >
-                Ticket Audit
-                <span className="nav-soon">Scaffold</span>
               </NavLink>
             </>
           ) : null}
