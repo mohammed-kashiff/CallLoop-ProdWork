@@ -67,6 +67,10 @@ def test_policies_are_not_applied_from_backend_python():
 def test_api_handlers_do_not_bypass_rls():
     for name in (
         "api.py",
+        "ticket_api.py",
+        "ticket_score_api.py",
+        "ticket_audit_store.py",
+        "ticket_ingest.py",
         "auth.py",
         "admin_provision.py",
         "admin_console.py",

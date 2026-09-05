@@ -65,6 +65,8 @@ from . import pyai_usage
 from . import qa_engine as qa
 from . import qa_v8
 from . import recap as pyai_recap
+from . import ticket_api
+from . import ticket_score_api
 from . import transcribe
 from .org_ids import integration_org_id, org_scope, parse_org_id
 
@@ -91,6 +93,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(auth.JwtAuthMiddleware)
+ticket_api.register(app)
+ticket_score_api.register(app)
 
 
 _HEALTH_PATHS = frozenset({"/", "/health", "/healthz"})

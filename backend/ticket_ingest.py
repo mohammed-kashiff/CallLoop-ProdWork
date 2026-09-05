@@ -228,3 +228,145 @@ def ingest_ticket_pdf(org_id: str, pdf_bytes: bytes, *, source: str = "pdf_uploa
 
     set_ticket_status(ticket_id, org_id, "ready")
     return ticket_id
+
+
+def _iso(value):
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
+
+
+def list_tickets(org_id: str) -> list[dict]:
+    """Org-scoped ticket library rows. No message bodies."""
+    with org_scope(org_id):
+        with db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.id, t.source, t.status, t.created_at,
+                       (SELECT COUNT(*) FROM ticket_messages m
+                          WHERE m.ticket_id = t.id AND m.org_id = t.org_id)
+                         AS message_count,
+                       (SELECT ta.score FROM ticket_audits ta
+                          WHERE ta.ticket_id = t.id AND ta.org_id = t.org_id)
+                         AS audit_score
+                FROM tickets t
+                WHERE t.org_id = %s
+                ORDER BY t.created_at DESC
+                """,
+                (org_id,),
+            ).fetchall()
+    return [
+        {
+            "id": str(r["id"]),
+            "source": r["source"],
+            "status": r["status"],
+            "created_at": _iso(r["created_at"]),
+            "message_count": int(r["message_count"] or 0),
+            "has_audit": r["audit_score"] is not None,
+            "score": r["audit_score"],
+        }
+        for r in rows
+    ]
+
+
+def get_ticket(ticket_id: str, org_id: str) -> dict | None:
+    """One ticket plus its turns and screenshot-asset metadata.
+
+    storage_key stays server-side — callers that need the picture go
+    through the signed-URL route, not this payload.
+    """
+    with org_scope(org_id):
+        with db.connection() as conn:
+            ticket = conn.execute(
+                """
+                SELECT id, source, status, created_at
+                FROM tickets
+                WHERE id = %s AND org_id = %s
+                """,
+                (ticket_id, org_id),
+            ).fetchone()
+            if not ticket:
+                return None
+            messages = conn.execute(
+                """
+                SELECT seq, speaker, text, agent_user_id, sent_at
+                FROM ticket_messages
+                WHERE ticket_id = %s AND org_id = %s
+                ORDER BY seq
+                """,
+                (ticket_id, org_id),
+            ).fetchall()
+            assets = conn.execute(
+                """
+                SELECT seq, width, height, content_type
+                FROM ticket_message_assets
+                WHERE ticket_id = %s AND org_id = %s
+                ORDER BY seq
+                """,
+                (ticket_id, org_id),
+            ).fetchall()
+            audit_row = conn.execute(
+                """
+                SELECT score, findings, created_at
+                FROM ticket_audits
+                WHERE ticket_id = %s AND org_id = %s
+                """,
+                (ticket_id, org_id),
+            ).fetchone()
+    asset_seqs = {int(a["seq"]) for a in assets}
+    return {
+        "id": str(ticket["id"]),
+        "source": ticket["source"],
+        "status": ticket["status"],
+        "created_at": _iso(ticket["created_at"]),
+        "messages": [
+            {
+                "seq": int(m["seq"]),
+                "speaker": m["speaker"],
+                "text": m["text"],
+                "agent_user_id": str(m["agent_user_id"]) if m["agent_user_id"] else None,
+                "sent_at": _iso(m["sent_at"]),
+                "has_image": int(m["seq"]) in asset_seqs,
+            }
+            for m in messages
+        ],
+        "assets": [
+            {
+                "seq": int(a["seq"]),
+                "width": int(a["width"]),
+                "height": int(a["height"]),
+                "content_type": a["content_type"],
+            }
+            for a in assets
+        ],
+        "audit": None if not audit_row else {
+            "score": audit_row["score"],
+            "created_at": _iso(audit_row["created_at"]),
+            **(audit_row["findings"] if isinstance(audit_row["findings"], dict)
+               else {}),
+        },
+    }
+
+
+def ticket_asset_meta(ticket_id: str, org_id: str, seq: int) -> dict | None:
+    """RLS-scoped existence check for one screenshot row. No storage_key."""
+    with org_scope(org_id):
+        with db.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT seq, width, height, content_type
+                FROM ticket_message_assets
+                WHERE ticket_id = %s AND org_id = %s AND seq = %s
+                """,
+                (ticket_id, org_id, seq),
+            ).fetchone()
+    if not row:
+        return None
+    return {
+        "seq": int(row["seq"]),
+        "width": int(row["width"]),
+        "height": int(row["height"]),
+        "content_type": row["content_type"],
+    }

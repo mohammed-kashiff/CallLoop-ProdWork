@@ -128,8 +128,11 @@ def test_default_features_keeps_trial_on_and_selfhosted_off():
     assert flags["enable_bulk_call_clear"] is False
     assert "enable_call_rescoring" in FEATURE_KEYS
     assert flags["enable_call_rescoring"] is False
+    assert "enable_ticket_rescoring" in FEATURE_KEYS
+    assert flags["enable_ticket_rescoring"] is False
     off_by_default = {
-        "use_selfhosted_transcription", "enable_bulk_call_clear", "enable_call_rescoring",
+        "use_selfhosted_transcription", "enable_bulk_call_clear",
+        "enable_call_rescoring", "enable_ticket_rescoring",
     }
     assert all(
         flags[key] is True

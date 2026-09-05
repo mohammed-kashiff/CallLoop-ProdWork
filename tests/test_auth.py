@@ -113,7 +113,7 @@ def test_data_routes_401_without_token():
     from backend.api import app
 
     client = TestClient(app)
-    for path in ("/api/calls", "/api/me", "/api/me/usage", "/api/pyai/status"):
+    for path in ("/api/calls", "/api/tickets", "/api/me", "/api/me/usage", "/api/pyai/status"):
         r = client.get(path)
         assert r.status_code == 401, path
 
