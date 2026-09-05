@@ -193,8 +193,11 @@ request and scopes every downstream call to that org.
 | `ticket_pdf_parser.py` | TA-4/TA-5. Deterministic JustCall PDF-export parser. `parse_ticket_pdf()` → ordered `{seq, speaker, agent_user_id, text}` turns (no Claude, no `transcribe.py`). `parse_turns_with_pages()` additionally tags each turn with the page it started on, so `ticket_ingest.py` can place an embedded image at the right point in the sequence instead of only at the end. |
 | `ticket_image_extraction.py` | TA-5. `extract_images()` pulls embedded raster objects out of a PDF (pypdfium2); `describe_image()` is one Claude vision call per image. Standalone — no import from the call-scoring engine. Real JustCall exports currently yield no image XObjects (screenshots flatten to a literal `[Image]` text token on export), so this only fires for a source that actually embeds real image data; validated live against a synthetic PDF + the real Anthropic API. |
 | `ticket_image_store.py` | TA-5. Private per-org Storage for ticket screenshots (`ticket-images` bucket), same shape as `audio_store.py` for call audio — signed URLs only, never a public read policy. |
-| `ticket_ingest.py` | TA-4/TA-5 write path. `ingest_ticket_pdf()`: parses text turns + embedded images, `interleave_images()` merges an image into the turn sequence right after the last text turn on the same PDF page (inheriting that turn's speaker — the closest signal available without exact on-page coordinates), writes everything to `ticket_messages`, stores each image via `ticket_image_store` + a `ticket_message_assets` row. Any failure anywhere in the pipeline marks the ticket `failed` and re-raises — nothing partial is left looking like a successful ingest. Scoring (TA-6) needs zero changes: an image-derived turn is just a normal turn in the sequence. |
+| `ticket_ingest.py` | TA-4/TA-5 write path. `ingest_ticket_pdf()`: parses text turns + embedded images, `interleave_images()` merges an image into the turn sequence right after the last text turn on the same PDF page (inheriting that turn's speaker — the closest signal available without exact on-page coordinates), writes everything to `ticket_messages`, stores each image via `ticket_image_store` + a `ticket_message_assets` row. Any failure anywhere in the pipeline marks the ticket `failed` and re-raises — nothing partial is left looking like a successful ingest. Scoring (TA-6) needs zero changes: an image-derived turn is just a normal turn in the sequence. Also the org-scoped reads behind `/api/tickets` (`list_tickets` / `get_ticket`). |
+| `ticket_api.py` | TA-9. `/api/tickets` HTTP surface. `POST /api/tickets/upload` accepts a PDF and hands it to `ingest_ticket_pdf` — not `/api/upload`. JWT org_id only. |
 | `ticket_scoring.py` | TA-6. Ticket engine's own evaluation loop (`run_ticket_wave` / `score_ticket`). Imports only `build_prompt`, `call_claude`, `validate_evidence` from `qa_engine.py`. v1 scores the whole thread once; `agent_spans` / `primary_owner` / evidence-seq attribution are the TA-8 multi-agent data, not per-span re-scoring. |
+| `ticket_score_api.py` | TA-10/TA-11. `POST /api/tickets/{ticket_id}/score`. First score persists to `ticket_audits`; a later POST returns the stored scorecard. `?refresh=true` is 403 unless `enable_ticket_rescoring` is on (off by default). |
+| `ticket_audit_store.py` | TA-11. Org-scoped read/upsert for `ticket_audits`. Not `audit_store.py` (that is calls). |
 | `pyai_usage.py` | Local counters for outbound PyAI/Claude API calls (PyAI has no "requests used today" endpoint of its own). |
 | `cost_estimate.py` | Estimates spend from usage counters, using cost-per-unit knobs from `.env`. |
 | `email_notify.py` | Opens a prefilled Gmail compose tab for a churn/stakeholder alert — no email is sent server-side. |
@@ -227,6 +230,7 @@ Schema changes only ever happen here — never as ad-hoc SQL in `backend/`.
 | `0015_org_id_for_name` | `org_id_for_name()` `SECURITY DEFINER` function (AC-7) — lets admin provisioning join an existing same-name org instead of creating a duplicate, without an RLS-bypassing connection. |
 | `0022_tickets` | `tickets` + `ticket_messages` (TA-3). Ticket auditing is a separate engine from calls. `tickets` is mutable (`status`); `ticket_messages` is append-only. `agent_user_id` nullable FK to `org_members(user_id)` for TA-8. RLS in this revision. |
 | `0023_ticket_image_assets` | Private `ticket-images` Storage bucket (no-ops on plain Postgres, same pattern as `0008_storage_audio_bucket`) + `ticket_message_assets` (TA-5) — metadata only, no image bytes in Postgres. FK'd on `(ticket_id, seq)` rather than `ticket_messages.id`, so the insert doesn't need to round-trip a returned id. Append-only, RLS in this revision. |
+| `0024_ticket_audits` | `ticket_audits` (TA-11). One stored scorecard per ticket. RLS SELECT/INSERT/UPDATE. Makes the rescoring guard enforceable. |
 
 ### `frontend/src/`
 
@@ -331,6 +335,11 @@ sequenceDiagram
 | POST | `/api/calls/{call_id}/retranscribe` | Re-run Hear on a stored recording |
 | POST | `/api/upload` | Upload a single audio file for transcription + scoring |
 | POST | `/api/upload-batch` | Upload a zip of audio files, processed in parallel |
+| POST | `/api/tickets/upload` | Upload a JustCall ticket PDF. Hands off to TA-4 ingest + TA-5 screenshot extraction. Separate from `/api/upload`. |
+| GET | `/api/tickets` | List tickets for the caller's org |
+| GET | `/api/tickets/{ticket_id}` | One ticket, sequenced turns, screenshot metadata |
+| GET | `/api/tickets/{ticket_id}/assets/{seq}` | Signed URL for one stored ticket screenshot |
+| POST | `/api/tickets/{ticket_id}/score` | Score a ticket (TA-10/11). First call persists; later calls return the stored scorecard. `?refresh=true` is 403 unless `enable_ticket_rescoring` is on. |
 
 Every route except the JustCall webhook requires a valid Supabase JWT; the webhook authenticates via JustCall's own signature header instead. `/api/admin/*` routes require a valid JWT *and* pass `require_platform_admin` on top — a normal authenticated user gets 403, not tenant-scoped data.
 
