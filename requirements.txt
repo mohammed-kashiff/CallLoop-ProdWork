@@ -11,3 +11,4 @@ psycopg[binary]
 PyJWT>=2.8
 cryptography
 sentry-sdk[fastapi]>=2.19,<3
+pdfplumber
