@@ -95,6 +95,136 @@ def test_usage_passes_queried_org_not_caller_org(monkeypatch):
     assert "pyai_usd" in r.json()["cost"]
 
 
+def test_usage_daily_passes_queried_org_and_days(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    seen: list[tuple] = []
+
+    def _daily(org_id, *, days=30):
+        seen.append((org_id, days))
+        return [{"date": "2026-09-07", "hits": 1, "actions": 1, "polls": 0, "units": 0.0}]
+
+    monkeypatch.setattr("backend.admin_console.pyai_usage.usage_daily", _daily)
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get("/api/admin/usage/daily", params={"org_id": ORG_A, "days": 7})
+    assert r.status_code == 200
+    assert seen == [(ORG_A, 7)]
+    body = r.json()
+    assert body["org_id"] == ORG_A
+    assert body["days"] == 7
+    assert body["series"][0]["hits"] == 1
+
+
+def test_usage_daily_requires_org_id(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get("/api/admin/usage/daily")
+    assert r.status_code == 400
+
+
+def test_usage_daily_defaults_and_clamps_days(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    seen: list[int] = []
+    monkeypatch.setattr(
+        "backend.admin_console.pyai_usage.usage_daily",
+        lambda org_id, *, days=30: seen.append(days) or [],
+    )
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+
+    r = client.get("/api/admin/usage/daily", params={"org_id": ORG_A})
+    assert r.status_code == 200
+    r2 = client.get("/api/admin/usage/daily", params={"org_id": ORG_A, "days": 99999})
+    assert r2.status_code == 200
+    assert seen == [30, 365]
+
+
+def test_usage_daily_route_403_for_non_admin(monkeypatch):
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get("/api/admin/usage/daily", params={"org_id": ORG_A})
+    assert r.status_code == 403
+
+
+def test_usage_daily_sums_match_usage_summary_live():
+    """AC-35 acceptance: the daily series must sum to the same totals
+    usage_summary() reports for the identical window. Proven against the
+    real database rather than mocked — this is fundamentally two different
+    SQL aggregation paths (per-day GROUP BY vs. a flat aggregate) over the
+    same underlying rows, and a mock can't catch them disagreeing. Doesn't
+    require a clean slate: both queries scan whatever rows exist for
+    DEFAULT_ORG_ID today, synthetic + any real ones, and must still agree."""
+    import uuid as _uuid
+
+    from backend import db, pyai_usage
+    from backend.org_ids import DEFAULT_ORG_ID, org_scope
+
+    marker = _uuid.uuid4().hex[:12]
+    inserted_ids: list[int] = []
+    try:
+        with org_scope(DEFAULT_ORG_ID):
+            with db.connection() as conn:
+                for method, path, units in (
+                    ("POST", f"/ac35-test/{marker}/action", 1.5),
+                    ("GET", f"/ac35-test/{marker}/transcription/jobs/x", None),
+                    ("GET", f"/ac35-test/{marker}/plain", None),
+                ):
+                    row = conn.execute(
+                        """
+                        INSERT INTO api_usage (org_id, provider, method, path, status, units)
+                        VALUES (%s, 'pyai', %s, %s, 200, %s)
+                        RETURNING id
+                        """,
+                        (DEFAULT_ORG_ID, method, path, units),
+                    ).fetchone()
+                    inserted_ids.append(row["id"])
+
+        # usage_daily() has no DEFAULT_ORG_ID special-casing of its own —
+        # same as usage_summary(), it relies on the caller's org_scope()
+        # for RLS (admin_console.usage_daily_for_org() already does this).
+        with org_scope(DEFAULT_ORG_ID):
+            daily = pyai_usage.usage_daily(DEFAULT_ORG_ID, days=1)
+            summary = pyai_usage.usage_summary(org_id=DEFAULT_ORG_ID)
+
+        assert len(daily) == 1
+        today = daily[0]
+        assert today["hits"] == summary["total_hits"]
+        assert today["actions"] == summary["total_actions"]
+        assert today["polls"] == summary["total_polls"]
+        assert round(today["units"], 4) == round(summary["total_units"], 4)
+        # The 3 synthetic rows must actually be counted, not silently dropped.
+        assert today["hits"] >= 3
+    finally:
+        if inserted_ids:
+            with org_scope(DEFAULT_ORG_ID):
+                with db.connection() as conn:
+                    conn.execute("DELETE FROM api_usage WHERE id = ANY(%s)", (inserted_ids,))
+
+
+def test_usage_daily_zero_fills_days_with_no_activity():
+    """A 3-day window for an org that plausibly had zero traffic yesterday
+    must still return 3 rows, not just the days with real data — the
+    frontend chart needs a continuous series."""
+    from backend import pyai_usage
+    from backend.org_ids import DEFAULT_ORG_ID, org_scope
+
+    with org_scope(DEFAULT_ORG_ID):
+        series = pyai_usage.usage_daily(DEFAULT_ORG_ID, days=3)
+    assert len(series) == 3
+    dates = [row["date"] for row in series]
+    assert len(set(dates)) == 3
+
+
 def test_toggle_does_not_call_usage_for_other_org(monkeypatch):
     monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
     wrote: list[tuple] = []

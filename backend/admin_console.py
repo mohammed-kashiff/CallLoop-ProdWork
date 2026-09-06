@@ -92,6 +92,24 @@ def usage_for_org(org_id: str | None) -> dict:
     }
 
 
+_DAILY_DAYS_DEFAULT = 30
+_DAILY_DAYS_MAX = 365
+
+
+def usage_daily_for_org(org_id: str | None, days: int | None) -> dict:
+    """AC-35: real per-day series for the org overview chart, scoped to the
+    *queried* org the same way usage_for_org() already is — never the
+    caller's own org_id."""
+    oid = parse_org_id(org_id)
+    if not oid:
+        raise HTTPException(status_code=400, detail="org_id is required.")
+    n = days if days and days > 0 else _DAILY_DAYS_DEFAULT
+    n = min(n, _DAILY_DAYS_MAX)
+    with org_scope(oid):
+        series = pyai_usage.usage_daily(oid, days=n)
+    return {"org_id": oid, "days": n, "series": series}
+
+
 def set_feature(
     org_id: str | None, feature_key: str, enabled: bool, *, changed_by: str,
 ) -> dict:

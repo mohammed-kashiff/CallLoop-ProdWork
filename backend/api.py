@@ -418,6 +418,14 @@ def admin_usage(request: Request, org_id: str | None = None):
     return admin_console.usage_for_org(org_id)
 
 
+@app.get("/api/admin/usage/daily")
+def admin_usage_daily(request: Request, org_id: str | None = None, days: int | None = None):
+    """AC-35: real daily counts for the org overview chart's usage trend —
+    the design mock's version of this was Math.random()."""
+    auth.require_platform_admin(request)
+    return admin_console.usage_daily_for_org(org_id, days)
+
+
 @app.get("/api/admin/orgs/{org_id}/detail")
 def admin_org_detail(request: Request, org_id: str, limit: int | None = None):
     auth.require_platform_admin(request)

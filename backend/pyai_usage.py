@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -249,3 +249,65 @@ def usage_summary(since_iso: str | None = None, *, org_id: str | None = None) ->
         "by_provider": providers,
         "top_paths": top[:12],
     }
+
+
+_POLL_PATH_MATCH = "(path LIKE '%%/transcription/jobs/%%' OR path LIKE '%%/recap/calls/%%')"
+
+
+def usage_daily(org_id: str, *, days: int = 30) -> list[dict[str, Any]]:
+    """AC-35: real per-day counts for the org overview chart — replaces the
+    design mock's Math.random(). Same action/poll classification as
+    usage_summary() (POST = action, GET on a poll path = poll), just
+    grouped by day instead of by provider/method/path, with every day in
+    the range zero-filled so the frontend gets a continuous series with
+    no gaps to special-case.
+    """
+    init_usage_db()
+    n = max(1, min(int(days or 30), 365))
+    since = (datetime.now(timezone.utc) - timedelta(days=n - 1)).strftime(
+        "%Y-%m-%dT00:00:00+00:00"
+    )
+    with _lock:
+        with _conn() as c:
+            rows = c.execute(
+                f"""
+                WITH days AS (
+                    SELECT generate_series(
+                        date_trunc('day', %(since)s::timestamptz),
+                        date_trunc('day', now() AT TIME ZONE 'UTC'),
+                        interval '1 day'
+                    )::date AS day
+                ),
+                agg AS (
+                    SELECT
+                        (created_at AT TIME ZONE 'UTC')::date AS day,
+                        COUNT(*) AS hits,
+                        SUM(CASE WHEN upper(method) = 'POST' THEN 1 ELSE 0 END) AS actions,
+                        SUM(CASE WHEN upper(method) = 'GET' AND {_POLL_PATH_MATCH}
+                                 THEN 1 ELSE 0 END) AS polls,
+                        COALESCE(SUM(units), 0) AS units
+                    FROM api_usage
+                    WHERE org_id = %(org_id)s AND created_at >= %(since)s
+                    GROUP BY day
+                )
+                SELECT d.day,
+                       COALESCE(a.hits, 0) AS hits,
+                       COALESCE(a.actions, 0) AS actions,
+                       COALESCE(a.polls, 0) AS polls,
+                       COALESCE(a.units, 0) AS units
+                FROM days d
+                LEFT JOIN agg a ON a.day = d.day
+                ORDER BY d.day
+                """,
+                {"org_id": org_id, "since": since},
+            ).fetchall()
+    return [
+        {
+            "date": r["day"].isoformat(),
+            "hits": int(r["hits"] or 0),
+            "actions": int(r["actions"] or 0),
+            "polls": int(r["polls"] or 0),
+            "units": round(float(r["units"] or 0), 4),
+        }
+        for r in rows or []
+    ]
