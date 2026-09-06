@@ -3908,26 +3908,55 @@ html[data-color-mode='dark'] .claude-cord-plug {
    check is needed here — the class simply never renders elsewhere).
    Both light and dark are specified so Command Center stays consistent
    with the app's existing html[data-color-mode] toggle. */
+/* Redefines the app's actual generic tokens (not a parallel --cc-* set) so
+   every existing shared class — .admin-table, .admin-card, .page-bar,
+   .start-btn, .ghost-btn — automatically repaints Electric Cyan inside
+   this subtree, with zero changes to those classes themselves. First
+   pass shipped only the --cc-* aliases below and never pointed the real
+   table/card/button CSS at them, so the directory table kept rendering
+   in the app's default navy palette — this is the actual fix for that. */
 .cc-shell {
-  --cc-ground: #f7fbfc;
-  --cc-surface: #eaf4f7;
-  --cc-line: #d5e6eb;
-  --cc-ink: #0b2530;
-  --cc-ink-muted: #3e5c68;
-  --cc-accent: #0891b2;
-  --cc-accent-ink: #ffffff;
+  --paper: #f7fbfc;
+  --card: #eaf4f7;
+  --control-bg: #eaf4f7;
+  --line: #d5e6eb;
+  --ink: #0b2530;
+  --ink-soft: #3e5c68;
+  --btn-bg: #0891b2;
+  --on-btn: #ffffff;
+  --fill-hover: #d5e6eb;
+  --fill-muted: #eaf4f7;
+  --blue: #0891b2;
+
+  /* Aliases for this file's own new drawer/modal/tabs/chart CSS below. */
+  --cc-ground: var(--paper);
+  --cc-surface: var(--card);
+  --cc-line: var(--line);
+  --cc-ink: var(--ink);
+  --cc-ink-muted: var(--ink-soft);
+  --cc-accent: var(--btn-bg);
+  --cc-accent-ink: var(--on-btn);
   --cc-danger: var(--fail);
   --cc-medium: var(--partial);
+
+  display: block;
+  min-height: 100%;
+  background: var(--paper);
+  color: var(--ink);
 }
 
 html[data-color-mode='dark'] .cc-shell {
-  --cc-ground: #0a0f14;
-  --cc-surface: #121a22;
-  --cc-line: #22303c;
-  --cc-ink: #eaf4f8;
-  --cc-ink-muted: #8fa9b6;
-  --cc-accent: #22d3ee;
-  --cc-accent-ink: #03282f;
+  --paper: #0a0f14;
+  --card: #121a22;
+  --control-bg: #121a22;
+  --line: #22303c;
+  --ink: #eaf4f8;
+  --ink-soft: #8fa9b6;
+  --btn-bg: #22d3ee;
+  --on-btn: #03282f;
+  --fill-hover: rgba(232, 238, 248, 0.06);
+  --fill-muted: #121a22;
+  --blue: #22d3ee;
 }
 
 .sr-only {
