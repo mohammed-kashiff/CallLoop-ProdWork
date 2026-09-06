@@ -29,9 +29,13 @@ export function AppLayout() {
   const adminHost = isAdminHost()
 
   return (
-    <div className="app-shell layout-shell" data-theme={theme} data-color-mode={mode}>
+    <div
+      className={adminHost ? 'app-shell layout-shell layout-shell--full' : 'app-shell layout-shell'}
+      data-theme={theme}
+      data-color-mode={mode}
+    >
       {adminHost ? null : <ImpersonationBanner />}
-      <Sidebar open={navOpen} onNavigate={() => setNavOpen(false)} />
+      {adminHost ? null : <Sidebar open={navOpen} onNavigate={() => setNavOpen(false)} />}
 
       <div className="content-shell">
         <header className="app-topbar">
