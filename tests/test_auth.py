@@ -126,6 +126,68 @@ def test_data_routes_401_with_garbage_token():
     assert r.status_code == 401
 
 
+def test_auth_failure_emits_a_structured_event_at_warning_for_401():
+    """Session/token failures must be dashboardable — previously
+    _auth_failure() logged nothing at all. Logged at warning (not error)
+    so routine expired-session traffic doesn't inflate error-rate alerts."""
+    import logging
+
+    from backend import auth
+    from backend.api import app
+
+    captured = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            captured.append(record)
+
+    handler = Capture()
+    auth.log.addHandler(handler)
+    auth.log.setLevel(logging.INFO)
+    try:
+        client = TestClient(app)
+        r = client.get("/api/calls", headers={"Authorization": "Bearer not-a-jwt"})
+    finally:
+        auth.log.removeHandler(handler)
+
+    assert r.status_code == 401
+    assert len(captured) == 1
+    record = captured[0]
+    assert record.levelno == logging.WARNING
+    assert record.event_name == "auth_failed"
+    assert record.status == 401
+    assert record.method == "GET"
+    assert record.path == "/api/calls"
+    assert "event=auth_failed" in record.getMessage()
+
+
+def test_auth_failure_logs_missing_token_too():
+    import logging
+
+    from backend import auth
+    from backend.api import app
+
+    captured = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            captured.append(record)
+
+    handler = Capture()
+    auth.log.addHandler(handler)
+    auth.log.setLevel(logging.INFO)
+    try:
+        client = TestClient(app)
+        r = client.get("/api/calls")
+    finally:
+        auth.log.removeHandler(handler)
+
+    assert r.status_code == 401
+    assert len(captured) == 1
+    assert captured[0].detail == "Not authenticated"
+    assert captured[0].levelno == logging.WARNING
+
+
 def test_me_returns_membership_from_jwt(monkeypatch):
     from backend.api import app
 

@@ -7,6 +7,7 @@ Never log the token.
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from jwt import PyJWKClient
 from psycopg.errors import UniqueViolation
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from . import applog
 from . import audit_store
 from . import db
 from .config import cors_origins
@@ -30,6 +32,8 @@ from .org_ids import (
     reset_org_id,
     reset_user_id,
 )
+
+log = logging.getLogger("callproof.auth")
 
 _PUBLIC_EXACT = frozenset({"/", "/health", "/healthz"})
 _PUBLIC_PATHS = frozenset({"/api/integrations/justcall/webhook"})
@@ -361,6 +365,18 @@ def _is_public(path: str) -> bool:
 
 
 def _auth_failure(request: Request, status: int, detail: str) -> JSONResponse:
+    """A 503 here is a real misconfiguration (paged as an error). A 401 is
+    routine — expired session, logged-out tab, stale token — so it's logged
+    at warning rather than error to avoid inflating error-rate alerts with
+    normal traffic."""
+    applog.event(
+        log, "auth_failed",
+        level=logging.ERROR if status >= 500 else logging.WARNING,
+        status=status,
+        detail=detail,
+        method=request.method,
+        path=request.url.path,
+    )
     headers = {}
     origin = request.headers.get("origin") or ""
     if origin in cors_origins():
