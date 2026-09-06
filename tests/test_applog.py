@@ -180,6 +180,45 @@ def test_attach_logtail_is_additive_and_does_not_log_the_token(monkeypatch):
     assert "tok_must_not_appear_in_logs" not in blob
 
 
+def test_betterstack_handler_stamps_service_from_logger_name():
+    """Better Stack's dashboard groups by a top-level `service` field, but
+    logtail-python only nests the logger name under context.runtime —
+    unusable for Metrics grouping. The handler must promote it to a plain
+    record attribute so it lands as a top-level field on ingest."""
+    from backend import applog
+
+    captured: dict = {}
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            captured["service"] = getattr(record, "service", None)
+
+    wrapped = applog._BetterStackHandler(Capture())
+    record = logging.LogRecord(
+        "callproof.ticket_scoring", logging.INFO, __file__, 1, "event=x", None, None,
+    )
+    wrapped.emit(record)
+    assert captured["service"] == "callproof.ticket_scoring"
+
+
+def test_betterstack_handler_does_not_override_an_explicit_service():
+    from backend import applog
+
+    captured: dict = {}
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            captured["service"] = getattr(record, "service", None)
+
+    wrapped = applog._BetterStackHandler(Capture())
+    record = logging.LogRecord(
+        "callproof.api", logging.INFO, __file__, 1, "event=x", None, None,
+    )
+    record.service = "explicit_value"
+    wrapped.emit(record)
+    assert captured["service"] == "explicit_value"
+
+
 def test_betterstack_handler_emit_never_raises():
     from backend import applog
 

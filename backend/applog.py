@@ -164,7 +164,15 @@ def attach_logtail_handler(logger: logging.Logger | None = None) -> bool:
 
 
 class _BetterStackHandler(logging.Handler):
-    """Wrap LogtailHandler.emit so a network/sink failure never raises."""
+    """Wrap LogtailHandler.emit so a network/sink failure never raises.
+
+    logtail-python already nests the logger name under
+    context.runtime.logger_name, but Better Stack's dashboard "service"
+    dimension reads a top-level field — nested context isn't groupable.
+    Stamping record.service mirrors the logger name (e.g. callproof.api)
+    into a plain attribute, which logtail-python's frame builder promotes
+    to a top-level field, so subsystem-level grouping in Metrics works.
+    """
 
     def __init__(self, inner: logging.Handler) -> None:
         super().__init__()
@@ -172,6 +180,8 @@ class _BetterStackHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
+            if not hasattr(record, "service"):
+                record.service = record.name
             self._inner.emit(record)
         except Exception:  # noqa: BLE001
             pass
