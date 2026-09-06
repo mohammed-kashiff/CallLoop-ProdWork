@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import uuid
+from contextvars import ContextVar, Token
 from logging.handlers import RotatingFileHandler
 
 from .paths import LOG_DIR, LOG_FILE
@@ -18,6 +20,25 @@ MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 BACKUP_COUNT = 5
 
 _CONFIGURED = False
+
+# AC-48/observability PRD §7: a per-request correlation id, threaded into
+# every event() line the same way org_id already flows through contextvars
+# elsewhere in this codebase (org_ids.py's bind_org_id/bound_org_id). Set
+# once per request by RequestIdMiddleware (api.py); background/webhook/CLI
+# work that never binds one just omits the field, same as org_id's default.
+_REQUEST_ID: ContextVar[str | None] = ContextVar("callproof_request_id", default=None)
+
+
+def bound_request_id() -> str | None:
+    return _REQUEST_ID.get()
+
+
+def bind_request_id(request_id: str) -> Token:
+    return _REQUEST_ID.set(request_id)
+
+
+def reset_request_id(token: Token) -> None:
+    _REQUEST_ID.reset(token)
 
 # Redact secrets before serving logs to the UI or writing the file.
 _SECRET_PATTERNS = [
@@ -57,8 +78,18 @@ def setup_logging(level: int = logging.INFO) -> str:
     )
     fh.setLevel(level)
     fh.setFormatter(fmt)
-    fh.addFilter(_RedactFilter())
     parent.addHandler(fh)
+
+    # AC-47/observability PRD §3.2: the redact filter used to be attached
+    # only to the file handler above, so a secret printed to console (via
+    # api.py's separate logging.basicConfig() root handler) went out
+    # unredacted. _RedactFilter mutates record.msg/args in place and
+    # always returns True, so attaching it once on the *logger* — not a
+    # specific handler — redacts before the record reaches any handler,
+    # including the root logger's console handler that `callproof.*`
+    # records propagate to. Covers the file handler above too; no need
+    # for a second copy on fh specifically.
+    parent.addFilter(_RedactFilter())
 
     # Keep existing per-module basicConfig console handlers; file is additive.
     _CONFIGURED = True
@@ -82,11 +113,37 @@ def _fmt_value(value) -> str:
 
 
 def event(logger: logging.Logger, name: str, level: int = logging.INFO, **fields):
-    """Write a structured event line: event=<name> key=value ..."""
+    """Write a structured event line: event=<name> [request_id=<id>] key=value ..."""
     parts = [f"event={name}"]
+    request_id = _REQUEST_ID.get()
+    if request_id:
+        parts.append(f"request_id={request_id}")
     for key in sorted(fields):
         parts.append(f"{key}={_fmt_value(fields[key])}")
     logger.log(level, " ".join(parts))
+
+
+class RequestIdMiddleware:
+    """AC-48: one correlation id per request, bound for the request's whole
+    lifetime so every applog.event() call inside it carries the same id —
+    matters once two things are being processed concurrently. Runs for
+    every request, not just authenticated ones (unlike auth.JwtAuthMiddleware,
+    which skips public paths) — registered outermost in api.py so the id is
+    bound before CORS/auth even run."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request_id = uuid.uuid4().hex[:16]
+        token = bind_request_id(request_id)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            reset_request_id(token)
 
 
 def redact_line(line: str) -> str:
