@@ -38,6 +38,8 @@ def _json_value(value):
         return str(value)
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, (list, tuple)):
+        return [_json_value(v) for v in value]
     return str(value)
 
 
@@ -51,6 +53,23 @@ def search_directory(q: str | None) -> dict:
         with db.connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM public.admin_search_directory(%s)",
+                (needle,),
+            ).fetchall()
+    except Exception:
+        return {"rows": []}
+    return {"rows": [_json_row(r) for r in rows or []]}
+
+
+def search_orgs(q: str | None) -> dict:
+    """AC-33: one row per org (name, short_ids, member_count, created_at)
+    for Command Center's master-detail directory table. Separate SECURITY
+    DEFINER function from admin_search_directory — that one keeps its
+    exact per-member shape for the Members tab (AC-34)."""
+    needle = (q or "").strip()[:_Q_MAX]
+    try:
+        with db.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM public.admin_search_orgs(%s)",
                 (needle,),
             ).fetchall()
     except Exception:

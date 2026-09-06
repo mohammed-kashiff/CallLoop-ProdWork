@@ -369,6 +369,14 @@ def admin_directory(request: Request, q: str = ""):
     return admin_console.search_directory(q)
 
 
+@app.get("/api/admin/orgs")
+def admin_orgs(request: Request, q: str = ""):
+    """AC-33: one row per org for Command Center's directory table —
+    admin_directory above stays one row per member, for the Members tab."""
+    auth.require_platform_admin(request)
+    return admin_console.search_orgs(q)
+
+
 class AddPlatformAdminBody(BaseModel):
     email: str
 

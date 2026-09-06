@@ -128,6 +128,81 @@ def test_directory_search_is_gated_and_forwards_q(monkeypatch):
     assert r.json()["rows"][0]["email"] == "ada@x.com"
 
 
+def test_org_search_is_gated_and_forwards_q(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    monkeypatch.setattr(
+        "backend.admin_console.search_orgs",
+        lambda q: {"rows": [{"org_name": "Acme", "q": q}]},
+    )
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get("/api/admin/orgs", params={"q": "acme"})
+    assert r.status_code == 200
+    assert r.json()["rows"][0] == {"org_name": "Acme", "q": "acme"}
+
+
+def test_org_search_403_for_non_admin(monkeypatch):
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get("/api/admin/orgs", params={"q": ""})
+    assert r.status_code == 403
+
+
+def test_search_orgs_queries_admin_search_orgs_and_json_safes_array_column(monkeypatch):
+    """short_ids comes back from Postgres as a native list — _json_value
+    must recurse into it, not stringify the whole list."""
+    from backend import admin_console
+
+    captured = {}
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, params=None):
+            captured["sql"] = sql
+            captured["params"] = params
+            return self
+
+        def fetchall(self):
+            return [
+                {
+                    "org_id": uuid.UUID(ORG_A),
+                    "org_name": "Acme",
+                    "short_ids": [100001, 100002],
+                    "member_count": 2,
+                    "created_at": None,
+                }
+            ]
+
+    monkeypatch.setattr(admin_console.db, "connection", lambda **kw: _FakeConn())
+    result = admin_console.search_orgs("acme")
+    assert "admin_search_orgs" in captured["sql"]
+    assert captured["params"] == ("acme",)
+    row = result["rows"][0]
+    assert row["org_id"] == ORG_A
+    assert row["short_ids"] == [100001, 100002]
+    assert row["member_count"] == 2
+
+
+def test_search_orgs_returns_empty_rows_on_db_failure(monkeypatch):
+    from backend import admin_console
+
+    def _boom(**kw):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(admin_console.db, "connection", _boom)
+    assert admin_console.search_orgs("acme") == {"rows": []}
+
+
 def test_admin_console_does_not_bypass_rls():
     src = (ROOT / "backend" / "admin_console.py").read_text(encoding="utf-8")
     assert "bypass_rls=True" not in src
@@ -140,6 +215,26 @@ def test_admin_console_does_not_bypass_rls():
     assert "admin_search_directory" in rev
     assert "SECURITY DEFINER" in rev
     assert "CREATE POLICY org_features_insert" in rev
+
+
+def test_admin_search_orgs_migration_does_not_bypass_rls_or_touch_directory():
+    """AC-33: admin_search_orgs must be a second SECURITY DEFINER function,
+    not a replacement — admin_search_directory (and its per-member shape)
+    must stay untouched."""
+    rev = (ROOT / "alembic" / "versions" / "0029_admin_search_orgs.py").read_text(
+        encoding="utf-8"
+    )
+    assert "admin_search_orgs" in rev
+    assert "SECURITY DEFINER" in rev
+    assert "REVOKE ALL ON FUNCTION public.admin_search_orgs(text) FROM PUBLIC" in rev
+    assert "GRANT EXECUTE ON FUNCTION public.admin_search_orgs(text) TO callproof_app" in rev
+    assert "DROP FUNCTION" not in rev.split("def downgrade")[0]
+    # Mentioning admin_search_directory/org_directory in the docstring for
+    # context is fine; actually touching either is not.
+    assert "CREATE OR REPLACE FUNCTION public.admin_search_directory" not in rev
+    assert "DROP FUNCTION IF EXISTS public.admin_search_directory" not in rev
+    assert "ALTER" not in rev
+    assert "GRANT SELECT ON org_directory" not in rev
     hist = (ROOT / "alembic" / "versions" / "0016_org_features_history.py").read_text(
         encoding="utf-8"
     )
