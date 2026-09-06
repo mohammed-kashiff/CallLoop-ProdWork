@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch, readError } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
-import { isAdminHost } from '../lib/adminHost'
+import { ADMIN_ORIGIN, isAdminHost } from '../lib/adminHost'
 
 // Command Center > Platform Admins. Platform admin is CallLoop-internal
 // staff only and must never reach a customer — every route this page
@@ -114,6 +114,16 @@ export function PlatformAdmins() {
       )
     }
     return <Navigate to="/" replace />
+  }
+
+  if (!isAdminHost()) {
+    // Command Center pages live only at commandcenter.call-loop.com, never
+    // call-loop.com — even for an actual platform admin. Full cross-origin
+    // navigation (not a router Link) since this is a different host.
+    if (typeof window !== 'undefined') {
+      window.location.href = `${ADMIN_ORIGIN}/platform-admins`
+    }
+    return null
   }
 
   return (
