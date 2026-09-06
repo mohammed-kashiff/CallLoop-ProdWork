@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
-from . import db
+from . import applog, db
 from .org_ids import DEFAULT_ORG_ID, bound_org_id
 
 log = logging.getLogger("callproof.usage")
@@ -129,10 +129,13 @@ def record_http_response(
                     ),
                 )
         try:
-            import applog
-
+            # A dedicated logger per provider (callproof.usage.pyai,
+            # callproof.usage.anthropic) so Better Stack's `service` field
+            # — stamped from the logger name in applog._BetterStackHandler —
+            # can split outbound API volume by provider, the same way
+            # callproof.api already separates CallLoop's own inbound routes.
             applog.event(
-                log,
+                logging.getLogger(f"callproof.usage.{provider}"),
                 "api_consumption",
                 provider=provider,
                 method=method,
