@@ -209,15 +209,50 @@ def _fmt_value(value) -> str:
     return text
 
 
+# LogRecord's own attributes (per logging.Logger.makeRecord) — a field
+# using one of these names is dropped from `extra` rather than raising,
+# since logging.log() errors on any collision with these.
+_RESERVED_LOGRECORD_ATTRS = frozenset({
+    "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
+    "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
+    "created", "msecs", "relativeCreated", "thread", "threadName",
+    "processName", "process", "message", "asctime",
+})
+
+
+def _safe_extra_value(value):
+    """Same redaction _fmt_value applies to the text line, for the
+    structured copy — a field must never carry a secret in one form and
+    not the other."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return redact_line(str(value))
+
+
 def event(logger: logging.Logger, name: str, level: int = logging.INFO, **fields):
-    """Write a structured event line: event=<name> [request_id=<id>] key=value ..."""
+    """Write a structured event line: event=<name> [request_id=<id>] key=value ...
+
+    Also attaches name/fields as `extra`, so each field lands as a real
+    top-level JSON key on ingest (the same mechanism _BetterStackHandler
+    uses for `service`) instead of only existing as text inside `message`
+    — that's what makes fields like `path` or `provider` groupable in
+    Better Stack's Metrics view, not just visible in Live tail.
+    """
     parts = [f"event={name}"]
     request_id = _REQUEST_ID.get()
     if request_id:
         parts.append(f"request_id={request_id}")
     for key in sorted(fields):
         parts.append(f"{key}={_fmt_value(fields[key])}")
-    logger.log(level, " ".join(parts))
+    line = " ".join(parts)
+    extra = {"event_name": name}
+    for key, value in fields.items():
+        if key not in _RESERVED_LOGRECORD_ATTRS and key not in extra:
+            extra[key] = _safe_extra_value(value)
+    try:
+        logger.log(level, line, extra=extra)
+    except Exception:  # noqa: BLE001 - a bad extra key must never break logging
+        logger.log(level, line)
 
 
 class RequestIdMiddleware:

@@ -121,6 +121,89 @@ def test_request_id_is_not_bound_outside_a_request():
     assert applog.bound_request_id() is None
 
 
+def test_event_attaches_fields_as_extra_for_structured_ingestion():
+    """Fields must land as real record attributes (extra=), not just text
+    inside message — that's what lets Better Stack group/filter on them
+    (e.g. `path`) the same way it now does for `service`."""
+    from backend import applog
+
+    logger = logging.getLogger("test_event_extra")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    captured = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            captured.append(record)
+
+    handler = Capture()
+    logger.addHandler(handler)
+    try:
+        applog.event(logger, "http_request", method="GET", path="/api/calls", status=200)
+    finally:
+        logger.removeHandler(handler)
+
+    assert len(captured) == 1
+    record = captured[0]
+    assert record.event_name == "http_request"
+    assert record.method == "GET"
+    assert record.path == "/api/calls"
+    assert record.status == 200
+    assert "event=http_request" in record.getMessage()
+
+
+def test_event_redacts_secrets_in_extra_the_same_as_in_the_text_line():
+    from backend import applog
+
+    logger = logging.getLogger("test_event_extra_redaction")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    captured = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            captured.append(record)
+
+    handler = Capture()
+    logger.addHandler(handler)
+    try:
+        applog.event(logger, "leaky", error="Bearer sk-ant-totallysecretvalue1234")
+    finally:
+        logger.removeHandler(handler)
+
+    record = captured[0]
+    assert "sk-ant-totallysecretvalue1234" not in record.error
+    assert "[REDACTED]" in record.error
+    assert "sk-ant-totallysecretvalue1234" not in record.getMessage()
+
+
+def test_event_drops_fields_colliding_with_reserved_logrecord_attrs():
+    """A field named e.g. `module` would raise inside logging.log(extra=...)
+    if passed through unfiltered — event() must survive that, not crash
+    the caller."""
+    from backend import applog
+
+    logger = logging.getLogger("test_event_reserved_collision")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    captured = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            captured.append(record)
+
+    handler = Capture()
+    logger.addHandler(handler)
+    try:
+        applog.event(logger, "weird", module="should_not_crash", status=200)
+    finally:
+        logger.removeHandler(handler)
+
+    assert len(captured) == 1
+    assert captured[0].status == 200
+    assert "module=should_not_crash" in captured[0].getMessage()
+
+
 def test_redact_line_covers_betterstack_source_token():
     line = "betterstack_source_token=bst_should_not_remain source_token=abc"
     out = redact_line(line)
