@@ -176,6 +176,17 @@ export function Admin() {
   const [impersonateError, setImpersonateError] = useState<string | null>(null)
   const [pwEvents, setPwEvents] = useState<PasswordEvent[] | null>(null)
 
+  // AC-34: every real member of the selected org, each with their own
+  // independently-clickable "Log in as" — not just the single searched-for
+  // row above. Keyed by user_id so one member's spinner/error never
+  // touches another's button.
+  const [orgMembers, setOrgMembers] = useState<DirectoryRow[]>([])
+  const [membersError, setMembersError] = useState<string | null>(null)
+  const [impersonatingMemberId, setImpersonatingMemberId] = useState<string | null>(null)
+  const [memberImpersonateErrors, setMemberImpersonateErrors] = useState<
+    Record<string, string>
+  >({})
+
   const [rubric, setRubric] = useState<RubricPayload | null>(null)
   const [rubricDraft, setRubricDraft] = useState<Record<string, number>>({})
   const [rubricSaving, setRubricSaving] = useState(false)
@@ -264,6 +275,9 @@ export function Admin() {
     setRubric(null)
     setRubricError(null)
     setRubricSaveInfo(null)
+    setOrgMembers([])
+    setMembersError(null)
+    setMemberImpersonateErrors({})
     setBusy(true)
     try {
       const [usageRes, detailRes, rubricRes] = await Promise.all([
@@ -290,6 +304,22 @@ export function Admin() {
       setBusy(false)
     }
     void loadPasswordEvents(row.user_id)
+    void loadOrgMembers(row.org_id)
+  }
+
+  const loadOrgMembers = async (orgId: string) => {
+    try {
+      // Reuses the existing per-member directory search as-is (AC-34)
+      // rather than a new endpoint — org_id is a UUID, so a substring
+      // match against it can only ever match that one org's rows.
+      const r = await apiFetch(`/api/admin/directory?q=${encodeURIComponent(orgId)}`)
+      if (!r.ok) throw new Error(await readError(r, 'Could not load org members.'))
+      const data = (await r.json()) as { rows?: DirectoryRow[] }
+      setOrgMembers(Array.isArray(data.rows) ? data.rows.filter((m) => m.org_id === orgId) : [])
+    } catch (e: unknown) {
+      setOrgMembers([])
+      setMembersError(e instanceof Error ? e.message : 'Could not load org members.')
+    }
   }
 
   const rubricTotal = RUBRIC_DIMENSIONS.reduce(
@@ -444,6 +474,54 @@ export function Admin() {
       )
     } finally {
       setImpersonateBusy(false)
+    }
+  }
+
+  const logInAsMember = async (row: DirectoryRow) => {
+    // AC-34: the Members-panel counterpart to logInAs() above — takes the
+    // specific row clicked rather than closing over `selected`, and tracks
+    // busy/error per user_id so N members' buttons never interfere with
+    // each other. Same backend call, same session-handoff shape.
+    setMemberImpersonateErrors((prev) => {
+      const next = { ...prev }
+      delete next[row.user_id]
+      return next
+    })
+    setImpersonatingMemberId(row.user_id)
+    try {
+      const r = await apiFetch(`/api/admin/users/${encodeURIComponent(row.user_id)}/impersonate`, {
+        method: 'POST',
+      })
+      if (!r.ok) throw new Error(await readError(r, 'Could not start impersonation session.'))
+      const body = (await r.json()) as {
+        org_name: string | null
+        target_email: string
+        access_token: string
+        refresh_token: string
+        expires_in: number | null
+        token_type: string
+      }
+      const hash = new URLSearchParams({
+        access_token: body.access_token,
+        refresh_token: body.refresh_token,
+        token_type: body.token_type || 'bearer',
+        type: 'magiclink',
+        ...(body.expires_in ? { expires_in: String(body.expires_in) } : {}),
+      })
+      const query = new URLSearchParams({
+        impersonated: '1',
+        org: body.org_name || row.org_name || 'this org',
+        as: body.target_email,
+      })
+      window.open(`${CUSTOMER_ORIGIN}/?${query.toString()}#${hash.toString()}`, '_blank')
+    } catch (e) {
+      setMemberImpersonateErrors((prev) => ({
+        ...prev,
+        [row.user_id]:
+          e instanceof Error ? e.message : 'Could not start impersonation session.',
+      }))
+    } finally {
+      setImpersonatingMemberId((current) => (current === row.user_id ? null : current))
     }
   }
 
@@ -740,6 +818,61 @@ export function Admin() {
                 <p className="admin-provision-hint">
                   Per-call detail moved to <Link to="/call-logs">Call logs</Link>.
                 </p>
+              </div>
+
+              <div className="admin-card">
+                <h3>Members</h3>
+                <p className="admin-provision-hint">
+                  Every real member of this org — each has their own "Log in
+                  as," never ambiguous about who's being impersonated.
+                </p>
+                {membersError ? (
+                  <p className="upload-error" role="alert">
+                    {membersError}
+                  </p>
+                ) : null}
+                {orgMembers.length > 0 ? (
+                  <div className="admin-table-wrap">
+                    <table className="admin-table">
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Email</th>
+                          <th>Role</th>
+                          <th>Short ID</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orgMembers.map((m) => (
+                          <tr key={m.user_id}>
+                            <td>{displayName(m)}</td>
+                            <td>{m.email || '—'}</td>
+                            <td>{m.role || '—'}</td>
+                            <td>{m.short_id ?? '—'}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className="ghost-btn"
+                                disabled={impersonatingMemberId === m.user_id || !m.email}
+                                onClick={() => void logInAsMember(m)}
+                              >
+                                {impersonatingMemberId === m.user_id ? 'Starting…' : 'Log in as'}
+                              </button>
+                              {memberImpersonateErrors[m.user_id] ? (
+                                <p className="upload-error" role="alert">
+                                  {memberImpersonateErrors[m.user_id]}
+                                </p>
+                              ) : null}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : !membersError ? (
+                  <p className="empty-copy">No members found for this org.</p>
+                ) : null}
               </div>
 
               <div className="admin-card">
