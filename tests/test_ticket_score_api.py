@@ -330,3 +330,60 @@ def test_upload_then_score_live_end_to_end(monkeypatch):
                 )
             except Exception:
                 pass
+
+
+# ---------- GET /api/tickets/rubric ----------
+
+
+def test_ticket_rubric_route_requires_auth():
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+
+    client = TestClient(app)
+    r = client.get("/api/tickets/rubric")
+    assert r.status_code == 401
+
+
+def test_ticket_rubric_route_returns_the_active_rubric(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+
+    client = TestClient(app)
+    from tests.conftest import authorize
+
+    authorize(client, monkeypatch)
+    monkeypatch.setattr(
+        "backend.ticket_score_api.ticket_rubric.ensure_ticket_rubric",
+        lambda org_id: {
+            "id": "r1", "name": "Ticket QA", "version": 1,
+            "dimensions": [{"id": "tone", "name": "Tone", "weight": 15, "question": "Q?"}],
+        },
+    )
+    r = client.get("/api/tickets/rubric")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "Ticket QA"
+    assert body["dimensions"][0]["id"] == "tone"
+
+
+def test_ticket_rubric_route_is_not_swallowed_by_ticket_id_route(monkeypatch):
+    """Regression guard: /api/tickets/rubric must be registered before
+    /api/tickets/{ticket_id} — otherwise "rubric" gets treated as a
+    ticket_id and this 400s instead of ever reaching this route."""
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+
+    client = TestClient(app)
+    from tests.conftest import authorize
+
+    authorize(client, monkeypatch)
+    monkeypatch.setattr(
+        "backend.ticket_score_api.ticket_rubric.ensure_ticket_rubric",
+        lambda org_id: {"id": "r1", "name": "Ticket QA", "version": 1, "dimensions": []},
+    )
+    r = client.get("/api/tickets/rubric")
+    assert r.status_code == 200
+    assert r.json()["dimensions"] == []

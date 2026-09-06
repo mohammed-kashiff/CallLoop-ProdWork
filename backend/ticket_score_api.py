@@ -95,6 +95,21 @@ def _payload(
     }
 
 
+def ticket_rubric_route(request: Request):
+    """Read-only: this org's active "Ticket QA" rubric, described the same
+    way rubric_builder.current_rubric() describes the call rubric — for
+    the account-menu Rubric viewer. Any authenticated org member can view;
+    not editable from this route (seeds the default via
+    ensure_ticket_rubric() the first time, same as scoring does)."""
+    org_id = auth.org_id_from_request(request)
+    rubric = ticket_rubric.ensure_ticket_rubric(org_id)
+    return {
+        "name": rubric.get("name") or ticket_rubric.TICKET_QA_RUBRIC_NAME,
+        "version": rubric.get("version"),
+        "dimensions": rubric["dimensions"],
+    }
+
+
 def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
     org_id = auth.org_id_from_request(request)
     tid = _parse_ticket_id(ticket_id)
@@ -180,6 +195,7 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
 
 
 def register(app) -> None:
+    app.add_api_route("/api/tickets/rubric", ticket_rubric_route, methods=["GET"])
     app.add_api_route(
         "/api/tickets/{ticket_id}/score", score_ticket_route, methods=["POST"],
     )

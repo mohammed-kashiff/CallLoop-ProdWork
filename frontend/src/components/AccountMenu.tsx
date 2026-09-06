@@ -98,6 +98,17 @@ export function AccountMenu() {
               className="account-menu-item"
               onClick={() => {
                 close()
+                window.open('/rubric-view', '_blank', 'noopener,noreferrer')
+              }}
+            >
+              Rubric
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="account-menu-item"
+              onClick={() => {
+                close()
                 void signOut()
               }}
             >

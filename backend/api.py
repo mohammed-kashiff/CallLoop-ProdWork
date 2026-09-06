@@ -95,8 +95,8 @@ app.add_middleware(
 )
 app.add_middleware(auth.JwtAuthMiddleware)
 ticket_agent_aliases_api.register(app)
-ticket_api.register(app)
 ticket_score_api.register(app)
+ticket_api.register(app)
 
 
 _HEALTH_PATHS = frozenset({"/", "/health", "/healthz"})

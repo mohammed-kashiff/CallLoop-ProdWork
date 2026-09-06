@@ -2,10 +2,23 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { capFirst } from '../lib/format'
 import { apiFetch, readError } from '../lib/api'
+import { useAuth } from '../context/AuthContext'
+import { flagEnabled } from '../lib/features'
 import type { CallListItem } from '../types'
 
 const PAGE_SIZES = [5, 10, 25] as const
 type FlagFilter = 'all' | 'flagged' | 'unflagged'
+type Engine = 'calls' | 'tickets'
+
+type TicketListItem = {
+  id: string
+  source: string
+  status: string
+  created_at: string | null
+  message_count: number
+  has_audit: boolean
+  score: number | null
+}
 
 function formatWhen(raw: string | null): string {
   if (!raw) return '—'
@@ -38,6 +51,11 @@ function churnChip(risk: string | null | undefined): { text: string; className: 
 
 export function Audits() {
   const navigate = useNavigate()
+  const { features } = useAuth()
+  const ticketAuditEnabled = flagEnabled(features, 'show_ticket_audit_nav')
+
+  const [engine, setEngine] = useState<Engine>('calls')
+
   const [calls, setCalls] = useState<CallListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -46,6 +64,12 @@ export function Audits() {
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(10)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const [tickets, setTickets] = useState<TicketListItem[]>([])
+  const [ticketsLoading, setTicketsLoading] = useState(false)
+  const [ticketsError, setTicketsError] = useState<string | null>(null)
+  const [ticketPage, setTicketPage] = useState(1)
+  const [ticketPageSize, setTicketPageSize] = useState<(typeof PAGE_SIZES)[number]>(10)
 
   useEffect(() => {
     let cancelled = false
@@ -77,6 +101,29 @@ export function Audits() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!ticketAuditEnabled) return
+    let cancelled = false
+    setTicketsLoading(true)
+    apiFetch('/api/tickets')
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await readError(r, 'Could not load tickets.'))
+        return r.json() as Promise<{ tickets: TicketListItem[] }>
+      })
+      .then((data) => {
+        if (!cancelled) setTickets(data.tickets || [])
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setTicketsError(e instanceof Error ? e.message : 'Could not load tickets.')
+      })
+      .finally(() => {
+        if (!cancelled) setTicketsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [ticketAuditEnabled])
+
   const filtered = useMemo(() => {
     if (flagFilter === 'flagged') return calls.filter((c) => c.flagged)
     if (flagFilter === 'unflagged') return calls.filter((c) => !c.flagged)
@@ -89,8 +136,18 @@ export function Audits() {
   const slice = filtered.slice(start, start + pageSize)
   const rangeEnd = start + slice.length
 
+  const ticketPages = Math.max(1, Math.ceil(tickets.length / ticketPageSize))
+  const ticketSafePage = Math.min(ticketPage, ticketPages)
+  const ticketStart = (ticketSafePage - 1) * ticketPageSize
+  const ticketSlice = tickets.slice(ticketStart, ticketStart + ticketPageSize)
+  const ticketRangeEnd = ticketStart + ticketSlice.length
+
   const openCall = (id: number) => {
     navigate(`/audits/${id}`)
+  }
+
+  const openTicket = (id: string) => {
+    navigate(`/ticket-audit/${id}`)
   }
 
   const deleteCall = async (id: number) => {
@@ -119,42 +176,60 @@ export function Audits() {
         </div>
       </header>
 
-      {error ? (
-        <p className="upload-error" role="alert">
-          {error}
-        </p>
+      {ticketAuditEnabled ? (
+        <div className="audit-filters" role="group" aria-label="Audit history for">
+          {(['calls', 'tickets'] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              className={['ghost-btn', engine === key ? 'is-current' : ''].filter(Boolean).join(' ')}
+              aria-pressed={engine === key}
+              onClick={() => setEngine(key)}
+            >
+              {key === 'calls' ? 'Calls' : 'Tickets'}
+            </button>
+          ))}
+        </div>
       ) : null}
-      {deleteError ? (
-        <p className="upload-error" role="alert">
-          {deleteError}
-        </p>
-      ) : null}
-      {loading ? <p className="panel-lede">Loading audits…</p> : null}
 
-      {!loading && !error ? (
+      {engine === 'calls' ? (
         <>
-          <div className="audit-toolbar">
-            <div className="audit-filters" role="group" aria-label="Flagged filter">
-              {(['all', 'flagged', 'unflagged'] as const).map((key) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={['ghost-btn', flagFilter === key ? 'is-current' : '']
-                    .filter(Boolean)
-                    .join(' ')}
-                  aria-pressed={flagFilter === key}
-                  onClick={() => {
-                    setFlagFilter(key)
-                    setPage(1)
-                  }}
-                >
-                  {key === 'all' ? 'All' : key === 'flagged' ? 'Flagged' : 'Unflagged'}
-                </button>
-              ))}
-            </div>
-          </div>
+          {error ? (
+            <p className="upload-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {deleteError ? (
+            <p className="upload-error" role="alert">
+              {deleteError}
+            </p>
+          ) : null}
+          {loading ? <p className="panel-lede">Loading audits…</p> : null}
 
-          {filtered.length ? (
+          {!loading && !error ? (
+            <>
+              <div className="audit-toolbar">
+                <div className="audit-filters" role="group" aria-label="Flagged filter">
+                  {(['all', 'flagged', 'unflagged'] as const).map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className={['ghost-btn', flagFilter === key ? 'is-current' : '']
+                        .filter(Boolean)
+                        .join(' ')}
+                      aria-pressed={flagFilter === key}
+                      onClick={() => {
+                        setFlagFilter(key)
+                        setPage(1)
+                      }}
+                    >
+                      {key === 'all' ? 'All' : key === 'flagged' ? 'Flagged' : 'Unflagged'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {filtered.length ? (
             <>
               <div className="admin-table-wrap">
                 <table className="admin-table audit-table">
@@ -280,6 +355,119 @@ export function Audits() {
                   : 'No calls in this workspace yet.'}
             </p>
           )}
+        </>
+      ) : null}
+        </>
+      ) : null}
+
+      {engine === 'tickets' ? (
+        <>
+          {ticketsError ? (
+            <p className="upload-error" role="alert">
+              {ticketsError}
+            </p>
+          ) : null}
+          {ticketsLoading ? <p className="panel-lede">Loading audits…</p> : null}
+
+          {!ticketsLoading && !ticketsError ? (
+            tickets.length ? (
+              <>
+                <div className="admin-table-wrap">
+                  <table className="admin-table audit-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Ticket</th>
+                        <th>Status</th>
+                        <th>Score</th>
+                        <th>Messages</th>
+                        <th>Source</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ticketSlice.map((row) => (
+                        <tr
+                          key={row.id}
+                          className="audit-row"
+                          tabIndex={0}
+                          onClick={() => openTicket(row.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              openTicket(row.id)
+                            }
+                          }}
+                        >
+                          <td>{formatWhen(row.created_at)}</td>
+                          <td>
+                            <span className="admin-id">#{row.id.slice(0, 8)}</span>
+                          </td>
+                          <td>{capFirst(row.status)}</td>
+                          <td>{row.has_audit && row.score != null ? Math.round(row.score) : '—'}</td>
+                          <td>{row.message_count}</td>
+                          <td>{sourceLabel(row.source)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="review-pager">
+                  <label className="review-page-size">
+                    <span>Items per page</span>
+                    <select
+                      value={ticketPageSize}
+                      onChange={(e) => {
+                        setTicketPageSize(Number(e.target.value) as (typeof PAGE_SIZES)[number])
+                        setTicketPage(1)
+                      }}
+                    >
+                      {PAGE_SIZES.map((size) => (
+                        <option key={size} value={size}>
+                          {size}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="review-pager-status">
+                    {ticketStart + 1}–{ticketRangeEnd} of {tickets.length}
+                  </p>
+                  <nav className="review-page-nav" aria-label="Ticket audit pages">
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      disabled={ticketSafePage <= 1}
+                      onClick={() => setTicketPage(ticketSafePage - 1)}
+                    >
+                      Previous
+                    </button>
+                    {Array.from({ length: ticketPages }, (_, i) => i + 1).map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        className={['ghost-btn', 'is-page', n === ticketSafePage ? 'is-current' : '']
+                          .filter(Boolean)
+                          .join(' ')}
+                        aria-current={n === ticketSafePage ? 'page' : undefined}
+                        onClick={() => setTicketPage(n)}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      disabled={ticketSafePage >= ticketPages}
+                      onClick={() => setTicketPage(ticketSafePage + 1)}
+                    >
+                      Next
+                    </button>
+                  </nav>
+                </div>
+              </>
+            ) : (
+              <p className="empty-copy">No tickets in this workspace yet.</p>
+            )
+          ) : null}
         </>
       ) : null}
     </>

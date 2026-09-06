@@ -1922,6 +1922,58 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   line-height: 1.55;
 }
 
+.rubric-view-list {
+  display: grid;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rubric-view-item {
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.rubric-view-item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.rubric-view-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+
+.rubric-view-item-top h3 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.rubric-view-weight {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.rubric-view-question {
+  margin: 0.35rem 0 0;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.rubric-view-total {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
 .verdict {
   font-size: 0.68rem;
   font-weight: 750;

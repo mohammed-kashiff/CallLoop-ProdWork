@@ -22,6 +22,7 @@ import { Neighbourhood } from './pages/Neighbourhood'
 import { Profile } from './pages/Profile'
 import { ResetPassword } from './pages/ResetPassword'
 import { RubricBuilder } from './pages/RubricBuilder'
+import { RubricView } from './pages/RubricView'
 import { Pyai } from './pages/Pyai'
 import { MyTicketContributions } from './pages/MyTicketContributions'
 import { TicketAudit } from './pages/TicketAudit'
@@ -61,6 +62,7 @@ function App() {
                     <Route path="audits" element={<Audits />} />
                     <Route path="audits/:callId" element={<AuditDetail />} />
                     <Route path="rubric-builder" element={<RubricBuilder />} />
+                    <Route path="rubric-view" element={<RubricView />} />
                     <Route path="feedbacks" element={<Feedbacks />} />
                     <Route path="churn-risk" element={<ChurnRisk />} />
                     <Route path="integrations" element={<Integrations />} />
