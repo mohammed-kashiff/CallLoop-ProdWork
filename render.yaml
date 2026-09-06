@@ -46,5 +46,9 @@ services:
         sync: false
       - key: SENTRY_ENVIRONMENT
         value: production
+      - key: SENTRY_TRACES_SAMPLE_RATE
+        value: "0.1"
+      - key: BETTERSTACK_SOURCE_TOKEN
+        sync: false
       - key: PLATFORM_ADMIN_EMAILS
         sync: false

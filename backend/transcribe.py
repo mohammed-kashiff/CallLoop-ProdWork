@@ -26,6 +26,7 @@ import httpx
 from . import applog
 from . import db
 from . import pyai_usage
+from . import tracing
 from .config import load_env
 from .org_ids import DEFAULT_ORG_ID, org_scope
 
@@ -1313,9 +1314,11 @@ def transcribe_audio(src_path, hear_tmp, call_id=None, *, org_id: str):
         applog.event(log, "transcribe_dispatch", engine="selfhosted", call_id=call_id)
         from .transcribe_selfhosted_remote import transcribe_remote
 
-        return transcribe_remote(src_path, call_id=call_id)
+        with tracing.span("http.client", "pyai.transcribe", engine="selfhosted"):
+            return transcribe_remote(src_path, call_id=call_id)
     applog.event(log, "transcribe_dispatch", engine="pyai", call_id=call_id)
-    return transcribe_with_fallback(src_path, hear_tmp, call_id=call_id)
+    with tracing.span("http.client", "pyai.transcribe", engine="pyai"):
+        return transcribe_with_fallback(src_path, hear_tmp, call_id=call_id)
 
 
 # ---------- Orchestrator (CLI) ----------

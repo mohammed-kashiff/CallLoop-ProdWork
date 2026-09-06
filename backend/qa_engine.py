@@ -26,6 +26,7 @@ from . import db
 from . import pyai_usage
 from . import qa_v8
 from . import rules
+from . import tracing
 from . import transcribe
 from .config import load_env
 from .org_ids import DEFAULT_ORG_ID, org_scope
@@ -451,6 +452,13 @@ def _claude_json_body(prompt: str, model=None, effort=None, max_tokens=None) -> 
 def call_claude(prompt, model=None, effort=None, max_tokens=None, timeout=60):
     """POST to Claude with temperature=0. Retries with backoff on 429/5xx.
     Logs every failed attempt. Raises RuntimeError only if all attempts fail."""
+    with tracing.span("gen_ai.chat", "claude"):
+        return _call_claude(
+            prompt, model=model, effort=effort, max_tokens=max_tokens, timeout=timeout,
+        )
+
+
+def _call_claude(prompt, model=None, effort=None, max_tokens=None, timeout=60):
     if not ANTHROPIC_API_KEY:
         applog.event(
             log, "claude_failure", level=logging.ERROR,

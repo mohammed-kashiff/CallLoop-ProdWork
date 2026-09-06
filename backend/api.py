@@ -55,6 +55,7 @@ from . import platform_admins
 from . import product_events
 from . import rubric_builder
 from . import sentry_report
+from . import tracing
 from .config import cors_origins, load_env, skip_startup
 
 load_env()
@@ -858,6 +859,7 @@ def analyze_call(call_id, org_id: str, agent_override=None, *, rubric: dict):
             detail=detail if status != "failed" else None,
             error=(detail or {}).get("error") if status == "failed" else None,
         )
+        tracing.dimension_event(dim, status, detail)
 
     # One parallel wave: dimensions/criteria + churn + Recap.
     # Retention email and areas of improvement are on-demand.

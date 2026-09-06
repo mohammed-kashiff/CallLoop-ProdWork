@@ -46,6 +46,9 @@ _SECRET_PATTERNS = [
     re.compile(r"(?i)\b(sk-ant-|sk-)[A-Za-z0-9_\-]{8,}"),
     re.compile(r"(?i)(authorization|x-api-key|api[_-]?key)\s*[:=]\s*['\"]?[^\s'\"]+"),
     re.compile(r"(?i)(justcall_api_(?:key|secret)|api_secret)\s*[:=]\s*\S+"),
+    re.compile(
+        r"(?i)(betterstack_source_token|logtail_source_token|source_token)\s*[:=]\s*\S+"
+    ),
     re.compile(r"(?i)bearer\s+[A-Za-z0-9\-._~+/]+=*"),
     re.compile(r"(?i)illegal header value\s+\S+"),
 ]
@@ -63,6 +66,7 @@ def setup_logging(level: int = logging.INFO) -> str:
     parent.setLevel(level)
 
     if _CONFIGURED:
+        attach_logtail_handler(parent)
         return os.path.abspath(LOG_FILE)
 
     fmt = logging.Formatter(
@@ -94,7 +98,90 @@ def setup_logging(level: int = logging.INFO) -> str:
     # Keep existing per-module basicConfig console handlers; file is additive.
     _CONFIGURED = True
     parent.info("event=logging_ready path=%s", os.path.abspath(LOG_FILE))
+    attach_logtail_handler(parent)
     return os.path.abspath(LOG_FILE)
+
+
+def source_token() -> str:
+    """Better Stack (Logtail) source token. Empty disables the hosted sink."""
+    return (
+        (os.getenv("BETTERSTACK_SOURCE_TOKEN") or "").strip()
+        or (os.getenv("LOGTAIL_SOURCE_TOKEN") or "").strip()
+    )
+
+
+def ingesting_host() -> str:
+    return (os.getenv("BETTERSTACK_INGESTING_HOST") or "").strip()
+
+
+def attach_logtail_handler(logger: logging.Logger | None = None) -> bool:
+    """Additive Better Stack handler next to the rotating file. Never raises.
+
+    No-op without a source token. Failures talking to the sink are swallowed
+    per emit so a down ingest host cannot break scoring or the request.
+    """
+    parent = logger or logging.getLogger("callproof")
+    token = source_token()
+    if not token:
+        return False
+    if any(isinstance(h, _BetterStackHandler) for h in parent.handlers):
+        return True
+    try:
+        from logtail import LogtailHandler
+    except Exception:  # noqa: BLE001
+        try:
+            event(
+                logging.getLogger("callproof.applog"),
+                "logtail_unavailable",
+                level=logging.WARNING,
+                error="handler_not_installed",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+    try:
+        kwargs: dict = {"source_token": token}
+        host = ingesting_host()
+        if host:
+            kwargs["host"] = host
+        inner = LogtailHandler(**kwargs)
+        wrapped = _BetterStackHandler(inner)
+        wrapped.setLevel(parent.level)
+        parent.addHandler(wrapped)
+        event(logging.getLogger("callproof.applog"), "logtail_ready")
+        return True
+    except Exception:  # noqa: BLE001
+        try:
+            event(
+                logging.getLogger("callproof.applog"),
+                "logtail_unavailable",
+                level=logging.WARNING,
+                error="handler_init_failed",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+
+class _BetterStackHandler(logging.Handler):
+    """Wrap LogtailHandler.emit so a network/sink failure never raises."""
+
+    def __init__(self, inner: logging.Handler) -> None:
+        super().__init__()
+        self._inner = inner
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self._inner.emit(record)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def close(self) -> None:
+        try:
+            self._inner.close()
+        except Exception:  # noqa: BLE001
+            pass
+        super().close()
 
 
 def _fmt_value(value) -> str:

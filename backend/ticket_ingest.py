@@ -45,6 +45,7 @@ from . import ticket_agent_aliases
 from . import ticket_image_extraction
 from . import ticket_image_store
 from . import ticket_pdf_parser
+from . import tracing
 from .org_ids import org_scope
 
 
@@ -216,16 +217,20 @@ def ingest_ticket_pdf(org_id: str, pdf_bytes: bytes, *, source: str = "pdf_uploa
     ticket_id = create_ticket(org_id, source=source)
     set_ticket_status(ticket_id, org_id, "processing")
     try:
-        text = ticket_pdf_parser.extract_text(pdf_bytes)
-        if not ticket_pdf_parser.looks_like_justcall_export(text):
-            raise ValueError(
-                "PDF does not match the known JustCall export template; "
-                "this deterministic parser only handles that format."
-            )
-        turns = ticket_pdf_parser.parse_turns_with_pages(pdf_bytes)
+        with tracing.span("task", "ticket.parse"):
+            text = ticket_pdf_parser.extract_text(pdf_bytes)
+            if not ticket_pdf_parser.looks_like_justcall_export(text):
+                raise ValueError(
+                    "PDF does not match the known JustCall export template; "
+                    "this deterministic parser only handles that format."
+                )
+            turns = ticket_pdf_parser.parse_turns_with_pages(pdf_bytes)
 
-        images = ticket_image_extraction.extract_images(pdf_bytes)
-        descriptions = [ticket_image_extraction.describe_image(img["png_bytes"]) for img in images]
+        with tracing.span("task", "ticket.extract"):
+            images = ticket_image_extraction.extract_images(pdf_bytes)
+            descriptions = [
+                ticket_image_extraction.describe_image(img["png_bytes"]) for img in images
+            ]
         merged = interleave_images(turns, images, descriptions)
 
         unresolved_names = {

@@ -31,6 +31,7 @@ import logging
 from collections import Counter
 
 from . import applog
+from . import tracing
 from .qa_engine import build_prompt, call_claude, validate_evidence
 
 log = logging.getLogger("callproof.ticket_scoring")
@@ -307,6 +308,23 @@ def score_ticket(
     Returns score, findings (each attributed to a span's agent_user_id),
     the v1 primary_owner, and the span list itself.
     """
+    with tracing.span("task", "ticket.score"):
+        return _score_ticket(
+            turns, dimensions,
+            build_prompt_fn=build_prompt_fn,
+            call_claude_fn=call_claude_fn,
+            validate_evidence_fn=validate_evidence_fn,
+        )
+
+
+def _score_ticket(
+    turns: list[dict],
+    dimensions: list[dict],
+    *,
+    build_prompt_fn=build_prompt,
+    call_claude_fn=call_claude,
+    validate_evidence_fn=validate_evidence,
+) -> dict:
     spans = agent_spans(turns)
     findings = run_ticket_wave(
         turns, dimensions,

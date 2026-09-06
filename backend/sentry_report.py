@@ -27,9 +27,37 @@ _DROP_HEADER_KEYS = frozenset({
 
 _initialized = False
 
+# Team plan includes ~5M spans/month. An audit request is one transaction
+# plus a span per Claude dimension, PyAI Hear/Recap, etc. 1.0 (every
+# request) hits overage quickly; 0.1 keeps a useful sample without the bill.
+_DEFAULT_TRACES_SAMPLE_RATE = 0.1
+
 
 def dsn() -> str:
     return (os.getenv("SENTRY_DSN") or "").strip()
+
+
+def traces_sample_rate() -> float:
+    """Fraction of HTTP requests that send a full trace. Clamped to 0.0–1.0."""
+    raw = (os.getenv("SENTRY_TRACES_SAMPLE_RATE") or "").strip()
+    if not raw:
+        return _DEFAULT_TRACES_SAMPLE_RATE
+    try:
+        rate = float(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_TRACES_SAMPLE_RATE
+    return max(0.0, min(1.0, rate))
+
+
+def traces_sampler(sampling_context: dict[str, Any] | None = None) -> float:
+    """Skip /health (Render polls it constantly). Everything else uses traces_sample_rate()."""
+    try:
+        scope = (sampling_context or {}).get("asgi_scope") or {}
+        if scope.get("path") == "/health":
+            return 0.0
+    except Exception:  # noqa: BLE001
+        pass
+    return traces_sample_rate()
 
 
 def environment() -> str:
@@ -61,10 +89,12 @@ def init_sentry(*, transport=None) -> bool:
         dsn=secret or None,
         environment=environment(),
         send_default_pii=False,
-        traces_sample_rate=0.0,
+        traces_sample_rate=traces_sample_rate(),
+        traces_sampler=traces_sampler,
         profile_session_sample_rate=0.0,
         transport=transport,
         before_send=before_send,
+        before_send_transaction=before_send,
         disabled_integrations=[LoggingIntegration],
     )
     _initialized = True

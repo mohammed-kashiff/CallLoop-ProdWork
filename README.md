@@ -322,8 +322,10 @@ Set these as **Environment** variables on the Web Service (not Secret Files, not
 | `SUPABASE_URL` | Project URL (`https://<ref>.supabase.co`). JWT issuer is `{URL}/auth/v1`. |
 | `SUPABASE_JWT_SECRET` | Project Settings → API JWT secret (HS256). Dashboard-only (`sync: false`). |
 | `SUPABASE_SERVICE_ROLE_KEY` | Project Settings → API **service_role** (server only). Private Storage uploads + signed URLs. Never a `VITE_*` var. |
-| `SENTRY_DSN` | Sentry project DSN (error tracking). Dashboard-only. Empty disables the SDK. |
+| `SENTRY_DSN` | Sentry project DSN (error tracking + tracing). Dashboard-only. Empty disables the SDK. |
 | `SENTRY_ENVIRONMENT` | `production` on Render (also inferred when `RENDER` is set). |
+| `SENTRY_TRACES_SAMPLE_RATE` | Fraction of requests that send a full trace. Default `0.1`. Do not set to `1.0` on production volume — Team plan includes ~5M spans/month. |
+| `BETTERSTACK_SOURCE_TOKEN` | Better Stack (Logtail) source token. Additive to `logs/callproof.log`. Empty = file-only. Dashboard-only. |
 
 On the **Static Site** (`callloop-web`), set **build-time** env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL` (the API origin). Vite bakes these in at build; changing them later needs a rebuild.
 
@@ -468,7 +470,9 @@ New workspace: Dashboard → **New → Blueprint** and point at this repo’s `r
 
 ### Error tracking (Sentry)
 
-The API initialises the official FastAPI Sentry SDK when `SENTRY_DSN` is set. Events are tagged with `environment` (`production` on Render) and `org_id` (JWT/worker UUID only). Request bodies, `Authorization`, cookies, emails, and API keys are stripped. 4xx is not sent.
+The API initialises the official FastAPI Sentry SDK when `SENTRY_DSN` is set. Events are tagged with `environment` (`production` on Render) and `org_id` (JWT/worker UUID only). Request bodies, `Authorization`, cookies, emails, and API keys are stripped. 4xx is not sent. `traces_sample_rate` defaults to `0.1` (`SENTRY_TRACES_SAMPLE_RATE`) so a sampled audit trace shows each Claude dimension, PyAI Hear/Recap, and ticket parse/extract/score as a span. Tracing failures never break scoring.
+
+Structured `applog.event()` lines still rotate in `logs/callproof.log`. When `BETTERSTACK_SOURCE_TOKEN` is set, the same lines also go to Better Stack (Logtail). The hosted sink is additive and fail-open — a down ingest host does not affect the request.
 
 **Alerts (Sentry UI, not this repo):** Alerts → Create Alert → “An issue is created” → notify a Slack channel or inbox someone actually reads. Local `ERROR_NOTIFY_*` is laptop-only and is not a substitute on Render.
 

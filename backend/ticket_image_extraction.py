@@ -25,6 +25,7 @@ import pypdfium2 as pdfium
 
 from . import applog
 from . import pyai_usage
+from . import tracing
 
 log = logging.getLogger("callproof.ticket_image_extraction")
 
@@ -77,6 +78,11 @@ def describe_image(png_bytes: bytes, *, model=None, timeout=60) -> str:
     Retries with backoff on 429/5xx, same call_claude() contract used
     elsewhere in this codebase: raises RuntimeError only if every attempt
     fails."""
+    with tracing.span("gen_ai.chat", "claude.vision"):
+        return _describe_image(png_bytes, model=model, timeout=timeout)
+
+
+def _describe_image(png_bytes: bytes, *, model=None, timeout=60) -> str:
     if not ANTHROPIC_API_KEY:
         applog.event(
             log, "ticket_image_describe_failure", level=logging.ERROR,

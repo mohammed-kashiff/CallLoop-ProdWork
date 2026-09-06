@@ -10,6 +10,8 @@ os.environ["ERROR_NOTIFY_DESKTOP"] = "false"
 os.environ["ERROR_NOTIFY_WEBHOOK_URL"] = ""
 os.environ["ERROR_NOTIFY_EMAIL"] = "off"
 os.environ.pop("SENTRY_DSN", None)
+os.environ.pop("BETTERSTACK_SOURCE_TOKEN", None)
+os.environ.pop("LOGTAIL_SOURCE_TOKEN", None)
 
 # Test-only HMAC material so minted JWTs match verify_access_token.
 # Not a production secret; pytest overwrites process env for this suite.

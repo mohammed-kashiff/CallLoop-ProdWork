@@ -121,6 +121,79 @@ def test_request_id_is_not_bound_outside_a_request():
     assert applog.bound_request_id() is None
 
 
+def test_redact_line_covers_betterstack_source_token():
+    line = "betterstack_source_token=bst_should_not_remain source_token=abc"
+    out = redact_line(line)
+    assert "bst_should_not_remain" not in out
+    assert "[REDACTED]" in out
+
+
+def test_attach_logtail_is_noop_without_a_token(monkeypatch):
+    from backend import applog
+
+    monkeypatch.delenv("BETTERSTACK_SOURCE_TOKEN", raising=False)
+    monkeypatch.delenv("LOGTAIL_SOURCE_TOKEN", raising=False)
+    logger = logging.getLogger("test_logtail_noop")
+    logger.handlers.clear()
+    assert applog.attach_logtail_handler(logger) is False
+    assert not any(isinstance(h, applog._BetterStackHandler) for h in logger.handlers)
+
+
+def test_attach_logtail_is_additive_and_does_not_log_the_token(monkeypatch):
+    from backend import applog
+
+    created: dict = {}
+
+    class FakeLogtail(logging.Handler):
+        def __init__(self, source_token=None, host=None, **_kw):
+            super().__init__()
+            created["has_token"] = bool(source_token)
+            created["host"] = host
+            created["messages"] = []
+
+        def emit(self, record):
+            created["messages"].append(record.getMessage())
+
+    import sys
+    import types
+
+    fake = types.ModuleType("logtail")
+    fake.LogtailHandler = FakeLogtail
+    monkeypatch.setitem(sys.modules, "logtail", fake)
+    monkeypatch.setenv("BETTERSTACK_SOURCE_TOKEN", "tok_must_not_appear_in_logs")
+    monkeypatch.delenv("BETTERSTACK_INGESTING_HOST", raising=False)
+
+    logger = logging.getLogger("test_logtail_attach")
+    logger.handlers.clear()
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    assert applog.attach_logtail_handler(logger) is True
+    assert created["has_token"] is True
+    assert any(isinstance(h, applog._BetterStackHandler) for h in logger.handlers)
+    # second attach is idempotent
+    assert applog.attach_logtail_handler(logger) is True
+    assert sum(1 for h in logger.handlers if isinstance(h, applog._BetterStackHandler)) == 1
+
+    applog.event(logger, "hello_sink")
+    blob = " ".join(created["messages"])
+    assert "event=hello_sink" in blob
+    assert "tok_must_not_appear_in_logs" not in blob
+
+
+def test_betterstack_handler_emit_never_raises():
+    from backend import applog
+
+    class Boom(logging.Handler):
+        def emit(self, record):
+            raise RuntimeError("ingest host down")
+
+    wrapped = applog._BetterStackHandler(Boom())
+    record = logging.LogRecord(
+        "callproof.test", logging.INFO, __file__, 1, "event=x", None, None,
+    )
+    wrapped.emit(record)
+
+
 def test_a_filter_on_the_logger_redacts_before_any_handler_sees_it():
     """Proves the actual mechanism AC-47 relies on, isolated from the
     global callproof logger's already-configured state: a Filter attached

@@ -16,6 +16,7 @@ import time
 import httpx
 from . import applog
 from . import pyai_usage
+from . import tracing
 from .config import load_env
 
 load_env()
@@ -189,6 +190,14 @@ def poll_recap(pyai_call_id: str):
 
 def ensure_recap(local_call_id, segments, agent_speaker, audio_seconds=None, stored_pyai_id=None):
     """Fetch Recap for this call, triggering from utterances when needed."""
+    with tracing.span("http.client", "pyai.recap"):
+        return _ensure_recap(
+            local_call_id, segments, agent_speaker,
+            audio_seconds=audio_seconds, stored_pyai_id=stored_pyai_id,
+        )
+
+
+def _ensure_recap(local_call_id, segments, agent_speaker, audio_seconds=None, stored_pyai_id=None):
     if not PYAI_API_KEY:
         applog.event(
             log, "recap_failure", level=logging.WARNING,
