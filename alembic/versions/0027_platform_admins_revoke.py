@@ -1,6 +1,6 @@
 """platform_admins: revoke the accidentally-inherited default GRANT.
 
-Revision ID: 0027_platform_admins_revoke_default_grant
+Revision ID: 0027_platform_admins_revoke
 Revises: 0026_platform_admins
 Create Date: 2026-09-06
 
@@ -29,7 +29,7 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0027_platform_admins_revoke_default_grant"
+revision: str = "0027_platform_admins_revoke"
 down_revision: Union[str, Sequence[str], None] = "0026_platform_admins"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
