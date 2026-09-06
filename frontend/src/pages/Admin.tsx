@@ -1,7 +1,15 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { apiFetch, fmtUsd, readError } from '../lib/api'
-import { adminFlagOn, TRIAL_FLAGS, type FeatureMap } from '../lib/features'
+import type { FeatureMap } from '../lib/features'
 import { formatBytes } from '../lib/format'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
@@ -14,6 +22,16 @@ type ProvisionResult = {
   temporary_password: string
 }
 
+// AC-33's shape: one row per org, not per member.
+type OrgRow = {
+  org_id: string
+  org_name: string | null
+  short_ids: number[]
+  member_count: number
+  created_at: string | null
+}
+
+// AC-34's shape: one row per member, used inside the Members tab.
 type DirectoryRow = {
   user_id: string
   email: string | null
@@ -81,6 +99,39 @@ const RUBRIC_DIMENSIONS: { id: string; label: string }[] = [
   { id: 'tone_empathy_professionalism', label: 'Tone, Empathy & Professionalism' },
 ]
 
+// AC-35: one point per day, real counts — replaces the design mock's Math.random().
+type DailyUsagePoint = {
+  date: string
+  hits: number
+  actions: number
+  polls: number
+  units: number
+}
+
+// AC-36: served by GET /api/admin/feature-flags — a flag's label/description/
+// risk tier lives here, not hardcoded per-key in this file.
+type RiskTier = 'low' | 'medium' | 'danger'
+type FeatureFlagDef = {
+  key: string
+  label: string
+  description: string
+  risk: RiskTier
+  default_enabled: boolean
+}
+
+const RISK_ORDER: RiskTier[] = ['low', 'medium', 'danger']
+const RISK_LABEL: Record<RiskTier, string> = {
+  low: 'Low risk',
+  medium: 'Medium risk',
+  danger: 'Danger zone',
+}
+
+function isFlagOn(features: FeatureMap | undefined, def: FeatureFlagDef): boolean {
+  const value = features?.[def.key]
+  if (value === undefined) return def.default_enabled
+  return value !== false
+}
+
 type ActivityEvent = {
   at: string | null
   kind: 'upload' | 'audit' | 'flag_change' | 'delete'
@@ -145,15 +196,108 @@ function displayName(row: DirectoryRow): string {
   return n || '—'
 }
 
+/** AC-37/AC-40: one reusable overlay for the danger-toggle confirmation and
+ * the Provision-user dialog — Escape and backdrop-click both close it. */
+function Modal({
+  title,
+  onClose,
+  children,
+}: {
+  title: string
+  onClose: () => void
+  children: ReactNode
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div className="cc-modal-backdrop" onClick={onClose}>
+      <div
+        className="cc-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="cc-modal-header">
+          <h3>{title}</h3>
+          <button type="button" className="cc-modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+/** AC-38: real per-day hits, no mock random numbers — a plain inline SVG
+ * line, no charting dependency (matches AC-32's decision not to pull in
+ * Tailwind/Chart.js for Command Center). */
+function UsageSparkline({ data }: { data: DailyUsagePoint[] }) {
+  if (data.length === 0) return <p className="empty-copy">No usage data yet.</p>
+  const w = 320
+  const h = 90
+  const pad = 8
+  const max = Math.max(1, ...data.map((d) => d.hits))
+  const stepX = data.length > 1 ? (w - pad * 2) / (data.length - 1) : 0
+  const points = data
+    .map((d, i) => {
+      const x = pad + i * stepX
+      const y = h - pad - (d.hits / max) * (h - pad * 2)
+      return `${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+  const total = data.reduce((sum, d) => sum + d.hits, 0)
+  return (
+    <figure className="cc-chart">
+      <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Daily API hits trend">
+        <polyline points={points} fill="none" stroke="var(--cc-accent)" strokeWidth="2" />
+      </svg>
+      <figcaption className="admin-provision-hint">
+        {data[0].date} – {data[data.length - 1].date}: {total} hits total
+      </figcaption>
+    </figure>
+  )
+}
+
 export function Admin() {
   const { isPlatformAdmin } = useAuth()
-  const [q, setQ] = useState('')
-  const [rows, setRows] = useState<DirectoryRow[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [selected, setSelected] = useState<DirectoryRow | null>(null)
+
+  // AC-39: real search, org-level (AC-33) since the directory table below
+  // is now one row per org, not per member. ⌘K focuses this input.
+  const [orgQuery, setOrgQuery] = useState('')
+  const [orgRows, setOrgRows] = useState<OrgRow[]>([])
+  const [orgSearchError, setOrgSearchError] = useState<string | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+
+  // AC-37: the slide-over inspector. selectedOrg drives whether it's open —
+  // no route change, so the table underneath never unmounts and its scroll
+  // position is preserved automatically when the drawer closes.
+  const [selectedOrg, setSelectedOrg] = useState<OrgRow | null>(null)
+  const [activeTab, setActiveTab] = useState<'overview' | 'flags' | 'rubric' | 'members'>(
+    'overview',
+  )
+
   const [usage, setUsage] = useState<UsagePayload | null>(null)
   const [orgDetail, setOrgDetail] = useState<OrgDetailPayload | null>(null)
   const [busy, setBusy] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+
+  // AC-35
+  const [daily, setDaily] = useState<DailyUsagePoint[]>([])
+
+  // AC-36
+  const [flagDefs, setFlagDefs] = useState<FeatureFlagDef[]>([])
+  const [pendingDangerToggle, setPendingDangerToggle] = useState<{
+    def: FeatureFlagDef
+    nextEnabled: boolean
+  } | null>(null)
+
   const [actOrg, setActOrg] = useState('')
   const [actSince, setActSince] = useState(weekAgo)
   const [actUntil, setActUntil] = useState(() => ymd(new Date()))
@@ -161,6 +305,8 @@ export function Admin() {
   const [actBusy, setActBusy] = useState(false)
   const [actError, setActError] = useState<string | null>(null)
 
+  // AC-40: same fields/endpoint as before, now behind a modal.
+  const [provisionModalOpen, setProvisionModalOpen] = useState(false)
   const [pEmail, setPEmail] = useState('')
   const [pFirst, setPFirst] = useState('')
   const [pLast, setPLast] = useState('')
@@ -169,22 +315,22 @@ export function Admin() {
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisionResult, setProvisionResult] = useState<ProvisionResult | null>(null)
   const [copied, setCopied] = useState(false)
-  const [resetEmailBusy, setResetEmailBusy] = useState(false)
-  const [resetEmailInfo, setResetEmailInfo] = useState<string | null>(null)
-  const [resetEmailError, setResetEmailError] = useState<string | null>(null)
-  const [impersonateBusy, setImpersonateBusy] = useState(false)
-  const [impersonateError, setImpersonateError] = useState<string | null>(null)
-  const [pwEvents, setPwEvents] = useState<PasswordEvent[] | null>(null)
 
-  // AC-34: every real member of the selected org, each with their own
-  // independently-clickable "Log in as" — not just the single searched-for
-  // row above. Keyed by user_id so one member's spinner/error never
-  // touches another's button.
+  // AC-34 Members tab: every real member of the selected org, each with
+  // their own independently-clickable Log in as / Send reset email /
+  // History — keyed by user_id so one member's state never touches another's.
   const [orgMembers, setOrgMembers] = useState<DirectoryRow[]>([])
   const [membersError, setMembersError] = useState<string | null>(null)
   const [impersonatingMemberId, setImpersonatingMemberId] = useState<string | null>(null)
   const [memberImpersonateErrors, setMemberImpersonateErrors] = useState<
     Record<string, string>
+  >({})
+  const [resettingMemberId, setResettingMemberId] = useState<string | null>(null)
+  const [memberResetInfo, setMemberResetInfo] = useState<Record<string, string>>({})
+  const [memberResetErrors, setMemberResetErrors] = useState<Record<string, string>>({})
+  const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null)
+  const [pwEventsByUser, setPwEventsByUser] = useState<
+    Record<string, PasswordEvent[] | null>
   >({})
 
   const [rubric, setRubric] = useState<RubricPayload | null>(null)
@@ -193,22 +339,45 @@ export function Admin() {
   const [rubricError, setRubricError] = useState<string | null>(null)
   const [rubricSaveInfo, setRubricSaveInfo] = useState<string | null>(null)
 
-  const search = useCallback(async (needle: string) => {
-    const r = await apiFetch(`/api/admin/directory?q=${encodeURIComponent(needle)}`)
+  const searchOrgs = useCallback(async (needle: string) => {
+    const r = await apiFetch(`/api/admin/orgs?q=${encodeURIComponent(needle)}`)
     if (!r.ok) throw new Error(await readError(r, 'Could not search the directory.'))
-    const data = (await r.json()) as { rows?: DirectoryRow[] }
-    setRows(Array.isArray(data.rows) ? data.rows : [])
+    const data = (await r.json()) as { rows?: OrgRow[] }
+    setOrgRows(Array.isArray(data.rows) ? data.rows : [])
   }, [])
 
   useEffect(() => {
     if (!isPlatformAdmin) return
     const t = window.setTimeout(() => {
-      search(q).catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : 'Could not search the directory.'),
+      searchOrgs(orgQuery).catch((e: unknown) =>
+        setOrgSearchError(e instanceof Error ? e.message : 'Could not search the directory.'),
       )
     }, 250)
     return () => window.clearTimeout(t)
-  }, [q, isPlatformAdmin, search])
+  }, [orgQuery, isPlatformAdmin, searchOrgs])
+
+  // AC-36: fetch the risk-tier metadata once — it doesn't change per org.
+  useEffect(() => {
+    if (!isPlatformAdmin) return
+    apiFetch('/api/admin/feature-flags')
+      .then((r) => (r.ok ? r.json() : { flags: [] }))
+      .then((data: { flags?: FeatureFlagDef[] }) =>
+        setFlagDefs(Array.isArray(data.flags) ? data.flags : []),
+      )
+      .catch(() => setFlagDefs([]))
+  }, [isPlatformAdmin])
+
+  // AC-39: ⌘K / Ctrl+K focuses the search bar from anywhere on the page.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const provisionUser = async (e: FormEvent) => {
     e.preventDefault()
@@ -235,7 +404,7 @@ export function Admin() {
       setPFirst('')
       setPLast('')
       setPOrgName('')
-      search(q).catch(() => {})
+      searchOrgs(orgQuery).catch(() => {})
     } catch (err: unknown) {
       setProvisionError(err instanceof Error ? err.message : 'Could not provision that user.')
     } finally {
@@ -253,58 +422,11 @@ export function Admin() {
     }
   }
 
-  const loadPasswordEvents = async (userId: string) => {
-    try {
-      const r = await apiFetch(`/api/admin/users/${encodeURIComponent(userId)}/password-events`)
-      if (!r.ok) throw new Error(await readError(r, 'Could not load password history.'))
-      const data = (await r.json()) as { events?: PasswordEvent[] }
-      setPwEvents(Array.isArray(data.events) ? data.events : [])
-    } catch {
-      // Secondary detail on the panel — a miss here must not block usage/detail.
-      setPwEvents(null)
-    }
-  }
-
-  const loadOrg = async (row: DirectoryRow) => {
-    setSelected(row)
-    setError(null)
-    setResetEmailInfo(null)
-    setResetEmailError(null)
-    setActOrg(row.org_id)
-    setPwEvents(null)
-    setRubric(null)
-    setRubricError(null)
-    setRubricSaveInfo(null)
-    setOrgMembers([])
-    setMembersError(null)
-    setMemberImpersonateErrors({})
-    setBusy(true)
-    try {
-      const [usageRes, detailRes, rubricRes] = await Promise.all([
-        apiFetch(`/api/admin/usage?org_id=${encodeURIComponent(row.org_id)}`),
-        apiFetch(`/api/admin/orgs/${encodeURIComponent(row.org_id)}/detail`),
-        apiFetch(`/api/admin/orgs/${encodeURIComponent(row.org_id)}/rubric`),
-      ])
-      if (!usageRes.ok) throw new Error(await readError(usageRes, 'Could not load usage.'))
-      if (!detailRes.ok) throw new Error(await readError(detailRes, 'Could not load org detail.'))
-      setUsage((await usageRes.json()) as UsagePayload)
-      setOrgDetail((await detailRes.json()) as OrgDetailPayload)
-      if (rubricRes.ok) {
-        const data = (await rubricRes.json()) as RubricPayload
-        setRubric(data)
-        setRubricDraft(data.weights)
-      } else {
-        setRubricError(await readError(rubricRes, 'Could not load the rubric.'))
-      }
-    } catch (e: unknown) {
-      setUsage(null)
-      setOrgDetail(null)
-      setError(e instanceof Error ? e.message : 'Could not load usage.')
-    } finally {
-      setBusy(false)
-    }
-    void loadPasswordEvents(row.user_id)
-    void loadOrgMembers(row.org_id)
+  const closeProvisionModal = () => {
+    setProvisionModalOpen(false)
+    setProvisionError(null)
+    setProvisionResult(null)
+    setCopied(false)
   }
 
   const loadOrgMembers = async (orgId: string) => {
@@ -322,18 +444,70 @@ export function Admin() {
     }
   }
 
+  // AC-37: opening an org fetches everything its 4 tabs need up front, so
+  // switching tabs inside the drawer is instant (no per-tab loading state).
+  const openOrg = async (row: OrgRow) => {
+    setSelectedOrg(row)
+    setActiveTab('overview')
+    setDetailError(null)
+    setRubric(null)
+    setRubricError(null)
+    setRubricSaveInfo(null)
+    setOrgMembers([])
+    setMembersError(null)
+    setMemberImpersonateErrors({})
+    setMemberResetInfo({})
+    setMemberResetErrors({})
+    setExpandedMemberId(null)
+    setPwEventsByUser({})
+    setDaily([])
+    setBusy(true)
+    try {
+      const [usageRes, detailRes, rubricRes, dailyRes] = await Promise.all([
+        apiFetch(`/api/admin/usage?org_id=${encodeURIComponent(row.org_id)}`),
+        apiFetch(`/api/admin/orgs/${encodeURIComponent(row.org_id)}/detail`),
+        apiFetch(`/api/admin/orgs/${encodeURIComponent(row.org_id)}/rubric`),
+        apiFetch(`/api/admin/usage/daily?org_id=${encodeURIComponent(row.org_id)}&days=30`),
+      ])
+      if (!usageRes.ok) throw new Error(await readError(usageRes, 'Could not load usage.'))
+      if (!detailRes.ok) throw new Error(await readError(detailRes, 'Could not load org detail.'))
+      setUsage((await usageRes.json()) as UsagePayload)
+      setOrgDetail((await detailRes.json()) as OrgDetailPayload)
+      if (rubricRes.ok) {
+        const data = (await rubricRes.json()) as RubricPayload
+        setRubric(data)
+        setRubricDraft(data.weights)
+      } else {
+        setRubricError(await readError(rubricRes, 'Could not load the rubric.'))
+      }
+      if (dailyRes.ok) {
+        const data = (await dailyRes.json()) as { series?: DailyUsagePoint[] }
+        setDaily(Array.isArray(data.series) ? data.series : [])
+      }
+    } catch (e: unknown) {
+      setUsage(null)
+      setOrgDetail(null)
+      setDetailError(e instanceof Error ? e.message : 'Could not load usage.')
+    } finally {
+      setBusy(false)
+    }
+    void loadOrgMembers(row.org_id)
+  }
+
+  const closeDrawer = () => setSelectedOrg(null)
+
   const rubricTotal = RUBRIC_DIMENSIONS.reduce(
     (sum, dim) => sum + (rubricDraft[dim.id] ?? 0),
     0,
   )
 
   const saveRubric = async () => {
-    if (!selected || rubricTotal !== 100) return
+    if (!selectedOrg || rubricTotal !== 100) return
     setRubricSaving(true)
     setRubricError(null)
     setRubricSaveInfo(null)
     try {
-      const r = await apiFetch(`/api/admin/orgs/${encodeURIComponent(selected.org_id)}/rubric`, {
+      const r = await apiFetch(`/api/admin/orgs/${encodeURIComponent(selectedOrg.org_id)}/rubric`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ weights: rubricDraft }),
@@ -370,20 +544,22 @@ export function Admin() {
     }
   }
 
-  const toggle = async (key: string, enabled: boolean) => {
-    if (!selected) return
-    setError(null)
+  // AC-36: the actual write, only ever called after a danger-tier toggle
+  // has been explicitly confirmed (or immediately for low/medium).
+  const applyToggle = async (key: string, enabled: boolean) => {
+    if (!selectedOrg) return
+    setDetailError(null)
     const r = await apiFetch('/api/admin/features', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        org_id: selected.org_id,
+        org_id: selectedOrg.org_id,
         feature_key: key,
         enabled,
       }),
     })
     if (!r.ok) {
-      setError(await readError(r, 'Could not update that flag.'))
+      setDetailError(await readError(r, 'Could not update that flag.'))
       return
     }
     const data = (await r.json()) as { features?: FeatureMap }
@@ -392,96 +568,21 @@ export function Admin() {
     )
   }
 
-  const sendResetEmail = async () => {
-    if (!selected?.email) return
-    setResetEmailError(null)
-    setResetEmailInfo(null)
-    if (!supabase) {
-      setResetEmailError('Auth is not configured.')
+  const requestToggle = (def: FeatureFlagDef, nextEnabled: boolean) => {
+    if (def.risk === 'danger') {
+      setPendingDangerToggle({ def, nextEnabled })
       return
     }
-    setResetEmailBusy(true)
-    try {
-      const { error: err } = await supabase.auth.resetPasswordForEmail(selected.email.trim(), {
-        redirectTo: `${window.location.origin}/reset-password`,
-      })
-      if (err) {
-        const msg = err.message.toLowerCase()
-        const leaky = /not found|does not exist|no user|unregistered|could not find/.test(
-          msg,
-        )
-        if (!leaky) {
-          setResetEmailError(err.message)
-          return
-        }
-      }
-      setResetEmailInfo(
-        'Reset email sent. They set the new password from the link — you will not see it.',
-      )
-      try {
-        await apiFetch('/api/admin/log-password-reset-request', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            user_id: selected.user_id,
-            email: selected.email,
-          }),
-        })
-      } catch {
-        /* email already sent; a log miss must not look like a failed reset */
-      }
-      void loadPasswordEvents(selected.user_id)
-    } catch {
-      setResetEmailError('Could not send the reset email.')
-    } finally {
-      setResetEmailBusy(false)
-    }
+    void applyToggle(def.key, nextEnabled)
   }
 
-  const logInAs = async () => {
-    if (!selected) return
-    setImpersonateError(null)
-    setImpersonateBusy(true)
-    try {
-      const r = await apiFetch(`/api/admin/users/${encodeURIComponent(selected.user_id)}/impersonate`, {
-        method: 'POST',
-      })
-      if (!r.ok) throw new Error(await readError(r, 'Could not start impersonation session.'))
-      const body = (await r.json()) as {
-        org_name: string | null
-        target_email: string
-        access_token: string
-        refresh_token: string
-        expires_in: number | null
-        token_type: string
-      }
-      const hash = new URLSearchParams({
-        access_token: body.access_token,
-        refresh_token: body.refresh_token,
-        token_type: body.token_type || 'bearer',
-        type: 'magiclink',
-        ...(body.expires_in ? { expires_in: String(body.expires_in) } : {}),
-      })
-      const query = new URLSearchParams({
-        impersonated: '1',
-        org: body.org_name || selected.org_name || 'this org',
-        as: body.target_email,
-      })
-      window.open(`${CUSTOMER_ORIGIN}/?${query.toString()}#${hash.toString()}`, '_blank')
-    } catch (e) {
-      setImpersonateError(
-        e instanceof Error ? e.message : 'Could not start impersonation session.',
-      )
-    } finally {
-      setImpersonateBusy(false)
-    }
+  const confirmDangerToggle = () => {
+    if (!pendingDangerToggle) return
+    void applyToggle(pendingDangerToggle.def.key, pendingDangerToggle.nextEnabled)
+    setPendingDangerToggle(null)
   }
 
   const logInAsMember = async (row: DirectoryRow) => {
-    // AC-34: the Members-panel counterpart to logInAs() above — takes the
-    // specific row clicked rather than closing over `selected`, and tracks
-    // busy/error per user_id so N members' buttons never interfere with
-    // each other. Same backend call, same session-handoff shape.
     setMemberImpersonateErrors((prev) => {
       const next = { ...prev }
       delete next[row.user_id]
@@ -525,6 +626,82 @@ export function Admin() {
     }
   }
 
+  const sendResetEmailForMember = async (row: DirectoryRow) => {
+    if (!row.email) return
+    setMemberResetErrors((prev) => {
+      const next = { ...prev }
+      delete next[row.user_id]
+      return next
+    })
+    setMemberResetInfo((prev) => {
+      const next = { ...prev }
+      delete next[row.user_id]
+      return next
+    })
+    if (!supabase) {
+      setMemberResetErrors((prev) => ({ ...prev, [row.user_id]: 'Auth is not configured.' }))
+      return
+    }
+    setResettingMemberId(row.user_id)
+    try {
+      const { error: err } = await supabase.auth.resetPasswordForEmail(row.email.trim(), {
+        redirectTo: `${window.location.origin}/reset-password`,
+      })
+      if (err) {
+        const msg = err.message.toLowerCase()
+        const leaky = /not found|does not exist|no user|unregistered|could not find/.test(msg)
+        if (!leaky) {
+          setMemberResetErrors((prev) => ({ ...prev, [row.user_id]: err.message }))
+          return
+        }
+      }
+      setMemberResetInfo((prev) => ({ ...prev, [row.user_id]: 'Reset email sent.' }))
+      try {
+        await apiFetch('/api/admin/log-password-reset-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: row.user_id, email: row.email }),
+        })
+      } catch {
+        /* email already sent; a log miss must not look like a failed reset */
+      }
+      if (pwEventsByUser[row.user_id] !== undefined) {
+        setPwEventsByUser((prev) => {
+          const next = { ...prev }
+          delete next[row.user_id]
+          return next
+        })
+      }
+    } catch {
+      setMemberResetErrors((prev) => ({
+        ...prev,
+        [row.user_id]: 'Could not send the reset email.',
+      }))
+    } finally {
+      setResettingMemberId((current) => (current === row.user_id ? null : current))
+    }
+  }
+
+  const toggleMemberHistory = async (row: DirectoryRow) => {
+    if (expandedMemberId === row.user_id) {
+      setExpandedMemberId(null)
+      return
+    }
+    setExpandedMemberId(row.user_id)
+    if (pwEventsByUser[row.user_id] !== undefined) return
+    try {
+      const r = await apiFetch(`/api/admin/users/${encodeURIComponent(row.user_id)}/password-events`)
+      if (!r.ok) throw new Error(await readError(r, 'Could not load password history.'))
+      const data = (await r.json()) as { events?: PasswordEvent[] }
+      setPwEventsByUser((prev) => ({
+        ...prev,
+        [row.user_id]: Array.isArray(data.events) ? data.events : [],
+      }))
+    } catch {
+      setPwEventsByUser((prev) => ({ ...prev, [row.user_id]: null }))
+    }
+  }
+
   if (!isPlatformAdmin) {
     if (isAdminHost()) {
       return (
@@ -546,91 +723,21 @@ export function Admin() {
 
   const pyai = usage?.usage?.by_provider?.pyai
   const claude = usage?.usage?.by_provider?.anthropic
+  const flagsByRisk = RISK_ORDER.map((risk) => ({
+    risk,
+    defs: flagDefs.filter((d) => d.risk === risk),
+  })).filter((g) => g.defs.length > 0)
 
   return (
-    <>
+    <div className="cc-shell">
       <header className="page-bar">
         <div>
           <p className="crumb">Platform</p>
-          <h1>Admin</h1>
+          <h1>Command Center</h1>
         </div>
       </header>
 
-      <section className="admin-provision">
-        <h2>Provision user</h2>
-        <p className="admin-provision-hint">
-          Creates a login and a new org, named as you choose. The password is
-          generated and shown once here — copy it and share it with the
-          person alongside their email.
-        </p>
-        <form className="admin-provision-form" onSubmit={(e) => void provisionUser(e)}>
-          <label>
-            Email
-            <input
-              type="email"
-              value={pEmail}
-              onChange={(e) => setPEmail(e.target.value)}
-              required
-            />
-          </label>
-          <label>
-            First name
-            <input
-              type="text"
-              value={pFirst}
-              onChange={(e) => setPFirst(e.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Last name
-            <input
-              type="text"
-              value={pLast}
-              onChange={(e) => setPLast(e.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Org name
-            <input
-              type="text"
-              value={pOrgName}
-              onChange={(e) => setPOrgName(e.target.value)}
-              required
-            />
-          </label>
-          <button type="submit" className="start-btn" disabled={provisioning}>
-            {provisioning ? 'Creating…' : 'Create'}
-          </button>
-        </form>
-
-        {provisionError ? (
-          <p className="upload-error" role="alert">
-            {provisionError}
-          </p>
-        ) : null}
-
-        {provisionResult ? (
-          <div className="admin-provision-result" role="status">
-            <p>
-              <strong>{provisionResult.email}</strong>{' '}
-              {provisionResult.created ? 'created' : 'added to the existing org'} in{' '}
-              <strong>{provisionResult.org_name}</strong>.
-            </p>
-            <p className="admin-provision-warning">
-              This password is shown once — copy it now.
-            </p>
-            <div className="admin-provision-secret">
-              <code>{provisionResult.temporary_password}</code>
-              <button type="button" className="ghost-btn" onClick={() => void copyPassword()}>
-                {copied ? 'Copied' : 'Copy'}
-              </button>
-            </div>
-          </div>
-        ) : null}
-      </section>
-
+      {/* Not part of AC-37/38/39/40's scope — kept as-is, unrelocated. */}
       <section className="admin-activity">
         <h2>Activity</h2>
         <p className="admin-provision-hint">
@@ -707,351 +814,496 @@ export function Admin() {
         ) : null}
       </section>
 
-      <label className="admin-search">
-        Search directory
-        <input
-          type="search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Email, name, org id, user id, or short id"
-        />
-      </label>
+      {/* AC-37/AC-39/AC-40: top bar — real org search (⌘K focuses it) and
+          the Provision-user action, now a modal trigger instead of an
+          always-open inline form. */}
+      <div className="cc-topbar">
+        <label className="cc-search">
+          <span className="sr-only">Search directory</span>
+          <input
+            ref={searchInputRef}
+            type="search"
+            value={orgQuery}
+            onChange={(e) => setOrgQuery(e.target.value)}
+            placeholder="Search orgs — email, name, org id, short id (⌘K)"
+          />
+        </label>
+        <button type="button" className="start-btn" onClick={() => setProvisionModalOpen(true)}>
+          Provision user
+        </button>
+      </div>
 
-      {error ? (
+      {orgSearchError ? (
         <p className="upload-error" role="alert">
-          {error}
+          {orgSearchError}
         </p>
       ) : null}
 
-      <div className="admin-layout">
-        <div className="admin-table-wrap">
-          <table className="admin-table">
-            <thead>
-              <tr>
-                <th>Email</th>
-                <th>Name</th>
-                <th>Org</th>
-                <th>Short id</th>
+      {/* AC-37: the directory table — one row per org (AC-33), never per
+          member. Row click opens the inspector; the table itself never
+          unmounts, so its scroll position survives the drawer opening
+          and closing. */}
+      <div className="admin-table-wrap">
+        <table className="admin-table cc-table">
+          <thead>
+            <tr>
+              <th>Org</th>
+              <th>Members</th>
+              <th>Short IDs</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orgRows.map((row) => (
+              <tr
+                key={row.org_id}
+                className={`cc-row-clickable${selectedOrg?.org_id === row.org_id ? ' is-selected' : ''}`}
+                onClick={() => void openOrg(row)}
+              >
+                <td>
+                  <span className="admin-org">{row.org_name || '—'}</span>
+                  <span className="admin-id">{row.org_id}</span>
+                </td>
+                <td>{row.member_count}</td>
+                <td>{row.short_ids.length > 0 ? row.short_ids.join(', ') : '—'}</td>
+                <td>{row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}</td>
               </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr
-                  key={`${row.user_id}-${row.org_id}`}
-                  className={
-                    selected?.user_id === row.user_id && selected?.org_id === row.org_id
-                      ? 'is-selected'
-                      : ''
-                  }
-                >
-                  <td>
-                    <button type="button" onClick={() => void loadOrg(row)}>
-                      {row.email || '—'}
-                    </button>
-                  </td>
-                  <td>{displayName(row)}</td>
-                  <td>
-                    <span className="admin-org">{row.org_name || '—'}</span>
-                    <span className="admin-id">{row.org_id}</span>
-                  </td>
-                  <td>{row.short_id ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {rows.length === 0 ? <p className="empty-copy">No matches.</p> : null}
-        </div>
-
-        <div className="admin-detail">
-          {!selected ? (
-            <p className="empty-copy">Select a row to see usage, cost, and flags.</p>
-          ) : (
-            <>
-              <div className="admin-card">
-                <h2>{selected.org_name || 'Organization'}</h2>
-                <p className="admin-id">{selected.org_id}</p>
-                {busy ? <p className="empty-copy">Loading…</p> : null}
-                {usage ? (
-                  <dl className="admin-stats">
-                    <div>
-                      <dt>PyAI calls</dt>
-                      <dd>{pyai?.hits ?? 0}</dd>
-                    </div>
-                    <div>
-                      <dt>PyAI polls</dt>
-                      <dd>{pyai?.polls ?? 0}</dd>
-                    </div>
-                    <div>
-                      <dt>Anthropic calls</dt>
-                      <dd>{claude?.hits ?? 0}</dd>
-                    </div>
-                    <div>
-                      <dt>Est. spend</dt>
-                      <dd>{fmtUsd(usage.cost.total_usd)}</dd>
-                    </div>
-                    <div>
-                      <dt>PyAI</dt>
-                      <dd>{fmtUsd(usage.cost.pyai_usd)}</dd>
-                    </div>
-                    <div>
-                      <dt>Claude</dt>
-                      <dd>{fmtUsd(usage.cost.claude_usd)}</dd>
-                    </div>
-                  </dl>
-                ) : null}
-                {orgDetail ? (
-                  <dl className="admin-stats">
-                    <div>
-                      <dt>Total calls</dt>
-                      <dd>{orgDetail.total_calls}</dd>
-                    </div>
-                    <div>
-                      <dt>Audited</dt>
-                      <dd>{orgDetail.audited_count}</dd>
-                    </div>
-                    <div>
-                      <dt>Data stored</dt>
-                      <dd>{formatBytes(orgDetail.total_data_size_bytes)}</dd>
-                    </div>
-                  </dl>
-                ) : null}
-                <p className="admin-provision-hint">
-                  Per-call detail moved to <Link to="/call-logs">Call logs</Link>.
-                </p>
-              </div>
-
-              <div className="admin-card">
-                <h3>Members</h3>
-                <p className="admin-provision-hint">
-                  Every real member of this org — each has their own "Log in
-                  as," never ambiguous about who's being impersonated.
-                </p>
-                {membersError ? (
-                  <p className="upload-error" role="alert">
-                    {membersError}
-                  </p>
-                ) : null}
-                {orgMembers.length > 0 ? (
-                  <div className="admin-table-wrap">
-                    <table className="admin-table">
-                      <thead>
-                        <tr>
-                          <th>Name</th>
-                          <th>Email</th>
-                          <th>Role</th>
-                          <th>Short ID</th>
-                          <th></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {orgMembers.map((m) => (
-                          <tr key={m.user_id}>
-                            <td>{displayName(m)}</td>
-                            <td>{m.email || '—'}</td>
-                            <td>{m.role || '—'}</td>
-                            <td>{m.short_id ?? '—'}</td>
-                            <td>
-                              <button
-                                type="button"
-                                className="ghost-btn"
-                                disabled={impersonatingMemberId === m.user_id || !m.email}
-                                onClick={() => void logInAsMember(m)}
-                              >
-                                {impersonatingMemberId === m.user_id ? 'Starting…' : 'Log in as'}
-                              </button>
-                              {memberImpersonateErrors[m.user_id] ? (
-                                <p className="upload-error" role="alert">
-                                  {memberImpersonateErrors[m.user_id]}
-                                </p>
-                              ) : null}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : !membersError ? (
-                  <p className="empty-copy">No members found for this org.</p>
-                ) : null}
-              </div>
-
-              <div className="admin-card">
-                <h3>Feature flags</h3>
-                <ul className="admin-flags">
-                  {TRIAL_FLAGS.map((flag) => {
-                    const on = adminFlagOn(usage?.features, flag)
-                    return (
-                      <li key={flag.key}>
-                        <div className="admin-flag-row">
-                          <span className="admin-flag-label">{flag.label}</span>
-                          <span className="toggle-switch">
-                            <input
-                              type="checkbox"
-                              checked={on}
-                              disabled={!usage || busy}
-                              onChange={(e) => void toggle(flag.key, e.target.checked)}
-                              aria-label={flag.label}
-                            />
-                            <span className="toggle-track" />
-                            <span className="toggle-thumb" />
-                          </span>
-                        </div>
-                        {flag.description ? (
-                          <p className="admin-provision-hint">{flag.description}</p>
-                        ) : null}
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-
-              <div className="admin-card">
-                <h3>Rubric</h3>
-                <p className="admin-org">{selected.org_name || 'Organization'}</p>
-                <p className="admin-id">{selected.org_id}</p>
-                {rubricError ? (
-                  <p className="upload-error" role="alert">
-                    {rubricError}
-                  </p>
-                ) : null}
-                {rubric ? (
-                  <>
-                    <p className="admin-provision-hint">
-                      {rubric.source === 'custom'
-                        ? `Custom — version ${rubric.version}, updated ${
-                            rubric.updated_at ? new Date(rubric.updated_at).toLocaleString() : '—'
-                          }.`
-                        : 'Not yet customized — showing default weights.'}
-                    </p>
-                    <div className="admin-rubric-grid">
-                      {RUBRIC_DIMENSIONS.map((dim) => (
-                        <label key={dim.id} className="admin-rubric-field">
-                          <span>{dim.label}</span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={rubricDraft[dim.id] ?? 0}
-                            disabled={rubricSaving}
-                            onChange={(e) =>
-                              setRubricDraft((prev) => ({
-                                ...prev,
-                                [dim.id]: Number(e.target.value) || 0,
-                              }))
-                            }
-                          />
-                        </label>
-                      ))}
-                    </div>
-                    <p
-                      className={
-                        rubricTotal === 100 ? 'admin-rubric-total' : 'admin-rubric-total is-off'
-                      }
-                    >
-                      Total: {rubricTotal} / 100
-                    </p>
-                    <button
-                      type="button"
-                      className="start-btn"
-                      disabled={rubricTotal !== 100 || rubricSaving}
-                      onClick={() => void saveRubric()}
-                    >
-                      {rubricSaving ? 'Saving…' : 'Save'}
-                    </button>
-                    {rubricSaveInfo ? (
-                      <p className="auth-info" role="status">
-                        {rubricSaveInfo}
-                      </p>
-                    ) : null}
-                  </>
-                ) : !rubricError ? (
-                  <p className="empty-copy">Loading…</p>
-                ) : null}
-              </div>
-
-              <div className="admin-card admin-support">
-                <h3>Account recovery</h3>
-                <p className="admin-id">{selected.email || 'No email on this row'}</p>
-                <p className="admin-provision-hint">
-                  Sends the same reset link as Forgot password. You never see
-                  or set the new password — they finish it from the email.
-                </p>
-                <div className="admin-support-actions">
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    disabled={
-                      resetEmailBusy || !selected.email || !supabaseConfigured
-                    }
-                    onClick={() => void sendResetEmail()}
-                  >
-                    {resetEmailBusy ? 'Sending…' : 'Send reset email'}
-                  </button>
-                </div>
-                {resetEmailError ? (
-                  <p className="upload-error" role="alert">
-                    {resetEmailError}
-                  </p>
-                ) : null}
-                {resetEmailInfo ? (
-                  <p className="auth-info" role="status">
-                    {resetEmailInfo}
-                  </p>
-                ) : null}
-                {pwEvents && pwEvents.length > 0 ? (
-                  <div className="admin-table-wrap">
-                    <table className="admin-table">
-                      <thead>
-                        <tr>
-                          <th>When</th>
-                          <th>Event</th>
-                          <th>IP</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pwEvents.map((e, i) => (
-                          <tr key={i}>
-                            <td>{e.created_at ? new Date(e.created_at).toLocaleString() : '—'}</td>
-                            <td>{passwordEventLabel(e)}</td>
-                            <td>{e.ip_address || '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : pwEvents && pwEvents.length === 0 ? (
-                  <p className="empty-copy">No password changes recorded.</p>
-                ) : null}
-              </div>
-
-              <div className="admin-card admin-support">
-                <h3>Log in as</h3>
-                <p className="admin-id">{selected.email || 'No email on this row'}</p>
-                <p className="admin-provision-hint">
-                  Opens a new tab signed in as this person. Logged permanently
-                  (admin, org, timestamp) — not shown to the customer, but
-                  never deleted.
-                </p>
-                <div className="admin-support-actions">
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    disabled={impersonateBusy || !selected.email}
-                    onClick={() => void logInAs()}
-                  >
-                    {impersonateBusy ? 'Starting…' : 'Log in as'}
-                  </button>
-                </div>
-                {impersonateError ? (
-                  <p className="upload-error" role="alert">
-                    {impersonateError}
-                  </p>
-                ) : null}
-              </div>
-            </>
-          )}
-        </div>
+            ))}
+          </tbody>
+        </table>
+        {orgRows.length === 0 ? <p className="empty-copy">No matching orgs.</p> : null}
       </div>
-    </>
+
+      {/* AC-37: slide-over inspector. Backdrop click or Escape closes it. */}
+      {selectedOrg ? (
+        <div className="cc-drawer-backdrop" onClick={closeDrawer}>
+          <aside
+            className="cc-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label={selectedOrg.org_name || 'Organization'}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="cc-drawer-header">
+              <div>
+                <h2>{selectedOrg.org_name || 'Organization'}</h2>
+                <p className="admin-id">{selectedOrg.org_id}</p>
+              </div>
+              <button type="button" className="cc-modal-close" onClick={closeDrawer} aria-label="Close">
+                ×
+              </button>
+            </div>
+
+            <nav className="cc-tabs" aria-label="Org detail tabs">
+              {(['overview', 'flags', 'rubric', 'members'] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  className={`cc-tab${activeTab === tab ? ' is-active' : ''}`}
+                  onClick={() => setActiveTab(tab)}
+                >
+                  {tab === 'overview' ? 'Overview' : tab === 'flags' ? 'Flags' : tab === 'rubric' ? 'Rubric' : 'Members'}
+                </button>
+              ))}
+            </nav>
+
+            {detailError ? (
+              <p className="upload-error" role="alert">
+                {detailError}
+              </p>
+            ) : null}
+            {busy ? <p className="empty-copy">Loading…</p> : null}
+
+            <div className="cc-tab-panel">
+              {activeTab === 'overview' ? (
+                <div className="admin-card">
+                  <dl className="admin-stats">
+                    <div>
+                      <dt>Members</dt>
+                      <dd>{selectedOrg.member_count}</dd>
+                    </div>
+                    <div>
+                      <dt>Created</dt>
+                      <dd>
+                        {selectedOrg.created_at
+                          ? new Date(selectedOrg.created_at).toLocaleDateString()
+                          : '—'}
+                      </dd>
+                    </div>
+                  </dl>
+                  {usage ? (
+                    <dl className="admin-stats">
+                      <div>
+                        <dt>PyAI calls</dt>
+                        <dd>{pyai?.hits ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>PyAI polls</dt>
+                        <dd>{pyai?.polls ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Anthropic calls</dt>
+                        <dd>{claude?.hits ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Est. spend</dt>
+                        <dd>{fmtUsd(usage.cost.total_usd)}</dd>
+                      </div>
+                    </dl>
+                  ) : null}
+                  {orgDetail ? (
+                    <dl className="admin-stats">
+                      <div>
+                        <dt>Total calls</dt>
+                        <dd>{orgDetail.total_calls}</dd>
+                      </div>
+                      <div>
+                        <dt>Audited</dt>
+                        <dd>{orgDetail.audited_count}</dd>
+                      </div>
+                      <div>
+                        <dt>Data stored</dt>
+                        <dd>{formatBytes(orgDetail.total_data_size_bytes)}</dd>
+                      </div>
+                    </dl>
+                  ) : null}
+                  <h3>Usage trend — last 30 days</h3>
+                  <UsageSparkline data={daily} />
+                  <p className="admin-provision-hint">
+                    Per-call detail moved to <Link to="/call-logs">Call logs</Link>.
+                  </p>
+                </div>
+              ) : null}
+
+              {activeTab === 'flags' ? (
+                <div className="admin-card">
+                  {flagsByRisk.length === 0 ? (
+                    <p className="empty-copy">Loading flag definitions…</p>
+                  ) : (
+                    flagsByRisk.map(({ risk, defs }) => (
+                      <div key={risk} className={`cc-flag-group cc-risk-${risk}`}>
+                        <h4 className="cc-flag-group-title">{RISK_LABEL[risk]}</h4>
+                        <ul className="admin-flags">
+                          {defs.map((def) => {
+                            const on = isFlagOn(usage?.features, def)
+                            return (
+                              <li key={def.key}>
+                                <div className="admin-flag-row">
+                                  <span className="admin-flag-label">{def.label}</span>
+                                  <span className="toggle-switch">
+                                    <input
+                                      type="checkbox"
+                                      checked={on}
+                                      disabled={!usage || busy}
+                                      onChange={(e) => requestToggle(def, e.target.checked)}
+                                      aria-label={def.label}
+                                    />
+                                    <span className="toggle-track" />
+                                    <span className="toggle-thumb" />
+                                  </span>
+                                </div>
+                                {def.description ? (
+                                  <p className="admin-provision-hint">{def.description}</p>
+                                ) : null}
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ) : null}
+
+              {activeTab === 'rubric' ? (
+                <div className="admin-card">
+                  {rubricError ? (
+                    <p className="upload-error" role="alert">
+                      {rubricError}
+                    </p>
+                  ) : null}
+                  {rubric ? (
+                    <>
+                      <p className="admin-provision-hint">
+                        {rubric.source === 'custom'
+                          ? `Custom — version ${rubric.version}, updated ${
+                              rubric.updated_at ? new Date(rubric.updated_at).toLocaleString() : '—'
+                            }.`
+                          : 'Not yet customized — showing default weights.'}
+                      </p>
+                      <div className="admin-rubric-grid">
+                        {RUBRIC_DIMENSIONS.map((dim) => (
+                          <label key={dim.id} className="admin-rubric-field">
+                            <span>{dim.label}</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={rubricDraft[dim.id] ?? 0}
+                              disabled={rubricSaving}
+                              onChange={(e) =>
+                                setRubricDraft((prev) => ({
+                                  ...prev,
+                                  [dim.id]: Number(e.target.value) || 0,
+                                }))
+                              }
+                            />
+                          </label>
+                        ))}
+                      </div>
+                      <p
+                        className={
+                          rubricTotal === 100 ? 'admin-rubric-total' : 'admin-rubric-total is-off'
+                        }
+                      >
+                        Total: {rubricTotal} / 100
+                      </p>
+                      <button
+                        type="button"
+                        className="start-btn"
+                        disabled={rubricTotal !== 100 || rubricSaving}
+                        onClick={() => void saveRubric()}
+                      >
+                        {rubricSaving ? 'Saving…' : 'Save'}
+                      </button>
+                      {rubricSaveInfo ? (
+                        <p className="auth-info" role="status">
+                          {rubricSaveInfo}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : !rubricError ? (
+                    <p className="empty-copy">Loading…</p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {activeTab === 'members' ? (
+                <div className="admin-card">
+                  <p className="admin-provision-hint">
+                    Every real member of this org — each has their own "Log
+                    in as," never ambiguous about who's being impersonated.
+                  </p>
+                  {membersError ? (
+                    <p className="upload-error" role="alert">
+                      {membersError}
+                    </p>
+                  ) : null}
+                  {orgMembers.length > 0 ? (
+                    <div className="admin-table-wrap">
+                      <table className="admin-table">
+                        <thead>
+                          <tr>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Short ID</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {orgMembers.map((m) => (
+                            <Fragment key={m.user_id}>
+                              <tr>
+                                <td>{displayName(m)}</td>
+                                <td>{m.email || '—'}</td>
+                                <td>{m.role || '—'}</td>
+                                <td>{m.short_id ?? '—'}</td>
+                                <td className="cc-member-actions">
+                                  <button
+                                    type="button"
+                                    className="ghost-btn"
+                                    disabled={impersonatingMemberId === m.user_id || !m.email}
+                                    onClick={() => void logInAsMember(m)}
+                                  >
+                                    {impersonatingMemberId === m.user_id ? 'Starting…' : 'Log in as'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="ghost-btn"
+                                    disabled={
+                                      resettingMemberId === m.user_id ||
+                                      !m.email ||
+                                      !supabaseConfigured
+                                    }
+                                    onClick={() => void sendResetEmailForMember(m)}
+                                  >
+                                    {resettingMemberId === m.user_id ? 'Sending…' : 'Send reset email'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="ghost-btn"
+                                    onClick={() => void toggleMemberHistory(m)}
+                                  >
+                                    {expandedMemberId === m.user_id ? 'Hide history' : 'History'}
+                                  </button>
+                                  {memberImpersonateErrors[m.user_id] ? (
+                                    <p className="upload-error" role="alert">
+                                      {memberImpersonateErrors[m.user_id]}
+                                    </p>
+                                  ) : null}
+                                  {memberResetErrors[m.user_id] ? (
+                                    <p className="upload-error" role="alert">
+                                      {memberResetErrors[m.user_id]}
+                                    </p>
+                                  ) : null}
+                                  {memberResetInfo[m.user_id] ? (
+                                    <p className="auth-info" role="status">
+                                      {memberResetInfo[m.user_id]}
+                                    </p>
+                                  ) : null}
+                                </td>
+                              </tr>
+                              {expandedMemberId === m.user_id ? (
+                                <tr key={`${m.user_id}-history`}>
+                                  <td colSpan={5}>
+                                    {pwEventsByUser[m.user_id] === undefined ? (
+                                      <p className="empty-copy">Loading…</p>
+                                    ) : pwEventsByUser[m.user_id] === null ? (
+                                      <p className="upload-error" role="alert">
+                                        Could not load password history.
+                                      </p>
+                                    ) : (pwEventsByUser[m.user_id] as PasswordEvent[]).length === 0 ? (
+                                      <p className="empty-copy">No password changes recorded.</p>
+                                    ) : (
+                                      <table className="admin-table">
+                                        <thead>
+                                          <tr>
+                                            <th>When</th>
+                                            <th>Event</th>
+                                            <th>IP</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {(pwEventsByUser[m.user_id] as PasswordEvent[]).map((e, i) => (
+                                            <tr key={i}>
+                                              <td>
+                                                {e.created_at
+                                                  ? new Date(e.created_at).toLocaleString()
+                                                  : '—'}
+                                              </td>
+                                              <td>{passwordEventLabel(e)}</td>
+                                              <td>{e.ip_address || '—'}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    )}
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : !membersError ? (
+                    <p className="empty-copy">No members found for this org.</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
+      {pendingDangerToggle ? (
+        <Modal
+          title="Confirm danger-zone change"
+          onClose={() => setPendingDangerToggle(null)}
+        >
+          <p>
+            {pendingDangerToggle.nextEnabled ? 'Enable' : 'Disable'}{' '}
+            <strong>{pendingDangerToggle.def.label}</strong> for{' '}
+            <strong>{selectedOrg?.org_name || 'this org'}</strong>? This is logged.
+          </p>
+          <p className="admin-provision-hint">{pendingDangerToggle.def.description}</p>
+          <div className="cc-modal-actions">
+            <button type="button" className="ghost-btn" onClick={() => setPendingDangerToggle(null)}>
+              Cancel
+            </button>
+            <button type="button" className="start-btn" onClick={confirmDangerToggle}>
+              Confirm
+            </button>
+          </div>
+        </Modal>
+      ) : null}
+
+      {provisionModalOpen ? (
+        <Modal title="Provision user" onClose={closeProvisionModal}>
+          <p className="admin-provision-hint">
+            Creates a login and a new org, named as you choose. The password is
+            generated and shown once here — copy it and share it with the
+            person alongside their email.
+          </p>
+          <form className="admin-provision-form" onSubmit={(e) => void provisionUser(e)}>
+            <label>
+              Email
+              <input
+                type="email"
+                value={pEmail}
+                onChange={(e) => setPEmail(e.target.value)}
+                required
+              />
+            </label>
+            <label>
+              First name
+              <input
+                type="text"
+                value={pFirst}
+                onChange={(e) => setPFirst(e.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Last name
+              <input
+                type="text"
+                value={pLast}
+                onChange={(e) => setPLast(e.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Org name
+              <input
+                type="text"
+                value={pOrgName}
+                onChange={(e) => setPOrgName(e.target.value)}
+                required
+              />
+            </label>
+            <button type="submit" className="start-btn" disabled={provisioning}>
+              {provisioning ? 'Creating…' : 'Create'}
+            </button>
+          </form>
+
+          {provisionError ? (
+            <p className="upload-error" role="alert">
+              {provisionError}
+            </p>
+          ) : null}
+
+          {provisionResult ? (
+            <div className="admin-provision-result" role="status">
+              <p>
+                <strong>{provisionResult.email}</strong>{' '}
+                {provisionResult.created ? 'created' : 'added to the existing org'} in{' '}
+                <strong>{provisionResult.org_name}</strong>.
+              </p>
+              <p className="admin-provision-warning">
+                This password is shown once — copy it now.
+              </p>
+              <div className="admin-provision-secret">
+                <code>{provisionResult.temporary_password}</code>
+                <button type="button" className="ghost-btn" onClick={() => void copyPassword()}>
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </Modal>
+      ) : null}
+    </div>
   )
 }
