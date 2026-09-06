@@ -25,6 +25,7 @@ export function ImpersonationBanner() {
         className="impersonation-banner-exit"
         onClick={() => {
           clearImpersonating()
+          setInfo(null)
           void signOut()
         }}
       >

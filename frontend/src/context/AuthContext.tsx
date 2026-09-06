@@ -11,7 +11,7 @@ import {
 import type { Session } from '@supabase/supabase-js'
 import { apiFetch, trackEvent } from '../lib/api'
 import type { FeatureMap } from '../lib/features'
-import { supabase, supabaseConfigured, hasPasswordRecoveryHint, markPasswordRecovery, clearPasswordRecovery } from '../lib/supabase'
+import { supabase, supabaseConfigured, hasPasswordRecoveryHint, markPasswordRecovery, clearPasswordRecovery, clearImpersonating } from '../lib/supabase'
 
 type OrgRole = 'owner' | 'member'
 
@@ -124,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     clearPasswordRecovery()
+    clearImpersonating()
     setPasswordRecovery(false)
     if (supabase) await supabase.auth.signOut()
     setFeatures({})
