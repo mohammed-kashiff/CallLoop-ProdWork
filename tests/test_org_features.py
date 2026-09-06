@@ -13,6 +13,7 @@ from backend.org_features import (
     default_features,
     feature_definitions,
     feature_history,
+    feature_history_for_org,
     features_for_org,
     set_feature,
 )
@@ -70,13 +71,18 @@ class _FakeConn:
             return _Result([])
         if "FROM ORG_FEATURES_HISTORY" in norm:
             oid = params[0] if params else None
-            key = params[1] if params and len(params) > 1 else None
+            has_key_filter = params is not None and len(params) > 1
+            key = params[1] if has_key_filter else None
             matched = [
                 r
                 for r in self.history_rows
-                if r.get("org_id") == oid and r.get("feature_key") == key
+                if r.get("org_id") == oid
+                and (not has_key_filter or r.get("feature_key") == key)
             ]
-            matched.sort(key=lambda r: (r.get("changed_at"), r.get("id")))
+            matched.sort(
+                key=lambda r: (r.get("changed_at"), r.get("id")),
+                reverse="DESC" in norm,
+            )
             return _Result(matched)
         if "FROM ORG_FEATURES" in norm:
             oid = params[0] if params else None
@@ -332,6 +338,61 @@ def test_two_toggles_append_two_history_rows_in_order(monkeypatch):
     assert [r["changed_by"] for r in rows] == ["a@x.com", "b@x.com"]
     assert len(conn.history) == 2
     assert conn.history[0] is not conn.history[1]
+
+
+def test_feature_history_for_org_spans_every_key_newest_first(monkeypatch):
+    """Account logs tab needs every flag's history together, not one key
+    at a time — and newest-first, since it reads as a log."""
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        set_feature(DEFAULT_ORG_ID, "show_usage_bar", False, changed_by="a@x.com")
+        set_feature(DEFAULT_ORG_ID, "enable_bulk_call_clear", True, changed_by="b@x.com")
+        rows = feature_history_for_org(DEFAULT_ORG_ID)
+    assert [r["feature_key"] for r in rows] == ["enable_bulk_call_clear", "show_usage_bar"]
+    assert [r["changed_by"] for r in rows] == ["b@x.com", "a@x.com"]
+
+
+def test_feature_history_for_org_excludes_other_orgs(monkeypatch):
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        set_feature(DEFAULT_ORG_ID, "show_usage_bar", False, changed_by="a@x.com")
+        set_feature(OTHER_ORG, "show_usage_bar", False, changed_by="c@x.com")
+        rows = feature_history_for_org(DEFAULT_ORG_ID)
+    assert len(rows) == 1
+    assert rows[0]["changed_by"] == "a@x.com"
+
+
+def test_feature_history_for_org_route_is_gated(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    monkeypatch.setattr(
+        "backend.org_features.feature_history_for_org",
+        lambda org_id: [
+            {
+                "feature_key": "show_usage_bar",
+                "enabled": False,
+                "changed_by": "a@x.com",
+                "changed_at": None,
+                "org_id": org_id,
+            }
+        ],
+    )
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get(f"/api/admin/orgs/{DEFAULT_ORG_ID}/feature-history")
+    assert r.status_code == 200
+    assert r.json()["events"][0]["feature_key"] == "show_usage_bar"
+
+
+def test_feature_history_for_org_route_403_for_non_admin(monkeypatch):
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get(f"/api/admin/orgs/{DEFAULT_ORG_ID}/feature-history")
+    assert r.status_code == 403
 
 
 def test_set_feature_requires_changed_by(monkeypatch):

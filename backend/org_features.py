@@ -273,3 +273,34 @@ def feature_history(org_id: str, feature_key: str) -> list[dict]:
             }
         )
     return out
+
+
+def feature_history_for_org(org_id: str) -> list[dict]:
+    """Every flag change for this org, any key — the Account logs tab's
+    'what feature was enabled/disabled and when' source. Newest first,
+    unlike feature_history()'s per-key ascending order, since this reads
+    as a log."""
+    oid = parse_org_id(org_id)
+    if not oid:
+        return []
+    with db.connection() as conn:
+        db.apply_tenant_gucs(conn, org_id=oid)
+        rows = conn.execute(
+            """
+            SELECT org_id, feature_key, enabled, changed_by, changed_at
+            FROM org_features_history
+            WHERE org_id = %s
+            ORDER BY changed_at DESC, id DESC
+            """,
+            (oid,),
+        ).fetchall()
+    return [
+        {
+            "org_id": str(row.get("org_id") or ""),
+            "feature_key": str(row.get("feature_key") or ""),
+            "enabled": bool(row.get("enabled")),
+            "changed_by": str(row.get("changed_by") or ""),
+            "changed_at": row.get("changed_at"),
+        }
+        for row in rows or []
+    ]

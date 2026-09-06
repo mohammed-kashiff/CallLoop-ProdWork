@@ -132,6 +132,15 @@ function isFlagOn(features: FeatureMap | undefined, def: FeatureFlagDef): boolea
   return value !== false
 }
 
+// Account logs tab: GET /api/admin/orgs/{org_id}/feature-history — every
+// flag change for the org, any key, newest first.
+type FeatureHistoryEvent = {
+  feature_key: string
+  enabled: boolean
+  changed_by: string
+  changed_at: string | null
+}
+
 type ActivityEvent = {
   at: string | null
   kind: 'upload' | 'audit' | 'flag_change' | 'delete'
@@ -316,7 +325,9 @@ export function Admin() {
   // no route change, so the table underneath never unmounts and its scroll
   // position is preserved automatically when the drawer closes.
   const [selectedOrg, setSelectedOrg] = useState<OrgRow | null>(null)
-  const [activeTab, setActiveTab] = useState<'overview' | 'flags' | 'rubric' | 'members'>(
+  const [activeTab, setActiveTab] = useState<
+    'overview' | 'flags' | 'rubric' | 'members' | 'account-logs'
+  >(
     'overview',
   )
 
@@ -334,6 +345,30 @@ export function Admin() {
     def: FeatureFlagDef
     nextEnabled: boolean
   } | null>(null)
+
+  // Small bottom-left "Saved" confirmation after a flag toggle or rubric save.
+  const [toast, setToast] = useState<string | null>(null)
+  const toastTimer = useRef<number | null>(null)
+  const showToast = (message: string) => {
+    setToast(message)
+    if (toastTimer.current) window.clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(() => setToast(null), 2500)
+  }
+
+  const [copiedOrgId, setCopiedOrgId] = useState(false)
+  const copyOrgId = async (orgId: string) => {
+    try {
+      await navigator.clipboard.writeText(orgId)
+      setCopiedOrgId(true)
+      window.setTimeout(() => setCopiedOrgId(false), 1500)
+    } catch {
+      /* clipboard permission denied — not worth surfacing an error for */
+    }
+  }
+
+  // Account logs tab: every flag change for this org (any key), merged
+  // with each real member's join date already fetched for the Members tab.
+  const [featureHistory, setFeatureHistory] = useState<FeatureHistoryEvent[]>([])
 
   const [actOrg, setActOrg] = useState('')
   const [actSince, setActSince] = useState(weekAgo)
@@ -498,13 +533,15 @@ export function Admin() {
     setExpandedMemberId(null)
     setPwEventsByUser({})
     setDaily([])
+    setFeatureHistory([])
     setBusy(true)
     try {
-      const [usageRes, detailRes, rubricRes, dailyRes] = await Promise.all([
+      const [usageRes, detailRes, rubricRes, dailyRes, historyRes] = await Promise.all([
         apiFetch(`/api/admin/usage?org_id=${encodeURIComponent(row.org_id)}`),
         apiFetch(`/api/admin/orgs/${encodeURIComponent(row.org_id)}/detail`),
         apiFetch(`/api/admin/orgs/${encodeURIComponent(row.org_id)}/rubric`),
         apiFetch(`/api/admin/usage/daily?org_id=${encodeURIComponent(row.org_id)}&days=30`),
+        apiFetch(`/api/admin/orgs/${encodeURIComponent(row.org_id)}/feature-history`),
       ])
       if (!usageRes.ok) throw new Error(await readError(usageRes, 'Could not load usage.'))
       if (!detailRes.ok) throw new Error(await readError(detailRes, 'Could not load org detail.'))
@@ -520,6 +557,10 @@ export function Admin() {
       if (dailyRes.ok) {
         const data = (await dailyRes.json()) as { series?: DailyUsagePoint[] }
         setDaily(Array.isArray(data.series) ? data.series : [])
+      }
+      if (historyRes.ok) {
+        const data = (await historyRes.json()) as { events?: FeatureHistoryEvent[] }
+        setFeatureHistory(Array.isArray(data.events) ? data.events : [])
       }
     } catch (e: unknown) {
       setUsage(null)
@@ -554,6 +595,7 @@ export function Admin() {
       setRubric(data)
       setRubricDraft(data.weights)
       setRubricSaveInfo(`Saved — version ${data.version} active.`)
+      showToast('Saved')
     } catch (e: unknown) {
       setRubricError(e instanceof Error ? e.message : 'Could not save the rubric.')
     } finally {
@@ -603,6 +645,19 @@ export function Admin() {
     setUsage((prev) =>
       prev ? { ...prev, features: data.features || prev.features } : prev,
     )
+    showToast('Saved')
+    // Refresh Account logs so the change shows up there immediately.
+    try {
+      const historyRes = await apiFetch(
+        `/api/admin/orgs/${encodeURIComponent(selectedOrg.org_id)}/feature-history`,
+      )
+      if (historyRes.ok) {
+        const historyData = (await historyRes.json()) as { events?: FeatureHistoryEvent[] }
+        setFeatureHistory(Array.isArray(historyData.events) ? historyData.events : [])
+      }
+    } catch {
+      /* Account logs will just be one entry stale until the next open — not worth surfacing */
+    }
   }
 
   const requestToggle = (def: FeatureFlagDef, nextEnabled: boolean) => {
@@ -764,6 +819,27 @@ export function Admin() {
     risk,
     defs: flagDefs.filter((d) => d.risk === risk),
   })).filter((g) => g.defs.length > 0)
+
+  // Account logs tab: flag changes + real member joins, one merged
+  // chronological list — "what feature was enabled/disabled and when,
+  // when each team member joined."
+  type AccountLogEntry = { at: string; summary: string; detail: string }
+  const accountLog: AccountLogEntry[] = [
+    ...featureHistory
+      .filter((h) => h.changed_at)
+      .map((h) => ({
+        at: h.changed_at as string,
+        summary: `Flag ${h.enabled ? 'enabled' : 'disabled'}`,
+        detail: `${h.feature_key} — ${h.changed_by || 'unknown admin'}`,
+      })),
+    ...orgMembers
+      .filter((m) => m.first_seen)
+      .map((m) => ({
+        at: m.first_seen as string,
+        summary: 'Member joined',
+        detail: `${displayName(m)} (${m.email || m.user_id}) joined CallLoop`,
+      })),
+  ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
 
   return (
     <div className="cc-shell">
@@ -939,7 +1015,16 @@ export function Admin() {
             <div className="cc-drawer-header">
               <div>
                 <h2>{selectedOrg.org_name || 'Organization'}</h2>
-                <p className="admin-id">{selectedOrg.org_id}</p>
+                <div className="cc-id-row">
+                  <p className="admin-id">{selectedOrg.org_id}</p>
+                  <button
+                    type="button"
+                    className="cc-copy-btn"
+                    onClick={() => void copyOrgId(selectedOrg.org_id)}
+                  >
+                    {copiedOrgId ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
               </div>
               <button type="button" className="cc-modal-close" onClick={closeDrawer} aria-label="Close">
                 ×
@@ -947,14 +1032,22 @@ export function Admin() {
             </div>
 
             <nav className="cc-tabs" aria-label="Org detail tabs">
-              {(['overview', 'flags', 'rubric', 'members'] as const).map((tab) => (
+              {(['overview', 'flags', 'rubric', 'members', 'account-logs'] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
                   className={`cc-tab${activeTab === tab ? ' is-active' : ''}`}
                   onClick={() => setActiveTab(tab)}
                 >
-                  {tab === 'overview' ? 'Overview' : tab === 'flags' ? 'Flags' : tab === 'rubric' ? 'Rubric' : 'Members'}
+                  {tab === 'overview'
+                    ? 'Overview'
+                    : tab === 'flags'
+                      ? 'Flags'
+                      : tab === 'rubric'
+                        ? 'Rubric'
+                        : tab === 'members'
+                          ? 'Members'
+                          : 'Account logs'}
                 </button>
               ))}
             </nav>
@@ -1177,6 +1270,7 @@ export function Admin() {
                             <th>Email</th>
                             <th>Role</th>
                             <th>Short ID</th>
+                            <th>Joined</th>
                             <th></th>
                           </tr>
                         </thead>
@@ -1188,6 +1282,9 @@ export function Admin() {
                                 <td>{m.email || '—'}</td>
                                 <td>{m.role || '—'}</td>
                                 <td>{m.short_id ?? '—'}</td>
+                                <td>
+                                  {m.first_seen ? new Date(m.first_seen).toLocaleDateString() : '—'}
+                                </td>
                                 <td className="cc-member-actions">
                                   <button
                                     type="button"
@@ -1235,7 +1332,7 @@ export function Admin() {
                               </tr>
                               {expandedMemberId === m.user_id ? (
                                 <tr key={`${m.user_id}-history`}>
-                                  <td colSpan={5}>
+                                  <td colSpan={6}>
                                     {pwEventsByUser[m.user_id] === undefined ? (
                                       <p className="empty-copy">Loading…</p>
                                     ) : pwEventsByUser[m.user_id] === null ? (
@@ -1279,6 +1376,27 @@ export function Admin() {
                   ) : !membersError ? (
                     <p className="empty-copy">No members found for this org.</p>
                   ) : null}
+                </div>
+              ) : null}
+
+              {activeTab === 'account-logs' ? (
+                <div className="admin-card">
+                  <p className="admin-provision-hint">
+                    Flag changes and member joins for this org, newest first.
+                  </p>
+                  {accountLog.length === 0 ? (
+                    <p className="empty-copy">No account activity recorded yet.</p>
+                  ) : (
+                    <ul className="cc-log-list">
+                      {accountLog.map((entry, i) => (
+                        <li key={i} className="cc-log-row">
+                          <span className="cc-log-when">{new Date(entry.at).toLocaleString()}</span>
+                          <span className="cc-log-summary">{entry.summary}</span>
+                          <span className="cc-log-detail">{entry.detail}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               ) : null}
             </div>
@@ -1382,6 +1500,12 @@ export function Admin() {
             </div>
           ) : null}
         </Modal>
+      ) : null}
+
+      {toast ? (
+        <div className="cc-toast" role="status">
+          {toast}
+        </div>
       ) : null}
     </div>
   )

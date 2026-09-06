@@ -4152,9 +4152,10 @@ html[data-color-mode='dark'] .cc-shell {
   border-left: 1px solid var(--cc-line, var(--line));
   box-shadow: var(--shadow-card);
   overflow-y: auto;
-  padding: 1.5rem 1.75rem;
+  padding: 1.15rem 1.35rem;
   transform: translateX(0);
   animation: cc-slide-in 200ms ease;
+  font-size: 0.94rem;
 }
 
 @keyframes cc-fade-in {
@@ -4202,11 +4203,12 @@ html[data-color-mode='dark'] .cc-shell {
 }
 
 .cc-tab {
-  padding: 0.5rem 0.9rem;
+  padding: 0.4rem 0.75rem;
   border: none;
   background: transparent;
   color: var(--cc-ink-muted, var(--ink-soft));
   font-weight: 600;
+  font-size: 0.9rem;
   cursor: pointer;
   border-bottom: 2px solid transparent;
 }
@@ -4287,10 +4289,10 @@ html[data-color-mode='dark'] .cc-shell {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.45rem 0.9rem;
+  padding: 0.4rem 0.75rem;
   border-radius: 8px;
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   line-height: 1.2;
   cursor: pointer;
   text-decoration: none;
@@ -4381,57 +4383,61 @@ html[data-color-mode='dark'] .cc-shell {
   background: color-mix(in srgb, var(--cc-medium, var(--partial)) 8%, var(--cc-surface, transparent));
 }
 
+/* First pass hardcoded black regardless of the active theme — clashed
+   with everything else on a light background. Uses the same surface/ink
+   tokens as every other card now, just with a slightly bolder border. */
 .cc-rubric-hero {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 1.25rem 1.5rem;
-  border-radius: 16px;
-  margin-bottom: 1.25rem;
-  background: #0a0f14;
-  color: #eaf4f8;
+  padding: 1rem 1.25rem;
+  border-radius: 14px;
+  margin-bottom: 1.1rem;
+  background: var(--cc-surface, var(--fill-muted));
+  border: 1px solid var(--cc-line, var(--line));
+  color: var(--cc-ink, var(--ink));
 }
 
 .cc-rubric-hero-version {
   margin: 0 0 0.15rem;
   font-weight: 700;
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .cc-rubric-hero-updated {
   margin: 0;
-  font-size: 0.8rem;
-  color: rgba(234, 244, 248, 0.6);
+  font-size: 0.78rem;
+  color: var(--cc-ink-muted, var(--ink-soft));
 }
 
 .cc-rubric-hero-total {
-  width: 4.5rem;
-  height: 4.5rem;
+  width: 3.75rem;
+  height: 3.75rem;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.4rem;
+  font-size: 1.2rem;
   font-weight: 700;
-  background: rgba(234, 244, 248, 0.08);
-  border: 2px solid rgba(234, 244, 248, 0.15);
+  background: var(--card);
+  border: 2px solid var(--cc-line, var(--line));
   flex-shrink: 0;
 }
 
 .cc-rubric-hero-total.is-good {
-  color: #34d399;
-  border-color: rgba(52, 211, 153, 0.4);
+  color: var(--pass);
+  border-color: color-mix(in srgb, var(--pass) 45%, transparent);
 }
 
 .cc-rubric-hero-total.is-warn {
-  color: #fbbf24;
-  border-color: rgba(251, 191, 36, 0.4);
+  color: var(--partial);
+  border-color: color-mix(in srgb, var(--partial) 45%, transparent);
 }
 
 .cc-rubric-hero-total.is-danger {
-  color: #fb7185;
-  border-color: rgba(251, 113, 133, 0.4);
+  color: var(--fail);
+  border-color: color-mix(in srgb, var(--fail) 45%, transparent);
 }
 
 .cc-modal-backdrop {
@@ -4503,4 +4509,97 @@ html[data-color-mode='dark'] .cc-shell {
   justify-content: flex-end;
   gap: 0.6rem;
   margin-top: 1rem;
+}
+
+.cc-id-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cc-copy-btn {
+  border: 1px solid var(--cc-line, var(--line));
+  background: var(--cc-surface, var(--fill-muted));
+  color: var(--cc-ink-muted, var(--ink-soft));
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.cc-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cc-log-row {
+  display: grid;
+  grid-template-columns: 12rem 8rem 1fr;
+  gap: 0.75rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--cc-line, var(--line));
+  font-size: 0.85rem;
+}
+
+.cc-log-row:last-child {
+  border-bottom: none;
+}
+
+.cc-log-when {
+  color: var(--cc-ink-muted, var(--ink-soft));
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-log-summary {
+  font-weight: 600;
+}
+
+.cc-log-detail {
+  color: var(--cc-ink-muted, var(--ink-soft));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .cc-log-row {
+    grid-template-columns: 1fr;
+    gap: 0.15rem;
+  }
+}
+
+.cc-toast {
+  position: fixed;
+  left: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 90;
+  background: var(--cc-ground, #0a0f14);
+  color: #eaf4f8;
+  padding: 0.6rem 1.1rem;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  animation: cc-toast-in 180ms ease;
+}
+
+@keyframes cc-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-toast {
+    animation: none;
+  }
 }

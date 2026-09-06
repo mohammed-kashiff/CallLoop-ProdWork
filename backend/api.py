@@ -432,6 +432,13 @@ def admin_org_detail(request: Request, org_id: str, limit: int | None = None):
     return admin_console.call_detail(org_id, limit=limit)
 
 
+@app.get("/api/admin/orgs/{org_id}/feature-history")
+def admin_org_feature_history(request: Request, org_id: str):
+    """Account logs tab: every flag change for this org, any key."""
+    auth.require_platform_admin(request)
+    return {"events": org_features.feature_history_for_org(org_id)}
+
+
 @app.get("/api/admin/activity")
 def admin_activity(
     request: Request,
