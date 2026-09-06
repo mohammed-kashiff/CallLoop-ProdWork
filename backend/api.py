@@ -1318,7 +1318,14 @@ def dev_logs(request: Request, lines: int = 200):
     """
     Tail CallProof's rotating app log (logs/callproof.log) for the Dev Logs UI.
     Secrets are redacted. Same structured events as the terminal callproof.* stream.
+
+    Platform-admin only: the log file is a single shared stream across every
+    org, not scoped per tenant — the redaction filter strips secrets but not
+    other orgs' business data (call IDs, filenames, error text). This route
+    had no role gate at all until now (a same-day fix, not folded into any
+    larger PRD's timeline).
     """
+    auth.require_platform_admin(request)
     payload = applog.read_tail(lines=lines)
     usage = pyai_usage.usage_summary(org_id=_org(request))
     payload["usage"] = {

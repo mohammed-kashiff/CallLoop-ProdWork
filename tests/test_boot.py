@@ -152,6 +152,55 @@ def test_me_is_platform_admin_true_only_for_allowlisted_jwt(monkeypatch):
     assert "PLATFORM_ADMIN_EMAILS" not in r.text
 
 
+def test_dev_logs_403_for_a_non_admin(monkeypatch):
+    """CallLoop-Observability-PRD §3.1: this route had no role gate at all
+    — any authenticated user, from any org, could read the whole shared
+    app log, unscoped. Fixed by gating it behind require_platform_admin."""
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+    from tests.conftest import authorize
+
+    client = TestClient(app)
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
+    authorize(client, monkeypatch)  # conftest's authorize() is role="owner" — still not a platform admin
+    r = client.get("/api/dev/logs")
+    assert r.status_code == 403
+
+
+def test_dev_logs_401_without_a_token():
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+
+    client = TestClient(app)
+    r = client.get("/api/dev/logs")
+    assert r.status_code == 401
+
+
+def test_dev_logs_200_for_a_platform_admin(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+    from tests.conftest import authorize
+
+    client = TestClient(app)
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    authorize(client, monkeypatch)
+    monkeypatch.setattr(
+        "backend.applog.read_tail", lambda lines=200: {"lines": [], "path": "callproof.log"},
+    )
+    monkeypatch.setattr(
+        "backend.pyai_usage.usage_summary",
+        lambda org_id=None: {
+            "total_hits": 0, "total_actions": 0, "total_polls": 0, "total_units": 0,
+            "by_provider": {}, "top_paths": [], "window": "all",
+        },
+    )
+    r = client.get("/api/dev/logs")
+    assert r.status_code == 200
+
+
 def test_health_returns_200_without_external_calls():
     from fastapi.testclient import TestClient
 
