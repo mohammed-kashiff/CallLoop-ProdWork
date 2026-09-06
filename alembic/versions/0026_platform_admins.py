@@ -13,12 +13,24 @@ allowlist it extends.
 
 platform_admins has NO org_id — platform admin is cross-tenant by
 definition, so the usual `org_id = callproof_current_org_id()` RLS
-pattern doesn't apply here. Instead: this table is never GRANTed to
-callproof_app at all (a hard DB-level wall — even a bug that ran a raw
-query as callproof_app could not read or write it), RLS is enabled with
-ZERO policies as a second wall (so an accidental future GRANT still
-blocks everything by default), and every read/write goes through one of
-four narrow SECURITY DEFINER functions below, mirroring the existing
+pattern doesn't apply here. This table has no explicit GRANT in this
+migration, and RLS is enabled with ZERO policies so a non-owner,
+NOBYPASSRLS role (callproof_app) is denied by default on every command.
+
+CORRECTION (see 0027): the "no explicit GRANT means no privileges" half
+of that plan was wrong. 0005_rls.py's `ALTER DEFAULT PRIVILEGES IN
+SCHEMA public GRANT ... ON TABLES TO callproof_app` applies to every new
+table automatically, platform_admins included — 0011's org_directory
+view already had to REVOKE explicitly for exactly this reason, a
+precedent this migration should have followed and didn't. The RLS wall
+held regardless (verified live: SELECT as callproof_app returned zero
+rows, INSERT raised InsufficientPrivilege), but 0027 explicitly REVOKEs
+the inherited grant too, so actual privileges match what this migration
+always intended rather than relying on RLS alone to neutralize a grant
+that shouldn't exist.
+
+Every read/write goes through one of four narrow SECURITY DEFINER
+functions below regardless, mirroring the existing
 admin_search_directory()/org_id_for_name() pattern (0014/0015) — SQL
 LANGUAGE, STABLE, SET search_path = public, REVOKE ALL FROM PUBLIC then
 GRANT EXECUTE to callproof_app specifically, so callproof_app can call

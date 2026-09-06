@@ -9,10 +9,13 @@ else from Command Center without a Render env change + restart.
 Every function here calls one of the four SECURITY DEFINER SQL functions
 from migration 0026 (is_platform_admin_email / list_platform_admins /
 add_platform_admin / remove_platform_admin) — platform_admins itself is
-never granted to callproof_app, so a plain SELECT/INSERT/DELETE against
-the table would fail even with a bug in this file. No org_scope() here:
-platform admin is cross-tenant by definition, there is no org_id to
-scope to.
+explicitly REVOKEd from callproof_app (0027; a new public-schema table
+is granted to callproof_app by default via 0005_rls.py's ALTER DEFAULT
+PRIVILEGES unless revoked) and RLS-enabled with zero policies as a
+second, independent wall — so a plain SELECT/INSERT/DELETE against the
+table from a bug in this file would fail either way. No org_scope()
+here: platform admin is cross-tenant by definition, there is no org_id
+to scope to.
 
 Callers must already have run auth.require_platform_admin(request) —
 these functions do no permission check of their own, same convention as
