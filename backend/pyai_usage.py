@@ -15,11 +15,31 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
-from . import applog, db
+from . import applog, cost_estimate, db
 from .org_ids import DEFAULT_ORG_ID, bound_org_id
 
 log = logging.getLogger("callproof.usage")
 _lock = threading.Lock()
+
+
+def _call_cost_usd(provider: str, method: str, units: float | None) -> float:
+    """Same rate logic as cost_estimate.estimate_usage_cost(), applied to
+    one call instead of an aggregate — so Better Stack can track real
+    (estimated) spend per day/provider instead of only raw hit/unit
+    counts. Claude has no per-call token meter yet, so every hit costs
+    the same flat rate; PyAI prefers metered units when the response
+    actually returned them, falling back to the same coarse per-action
+    proxy the aggregate estimate uses for polls/actions with no meter."""
+    r = cost_estimate.rates()
+    if provider == "anthropic":
+        return round(r["claude_usd_per_hit"], 6)
+    if provider == "pyai":
+        if units is not None and units > 0:
+            return round(units * r["pyai_usd_per_unit"], 6)
+        if (method or "").upper() == "POST":
+            return round(r["pyai_usd_per_minute"], 6)
+        return 0.0
+    return 0.0
 
 
 def _conn():
@@ -142,6 +162,7 @@ def record_http_response(
                 path=path,
                 status=status,
                 units=units if units is not None else "-",
+                cost_usd=_call_cost_usd(provider, method, units),
             )
         except Exception:  # noqa: BLE001
             pass
