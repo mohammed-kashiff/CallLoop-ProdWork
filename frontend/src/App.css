@@ -4572,12 +4572,16 @@ html[data-color-mode='dark'] .cc-shell {
   }
 }
 
+/* A fixed dark pill regardless of the page's own light/dark theme — the
+   usual toast pattern. Bug this replaces: background correctly followed
+   --cc-ground (so it went near-white in light mode), but the text stayed
+   hardcoded light too — white-on-white, unreadable. */
 .cc-toast {
   position: fixed;
   left: 1.25rem;
   bottom: 1.25rem;
   z-index: 90;
-  background: var(--cc-ground, #0a0f14);
+  background: #0a0f14;
   color: #eaf4f8;
   padding: 0.6rem 1.1rem;
   border-radius: 10px;
