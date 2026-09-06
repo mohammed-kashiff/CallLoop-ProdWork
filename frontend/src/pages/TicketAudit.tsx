@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEv
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, readError } from '../lib/api'
 import { capFirst } from '../lib/format'
+import { useAuth } from '../context/AuthContext'
 
 // TA-10 (PRD §3/§9/§10): its own page, not a variant of AuditDetail.tsx —
 // the ticket engine is a separate engine from calls end to end.
@@ -62,6 +63,198 @@ type TicketDetail = {
   view_scope?: 'full' | 'own'
 }
 
+// TA-15: an org owner maps a ticket PDF's raw agent display name (e.g.
+// "Kashif") to a real teammate — closes the gap where every PDF-sourced
+// agent turn's agent_user_id was permanently null. Applies to future
+// ingestions only, not retroactively.
+
+type AgentAlias = {
+  display_name: string
+  user_id: string
+}
+
+type UnresolvedAgentName = {
+  display_name: string
+  turn_count: number
+}
+
+type OrgMember = {
+  user_id: string
+  first_name: string | null
+  last_name: string | null
+  role: string
+}
+
+function memberLabel(m: OrgMember): string {
+  const name = [m.first_name, m.last_name].filter(Boolean).join(' ').trim()
+  return name || m.user_id.slice(0, 8)
+}
+
+function AgentAliasMapping() {
+  const [aliases, setAliases] = useState<AgentAlias[]>([])
+  const [unresolved, setUnresolved] = useState<UnresolvedAgentName[]>([])
+  const [members, setMembers] = useState<OrgMember[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [picked, setPicked] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await apiFetch('/api/tickets/agent-aliases')
+      if (!r.ok) throw new Error(await readError(r, 'Could not load agent name mappings.'))
+      const data = (await r.json()) as {
+        aliases: AgentAlias[]
+        unresolved: UnresolvedAgentName[]
+        members: OrgMember[]
+      }
+      setAliases(data.aliases)
+      setUnresolved(data.unresolved)
+      setMembers(data.members)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load agent name mappings.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const setAlias = useCallback(
+    async (displayName: string, userId: string) => {
+      setSaving(displayName)
+      setError(null)
+      try {
+        const r = await apiFetch('/api/tickets/agent-aliases', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ display_name: displayName, user_id: userId }),
+        })
+        if (!r.ok) throw new Error(await readError(r, 'Could not save this mapping.'))
+        await load()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not save this mapping.')
+      } finally {
+        setSaving(null)
+      }
+    },
+    [load],
+  )
+
+  const removeAlias = useCallback(
+    async (displayName: string) => {
+      setSaving(displayName)
+      setError(null)
+      try {
+        const r = await apiFetch(`/api/tickets/agent-aliases/${encodeURIComponent(displayName)}`, {
+          method: 'DELETE',
+        })
+        if (!r.ok) throw new Error(await readError(r, 'Could not remove this mapping.'))
+        await load()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not remove this mapping.')
+      } finally {
+        setSaving(null)
+      }
+    },
+    [load],
+  )
+
+  if (loading && aliases.length === 0 && unresolved.length === 0) {
+    return null
+  }
+
+  return (
+    <details className="alias-mapping">
+      <summary>
+        Agent name mapping
+        {unresolved.length > 0 ? ` — ${unresolved.length} unresolved` : ''}
+      </summary>
+      <div className="alias-mapping-body">
+        <p className="panel-lede">
+          Ticket PDFs only carry an agent's raw name (e.g. "Kashif"). Map each name to a
+          teammate so future ingestions attribute their turns correctly — this does not
+          retroactively fix tickets already ingested.
+        </p>
+        {error ? (
+          <p className="upload-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+        {unresolved.length > 0 ? (
+          <div>
+            <h3 className="panel-title">Unresolved names</h3>
+            {unresolved.map((u) => (
+              <div className="alias-mapping-row" key={u.display_name}>
+                <span className="alias-mapping-name">{u.display_name}</span>
+                <span className="alias-mapping-count">
+                  {u.turn_count} turn{u.turn_count === 1 ? '' : 's'}
+                </span>
+                <select
+                  value={picked[u.display_name] || ''}
+                  onChange={(e) =>
+                    setPicked((prev) => ({ ...prev, [u.display_name]: e.target.value }))
+                  }
+                >
+                  <option value="">Choose a teammate…</option>
+                  {members.map((m) => (
+                    <option key={m.user_id} value={m.user_id}>
+                      {memberLabel(m)}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  disabled={!picked[u.display_name] || saving === u.display_name}
+                  onClick={() => void setAlias(u.display_name, picked[u.display_name])}
+                >
+                  {saving === u.display_name ? 'Saving…' : 'Map'}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {aliases.length > 0 ? (
+          <div>
+            <h3 className="panel-title">Mapped</h3>
+            {aliases.map((a) => (
+              <div className="alias-mapping-row" key={a.display_name}>
+                <span className="alias-mapping-name">{a.display_name}</span>
+                <span className="alias-mapping-count">
+                  {memberLabel(members.find((m) => m.user_id === a.user_id) || {
+                    user_id: a.user_id,
+                    first_name: null,
+                    last_name: null,
+                    role: '',
+                  })}
+                </span>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  disabled={saving === a.display_name}
+                  onClick={() => void removeAlias(a.display_name)}
+                >
+                  {saving === a.display_name ? 'Removing…' : 'Remove'}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {unresolved.length === 0 && aliases.length === 0 ? (
+          <p className="empty-copy">
+            No agent names seen yet — upload a ticket to see names show up here.
+          </p>
+        ) : null}
+      </div>
+    </details>
+  )
+}
+
 function verdictSlug(verdict: string): string {
   if (verdict === 'not_applicable') return 'n-a'
   if (verdict === 'error') return 'fail'
@@ -77,6 +270,7 @@ export function TicketAudit() {
   const { ticketId } = useParams()
   const navigate = useNavigate()
   const inputRef = useRef<HTMLInputElement>(null)
+  const { role } = useAuth()
 
   const [ticket, setTicket] = useState<TicketDetail | null>(null)
   const [loading, setLoading] = useState(false)
@@ -195,6 +389,8 @@ export function TicketAudit() {
         Scaffolding — six placeholder criteria (not the final rubric, see TA-13) exercising the
         pipeline end to end. Scores here validate the mechanism, not a real performance review.
       </p>
+
+      {!ticketId && role === 'owner' ? <AgentAliasMapping /> : null}
 
       {!ticketId ? (
         <section

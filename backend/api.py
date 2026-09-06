@@ -65,6 +65,7 @@ from . import pyai_usage
 from . import qa_engine as qa
 from . import qa_v8
 from . import recap as pyai_recap
+from . import ticket_agent_aliases_api
 from . import ticket_api
 from . import ticket_score_api
 from . import transcribe
@@ -93,6 +94,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(auth.JwtAuthMiddleware)
+ticket_agent_aliases_api.register(app)
 ticket_api.register(app)
 ticket_score_api.register(app)
 

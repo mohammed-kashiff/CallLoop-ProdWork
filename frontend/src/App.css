@@ -2100,6 +2100,69 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   font-size: 0.82rem;
 }
 
+.alias-mapping {
+  margin: 1.1rem 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--fill-muted);
+  padding: 0 1rem;
+}
+
+.alias-mapping > summary {
+  cursor: pointer;
+  padding: 0.85rem 0;
+  font-weight: 700;
+  list-style: none;
+}
+
+.alias-mapping > summary::-webkit-details-marker {
+  display: none;
+}
+
+.alias-mapping > summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 0.4rem;
+  transition: transform 0.15s ease;
+}
+
+.alias-mapping[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.alias-mapping-body {
+  padding-bottom: 1rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.alias-mapping-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.alias-mapping-name {
+  font-weight: 650;
+  min-width: 8rem;
+}
+
+.alias-mapping-count {
+  font-size: 0.78rem;
+  color: var(--muted-fg);
+}
+
+.alias-mapping-row select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  min-width: 12rem;
+}
+
 .tip-list {
   display: grid;
   gap: 0.85rem;

@@ -8,18 +8,21 @@ no PyAI Hear. Writes go through org_scope()/db.connection(), the same
 RLS-safe pattern as every other tenant write in this codebase — the
 session role is never granted a way around row-level security.
 
-ticket_messages.agent_user_id is nullable and only ever set when the
-caller already has a resolved org_members.user_id for that turn's
-speaker — ticket_pdf_parser never returns one today (see that module's
-docstring for why), so every write here is NULL until an
-agent-identity-resolution step exists upstream.
+ticket_messages.agent_user_id is nullable. ticket_pdf_parser itself never
+resolves one — it only knows a turn's raw display name ("Kashif"). TA-15
+closes that gap here, at ingest time: ingest_ticket_pdf() looks up each
+agent turn's speaker_name against the org's ticket_agent_aliases (an
+owner-managed name->user_id mapping) and fills in agent_user_id when a
+mapping exists, defaulting to None otherwise — the same nullable,
+best-effort shape as before, just no longer permanently blank for every
+org regardless of whether they've mapped their team. Does not
+retroactively fix tickets ingested before a mapping existed.
 
-Note: the parser also returns speaker_name (the raw display name off the
-PDF, e.g. "Kashif") for turns where agent_user_id can't be resolved.
-ticket_messages (TA-3) has no column to hold that, so it is intentionally
-dropped here rather than persisted — flagged for whoever picks up TA-8
-(multi-agent attribution), not something to fix by altering TA-3's schema
-unilaterally.
+agent_display_name (TA-15) persists the raw name for every agent turn
+regardless of resolution — previously this was parsed and then
+discarded, which meant there was no way to even know what names existed
+to map. ticket_agent_aliases.list_unresolved_agent_names() reads it back
+to give an org owner their own to-do list.
 
 TA-5 design (PRD §8.1): an embedded screenshot is extracted at ingest
 time, described with one Claude vision call, and injected into the same
@@ -38,6 +41,7 @@ reviewer at the real picture instead of a re-typed quote.
 from __future__ import annotations
 
 from . import db
+from . import ticket_agent_aliases
 from . import ticket_image_extraction
 from . import ticket_image_store
 from . import ticket_pdf_parser
@@ -75,21 +79,27 @@ def insert_ticket_messages(ticket_id: str, org_id: str, turns: list[dict]) -> No
     sent_at (TA-13) is optional — turns.get("sent_at") — so callers that
     don't have it (older test fixtures, hand-built turns) still work; the
     column itself is nullable.
+
+    agent_display_name (TA-15) is persisted for every agent turn — the
+    raw name off the PDF, regardless of whether agent_user_id resolved —
+    so an org owner has something to map later. NULL for customer/bot
+    turns, matching the column's own contract.
     """
     if not turns:
         return
     with org_scope(org_id):
         with db.connection() as conn:
             for t in turns:
+                display_name = t.get("speaker_name") if t["speaker"] == "agent" else None
                 conn.execute(
                     """
                     INSERT INTO ticket_messages
-                        (ticket_id, org_id, seq, agent_user_id, speaker, text, sent_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        (ticket_id, org_id, seq, agent_user_id, speaker, text, sent_at, agent_display_name)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         ticket_id, org_id, t["seq"], t["agent_user_id"],
-                        t["speaker"], t["text"], t.get("sent_at"),
+                        t["speaker"], t["text"], t.get("sent_at"), display_name,
                     ),
                 )
 
@@ -217,6 +227,18 @@ def ingest_ticket_pdf(org_id: str, pdf_bytes: bytes, *, source: str = "pdf_uploa
         images = ticket_image_extraction.extract_images(pdf_bytes)
         descriptions = [ticket_image_extraction.describe_image(img["png_bytes"]) for img in images]
         merged = interleave_images(turns, images, descriptions)
+
+        unresolved_names = {
+            t["speaker_name"] for t in merged
+            if t["speaker"] == "agent" and not t.get("agent_user_id") and t.get("speaker_name")
+        }
+        if unresolved_names:
+            aliases = ticket_agent_aliases.resolve_agent_user_ids(org_id, unresolved_names)
+            for t in merged:
+                if t["speaker"] == "agent" and not t.get("agent_user_id"):
+                    resolved = aliases.get(t.get("speaker_name"))
+                    if resolved:
+                        t["agent_user_id"] = resolved
 
         insert_ticket_messages(ticket_id, org_id, merged)
 

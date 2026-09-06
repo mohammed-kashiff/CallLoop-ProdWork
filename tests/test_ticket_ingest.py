@@ -105,10 +105,27 @@ def test_insert_ticket_messages_writes_one_row_per_turn_in_order(monkeypatch):
     with _fake_db(monkeypatch, conn):
         ticket_ingest.insert_ticket_messages("t1", ORG_A, turns)
     assert conn.messages == [
-        ("t1", ORG_A, 0, None, "customer", "hi", None),
-        ("t1", ORG_A, 1, "u1", "agent", "hello", None),
-        ("t1", ORG_A, 2, None, "bot", "beep", None),
+        ("t1", ORG_A, 0, None, "customer", "hi", None, None),
+        ("t1", ORG_A, 1, "u1", "agent", "hello", None, "Kashif"),
+        ("t1", ORG_A, 2, None, "bot", "beep", None, None),
     ]
+
+
+def test_insert_ticket_messages_agent_display_name_is_null_for_non_agent_turns(monkeypatch):
+    """agent_display_name (TA-15) is the raw PDF name for agent turns only —
+    a customer or bot turn's speaker_name (e.g. "Welma Bot") must never
+    land in this column, since it exists specifically to give an org owner
+    a to-do list of *agent* names to map."""
+    from backend import ticket_ingest
+
+    turns = [
+        {"seq": 0, "speaker": "customer", "speaker_name": "Kevin", "agent_user_id": None, "text": "hi"},
+        {"seq": 1, "speaker": "bot", "speaker_name": "Welma Bot", "agent_user_id": None, "text": "beep"},
+    ]
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ticket_ingest.insert_ticket_messages("t1", ORG_A, turns)
+    assert [row[-1] for row in conn.messages] == [None, None]
 
 
 def test_insert_ticket_messages_is_a_noop_for_no_turns(monkeypatch):
@@ -241,6 +258,12 @@ def _patch_pipeline(monkeypatch, ticket_ingest, *, turns, images=None, descripti
         ticket_ingest.ticket_image_store, "put_bytes",
         lambda org_id, ticket_id, seq, png_bytes: f"{org_id}/{ticket_id}/{seq}.png",
     )
+    # TA-15: no alias configured by default — tests that care about
+    # resolution override this themselves after calling _patch_pipeline.
+    monkeypatch.setattr(
+        ticket_ingest.ticket_agent_aliases, "resolve_agent_user_ids",
+        lambda org_id, names: {},
+    )
 
 
 def test_ingest_ticket_pdf_moves_through_uploaded_processing_ready(monkeypatch):
@@ -317,6 +340,91 @@ def test_ingest_ticket_pdf_marks_failed_on_a_vision_call_error(monkeypatch):
     assert [s for _tid, s in conn.status_updates] == ["processing", "failed"]
     assert conn.messages == []  # nothing partial written
     assert conn.assets == []
+
+
+# ---------- ingest_ticket_pdf: TA-15 alias resolution wiring ----------
+
+
+def test_ingest_ticket_pdf_resolves_agent_user_id_via_configured_alias(monkeypatch):
+    """TA-15: when the org has mapped a raw display name to a user_id,
+    ingest_ticket_pdf() must fill that in before writing the turn — this
+    is the actual gap TA-15 closes (previously agent_user_id was always
+    None regardless of any mapping)."""
+    from backend import ticket_ingest
+
+    _patch_pipeline(
+        monkeypatch, ticket_ingest,
+        turns=[_text_turn(0, "agent", page_index=0, text="hello", speaker_name="Kashif")],
+    )
+    monkeypatch.setattr(
+        ticket_ingest.ticket_agent_aliases, "resolve_agent_user_ids",
+        lambda org_id, names: {"Kashif": "u-resolved"} if names == {"Kashif"} else {},
+    )
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ticket_ingest.ingest_ticket_pdf(ORG_A, b"fake-pdf-bytes")
+    assert conn.messages[0][3] == "u-resolved"  # agent_user_id column
+
+
+def test_ingest_ticket_pdf_leaves_agent_user_id_none_when_no_alias_configured(monkeypatch):
+    from backend import ticket_ingest
+
+    _patch_pipeline(
+        monkeypatch, ticket_ingest,
+        turns=[_text_turn(0, "agent", page_index=0, text="hello", speaker_name="Someone New")],
+    )
+    monkeypatch.setattr(
+        ticket_ingest.ticket_agent_aliases, "resolve_agent_user_ids",
+        lambda org_id, names: {},
+    )
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ticket_ingest.ingest_ticket_pdf(ORG_A, b"fake-pdf-bytes")
+    assert conn.messages[0][3] is None
+
+
+def test_ingest_ticket_pdf_never_looks_up_customer_or_bot_names(monkeypatch):
+    """The batch alias lookup must only ever be asked about agent display
+    names — a customer's or bot's raw name is never a thing an org owner
+    would map, and querying for it would be a wasted/misleading lookup."""
+    from backend import ticket_ingest
+
+    _patch_pipeline(
+        monkeypatch, ticket_ingest,
+        turns=[
+            _text_turn(0, "customer", page_index=0, text="hi", speaker_name="Kevin"),
+            _text_turn(1, "bot", page_index=0, text="beep", speaker_name="Welma Bot"),
+        ],
+    )
+    seen_names = []
+
+    def _fake_resolve(org_id, names):
+        seen_names.append(names)
+        return {}
+
+    monkeypatch.setattr(ticket_ingest.ticket_agent_aliases, "resolve_agent_user_ids", _fake_resolve)
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ticket_ingest.ingest_ticket_pdf(ORG_A, b"fake-pdf-bytes")
+    assert seen_names == []  # no agent turns at all -> lookup never called
+
+
+def test_ingest_ticket_pdf_skips_alias_lookup_entirely_when_no_agent_turns(monkeypatch):
+    from backend import ticket_ingest
+
+    _patch_pipeline(
+        monkeypatch, ticket_ingest,
+        turns=[_text_turn(0, "customer", page_index=0, text="hi")],
+    )
+    called = []
+    monkeypatch.setattr(
+        ticket_ingest.ticket_agent_aliases, "resolve_agent_user_ids",
+        lambda org_id, names: called.append(names) or {},
+    )
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ticket_ingest.ingest_ticket_pdf(ORG_A, b"fake-pdf-bytes")
+    assert called == []
 
 
 def test_module_never_bypasses_rls():

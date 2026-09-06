@@ -37,12 +37,13 @@ Role classification, from the confirmed sample:
 No audio, no transcribe.py, no PyAI Hear involved — raw text extraction
 only (pdfplumber), an ingestion path independent of the call pipeline.
 
-agent_user_id is always None for now: nothing in this codebase currently
-maps a ticket transcript's raw display name (e.g. "Kashif") to a real
-user record — org_members has no stored display name to match against,
-only a Supabase user_id. The field stays in the output shape so
-ticket_messages / TA-6 don't need to change once that resolution exists;
-wiring it up is a separate piece of work.
+agent_user_id is always None here — this parser only ever reads the raw
+display name (e.g. "Kashif") off the PDF text; it has no access to
+org_members and does no resolution itself. speaker_name carries that raw
+name forward instead. TA-15 does the actual name->user_id resolution,
+against an org owner's own mapping (ticket_agent_aliases), at ingest
+time in ticket_ingest.py — not here, since that lookup needs org_id and
+a database connection this parser deliberately doesn't take.
 
 sent_at (TA-13): each turn's real timestamp, combined from its day
 header ("--- August 19, 2026 ---") and its own "HH:MM AM/PM", in the
