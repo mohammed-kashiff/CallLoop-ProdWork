@@ -11,14 +11,75 @@
   min-height: 100vh;
 }
 
-/* Command Center (admin host): no customer sidebar, so don't reserve its
-   248px column either — full width for the directory/inspector. */
-.layout-shell--full {
-  grid-template-columns: minmax(0, 1fr);
-}
-
+/* Command Center (admin host) keeps the sidebar (it has its own real nav —
+   Command Center / Call logs / Platform Admins, already correct in
+   Sidebar.tsx's adminHost branch) but reskins it Electric Cyan below,
+   and widens the content column since the drawer needs the room. */
 .main:has(.cc-shell) {
   width: min(1800px, calc(100% - 2.5rem));
+}
+
+.layout-shell--admin .sidebar {
+  background: #0a0f14;
+  border-right: 1px solid rgba(234, 244, 248, 0.08);
+}
+
+.layout-shell--admin .sidebar-link {
+  color: rgba(234, 244, 248, 0.68);
+}
+
+.layout-shell--admin .sidebar-link:hover {
+  color: #eaf4f8;
+  background: rgba(34, 211, 238, 0.08);
+}
+
+.layout-shell--admin .sidebar-link.is-active {
+  color: #eaf4f8;
+  background: rgba(34, 211, 238, 0.14);
+  border: 1px solid rgba(34, 211, 238, 0.3);
+}
+
+.cc-sidebar-caption {
+  color: rgba(234, 244, 248, 0.45) !important;
+  text-transform: uppercase;
+  font-size: 0.7rem !important;
+  letter-spacing: 0.08em;
+  font-weight: 650;
+}
+
+.cc-sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 0.55rem 0.25rem;
+  border-top: 1px solid rgba(234, 244, 248, 0.08);
+}
+
+.cc-sidebar-avatar {
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 50%;
+  background: rgba(34, 211, 238, 0.18);
+  color: #eaf4f8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.cc-sidebar-email {
+  font-size: 0.78rem;
+  color: rgba(234, 244, 248, 0.6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layout-shell--admin .app-topbar {
+  background: var(--card);
 }
 
 .content-shell {
@@ -4008,6 +4069,61 @@ html[data-color-mode='dark'] .cc-shell {
   outline-offset: 1px;
 }
 
+.cc-directory-card {
+  border: 1px solid var(--cc-line, var(--line));
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.cc-directory-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--cc-line, var(--line));
+}
+
+.cc-directory-card-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.cc-directory-count {
+  font-size: 0.82rem;
+  color: var(--cc-ink-muted, var(--ink-soft));
+}
+
+.cc-directory-card .admin-table-wrap {
+  padding: 0 0.25rem 0.25rem;
+}
+
+.cc-directory-card .admin-table th,
+.cc-directory-card .admin-table td {
+  padding: 0.7rem 1rem;
+}
+
+.cc-org-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.cc-org-avatar {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--btn-bg) 16%, transparent);
+  color: var(--btn-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
 .cc-row-clickable {
   cursor: pointer;
 }
@@ -4108,18 +4224,43 @@ html[data-color-mode='dark'] .cc-shell {
 
 .cc-flag-group {
   margin-bottom: 1.25rem;
+  padding: 0.9rem 1rem 1rem;
+  border-radius: 12px;
+  border: 1px solid var(--cc-line, var(--line));
+  background: var(--cc-surface, var(--fill-muted));
 }
 
 .cc-flag-group-title {
-  margin: 0 0 0.5rem;
-  font-size: 0.85rem;
+  margin: 0 0 0.6rem;
+  font-size: 0.78rem;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
+  font-weight: 700;
   color: var(--cc-ink-muted, var(--ink-soft));
+}
+
+.cc-flag-group .admin-flags li {
+  border-bottom: 1px solid var(--cc-line, var(--line));
+  padding: 0.6rem 0;
+}
+
+.cc-flag-group .admin-flags li:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.cc-risk-danger {
+  background: color-mix(in srgb, var(--cc-danger, var(--fail)) 8%, var(--cc-surface, transparent));
+  border-color: color-mix(in srgb, var(--cc-danger, var(--fail)) 30%, var(--cc-line, transparent));
 }
 
 .cc-risk-danger .cc-flag-group-title {
   color: var(--cc-danger, var(--fail));
+}
+
+.cc-risk-medium {
+  background: color-mix(in srgb, var(--cc-medium, var(--partial)) 8%, var(--cc-surface, transparent));
+  border-color: color-mix(in srgb, var(--cc-medium, var(--partial)) 25%, var(--cc-line, transparent));
 }
 
 .cc-risk-medium .cc-flag-group-title {
@@ -4184,33 +4325,157 @@ html[data-color-mode='dark'] .cc-shell {
   outline-color: var(--btn-bg);
 }
 
+.cc-chart {
+  margin: 0 0 1rem;
+}
+
 .cc-chart svg {
   width: 100%;
-  max-width: 360px;
+  max-width: 100%;
   height: auto;
+  display: block;
+}
+
+.cc-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.cc-stat-card {
+  border: 1px solid var(--cc-line, var(--line));
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  background: var(--cc-surface, var(--fill-muted));
+}
+
+.cc-stat-label {
+  margin: 0 0 0.3rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: var(--cc-ink-muted, var(--ink-soft));
+}
+
+.cc-stat-value {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--cc-ink, var(--ink));
+}
+
+.cc-stat-accent {
+  border-color: color-mix(in srgb, var(--cc-accent, var(--blue)) 30%, var(--cc-line, transparent));
+  background: color-mix(in srgb, var(--cc-accent, var(--blue)) 8%, var(--cc-surface, transparent));
+}
+
+.cc-stat-good {
+  border-color: color-mix(in srgb, #10b981 30%, var(--cc-line, transparent));
+  background: color-mix(in srgb, #10b981 8%, var(--cc-surface, transparent));
+}
+
+.cc-stat-warn {
+  border-color: color-mix(in srgb, var(--cc-medium, var(--partial)) 30%, var(--cc-line, transparent));
+  background: color-mix(in srgb, var(--cc-medium, var(--partial)) 8%, var(--cc-surface, transparent));
+}
+
+.cc-rubric-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  border-radius: 16px;
+  margin-bottom: 1.25rem;
+  background: #0a0f14;
+  color: #eaf4f8;
+}
+
+.cc-rubric-hero-version {
+  margin: 0 0 0.15rem;
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.cc-rubric-hero-updated {
+  margin: 0;
+  font-size: 0.8rem;
+  color: rgba(234, 244, 248, 0.6);
+}
+
+.cc-rubric-hero-total {
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  font-weight: 700;
+  background: rgba(234, 244, 248, 0.08);
+  border: 2px solid rgba(234, 244, 248, 0.15);
+  flex-shrink: 0;
+}
+
+.cc-rubric-hero-total.is-good {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.4);
+}
+
+.cc-rubric-hero-total.is-warn {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.4);
+}
+
+.cc-rubric-hero-total.is-danger {
+  color: #fb7185;
+  border-color: rgba(251, 113, 133, 0.4);
 }
 
 .cc-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(4, 10, 16, 0.55);
+  backdrop-filter: blur(3px);
   z-index: 70;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 1rem;
+  animation: cc-fade-in 150ms ease;
 }
 
 .cc-modal {
   background: var(--cc-ground, var(--card));
   color: var(--cc-ink, var(--ink));
-  border-radius: var(--radius-lg);
+  border-radius: 16px;
   border: 1px solid var(--cc-line, var(--line));
-  box-shadow: var(--shadow-card);
-  padding: 1.25rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  padding: 1.5rem;
   width: min(480px, 100%);
   max-height: 90vh;
   overflow-y: auto;
+  animation: cc-modal-in 180ms ease;
+}
+
+@keyframes cc-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-modal-backdrop,
+  .cc-modal {
+    animation: none;
+  }
 }
 
 .cc-modal-header {

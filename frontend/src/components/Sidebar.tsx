@@ -203,7 +203,7 @@ interface SidebarProps {
 export function Sidebar({ open, onNavigate }: SidebarProps) {
   const { pathname } = useLocation()
   const { flaggedCount } = useAudit()
-  const { features, isPlatformAdmin, orgName } = useAuth()
+  const { features, isPlatformAdmin, orgName, email } = useAuth()
   const adminHost = isAdminHost()
   const home = appHomePath()
   const onHome = pathname === home
@@ -239,8 +239,14 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
           </button>
         </div>
 
-        <p className="sidebar-tagline">We close the loop</p>
-        {orgName ? <p className="sidebar-org-name">{orgName}</p> : null}
+        {adminHost ? (
+          <p className="sidebar-tagline cc-sidebar-caption">Platform Admin</p>
+        ) : (
+          <>
+            <p className="sidebar-tagline">We close the loop</p>
+            {orgName ? <p className="sidebar-org-name">{orgName}</p> : null}
+          </>
+        )}
 
         {adminHost ? (
           <nav className="sidebar-nav" aria-label="Admin">
@@ -251,7 +257,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               }
               onClick={onNavigate}
             >
-              Admin
+              Command Center
             </NavLink>
             <NavLink
               to="/call-logs"
@@ -271,6 +277,12 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
             >
               Platform Admins
             </NavLink>
+            <div className="cc-sidebar-footer">
+              <span className="cc-sidebar-avatar" aria-hidden="true">
+                {(email || '?').slice(0, 1).toUpperCase()}
+              </span>
+              <span className="cc-sidebar-email">{email || 'Unknown admin'}</span>
+            </div>
           </nav>
         ) : (
           <>

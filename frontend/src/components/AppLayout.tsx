@@ -30,12 +30,12 @@ export function AppLayout() {
 
   return (
     <div
-      className={adminHost ? 'app-shell layout-shell layout-shell--full' : 'app-shell layout-shell'}
+      className={adminHost ? 'app-shell layout-shell layout-shell--admin' : 'app-shell layout-shell'}
       data-theme={theme}
       data-color-mode={mode}
     >
       {adminHost ? null : <ImpersonationBanner />}
-      {adminHost ? null : <Sidebar open={navOpen} onNavigate={() => setNavOpen(false)} />}
+      <Sidebar open={navOpen} onNavigate={() => setNavOpen(false)} />
 
       <div className="content-shell">
         <header className="app-topbar">

@@ -240,23 +240,60 @@ function Modal({
  * Tailwind/Chart.js for Command Center). */
 function UsageSparkline({ data }: { data: DailyUsagePoint[] }) {
   if (data.length === 0) return <p className="empty-copy">No usage data yet.</p>
-  const w = 320
-  const h = 90
-  const pad = 8
+  const w = 640
+  const h = 200
+  const padX = 12
+  const padTop = 14
+  const padBottom = 28
   const max = Math.max(1, ...data.map((d) => d.hits))
-  const stepX = data.length > 1 ? (w - pad * 2) / (data.length - 1) : 0
-  const points = data
-    .map((d, i) => {
-      const x = pad + i * stepX
-      const y = h - pad - (d.hits / max) * (h - pad * 2)
-      return `${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
+  const stepX = data.length > 1 ? (w - padX * 2) / (data.length - 1) : 0
+  const xAt = (i: number) => padX + i * stepX
+  const yAt = (hits: number) =>
+    h - padBottom - (hits / max) * (h - padBottom - padTop)
+  const linePoints = data.map((d, i) => `${xAt(i).toFixed(1)},${yAt(d.hits).toFixed(1)}`).join(' ')
+  const areaPoints = `${padX},${h - padBottom} ${linePoints} ${xAt(data.length - 1).toFixed(1)},${h - padBottom}`
+  const gridLines = [0, 0.25, 0.5, 0.75, 1]
   const total = data.reduce((sum, d) => sum + d.hits, 0)
+  // A handful of evenly-spaced date labels rather than one per day — 30
+  // labels would overlap into an unreadable smear.
+  const labelEvery = Math.max(1, Math.ceil(data.length / 6))
+
   return (
     <figure className="cc-chart">
-      <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Daily API hits trend">
-        <polyline points={points} fill="none" stroke="var(--cc-accent)" strokeWidth="2" />
+      <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Daily API hits trend, last 30 days">
+        <defs>
+          <linearGradient id="cc-chart-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--cc-accent)" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="var(--cc-accent)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {gridLines.map((g) => (
+          <line
+            key={g}
+            x1={padX}
+            x2={w - padX}
+            y1={padTop + g * (h - padBottom - padTop)}
+            y2={padTop + g * (h - padBottom - padTop)}
+            stroke="var(--cc-line)"
+            strokeWidth="1"
+          />
+        ))}
+        <polygon points={areaPoints} fill="url(#cc-chart-fill)" stroke="none" />
+        <polyline points={linePoints} fill="none" stroke="var(--cc-accent)" strokeWidth="2.5" />
+        {data.map((d, i) =>
+          i % labelEvery === 0 ? (
+            <text
+              key={d.date}
+              x={xAt(i)}
+              y={h - 8}
+              fontSize="10"
+              textAnchor="middle"
+              fill="var(--cc-ink-muted)"
+            >
+              {d.date.slice(5)}
+            </text>
+          ) : null,
+        )}
       </svg>
       <figcaption className="admin-provision-hint">
         {data[0].date} – {data[data.length - 1].date}: {total} hits total
@@ -843,35 +880,50 @@ export function Admin() {
           member. Row click opens the inspector; the table itself never
           unmounts, so its scroll position survives the drawer opening
           and closing. */}
-      <div className="admin-table-wrap">
-        <table className="admin-table cc-table">
-          <thead>
-            <tr>
-              <th>Org</th>
-              <th>Members</th>
-              <th>Short IDs</th>
-              <th>Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {orgRows.map((row) => (
-              <tr
-                key={row.org_id}
-                className={`cc-row-clickable${selectedOrg?.org_id === row.org_id ? ' is-selected' : ''}`}
-                onClick={() => void openOrg(row)}
-              >
-                <td>
-                  <span className="admin-org">{row.org_name || '—'}</span>
-                  <span className="admin-id">{row.org_id}</span>
-                </td>
-                <td>{row.member_count}</td>
-                <td>{row.short_ids.length > 0 ? row.short_ids.join(', ') : '—'}</td>
-                <td>{row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}</td>
+      <div className="cc-directory-card">
+        <div className="cc-directory-card-header">
+          <h2>Organizations</h2>
+          <span className="cc-directory-count">
+            {orgRows.length} {orgRows.length === 1 ? 'organization' : 'organizations'}
+          </span>
+        </div>
+        <div className="admin-table-wrap">
+          <table className="admin-table cc-table">
+            <thead>
+              <tr>
+                <th>Org</th>
+                <th>Members</th>
+                <th>Short IDs</th>
+                <th>Created</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        {orgRows.length === 0 ? <p className="empty-copy">No matching orgs.</p> : null}
+            </thead>
+            <tbody>
+              {orgRows.map((row) => (
+                <tr
+                  key={row.org_id}
+                  className={`cc-row-clickable${selectedOrg?.org_id === row.org_id ? ' is-selected' : ''}`}
+                  onClick={() => void openOrg(row)}
+                >
+                  <td>
+                    <div className="cc-org-cell">
+                      <span className="cc-org-avatar" aria-hidden="true">
+                        {(row.org_name || '?').slice(0, 1).toUpperCase()}
+                      </span>
+                      <span>
+                        <span className="admin-org">{row.org_name || '—'}</span>
+                        <span className="admin-id">{row.org_id}</span>
+                      </span>
+                    </div>
+                  </td>
+                  <td>{row.member_count}</td>
+                  <td>{row.short_ids.length > 0 ? row.short_ids.join(', ') : '—'}</td>
+                  <td>{row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {orgRows.length === 0 ? <p className="empty-copy">No matching orgs.</p> : null}
+        </div>
       </div>
 
       {/* AC-37: slide-over inspector. Backdrop click or Escape closes it. */}
@@ -931,26 +983,34 @@ export function Admin() {
                       </dd>
                     </div>
                   </dl>
-                  {usage ? (
-                    <dl className="admin-stats">
-                      <div>
-                        <dt>PyAI calls</dt>
-                        <dd>{pyai?.hits ?? 0}</dd>
-                      </div>
-                      <div>
-                        <dt>PyAI polls</dt>
-                        <dd>{pyai?.polls ?? 0}</dd>
-                      </div>
-                      <div>
-                        <dt>Anthropic calls</dt>
-                        <dd>{claude?.hits ?? 0}</dd>
-                      </div>
-                      <div>
-                        <dt>Est. spend</dt>
-                        <dd>{fmtUsd(usage.cost.total_usd)}</dd>
-                      </div>
-                    </dl>
+
+                  {usage || orgDetail ? (
+                    <div className="cc-stat-grid">
+                      {usage ? (
+                        <>
+                          <div className="cc-stat-card cc-stat-accent">
+                            <p className="cc-stat-label">PyAI calls</p>
+                            <p className="cc-stat-value">{pyai?.hits ?? 0}</p>
+                          </div>
+                          <div className="cc-stat-card cc-stat-good">
+                            <p className="cc-stat-label">Anthropic calls</p>
+                            <p className="cc-stat-value">{claude?.hits ?? 0}</p>
+                          </div>
+                          <div className="cc-stat-card cc-stat-warn">
+                            <p className="cc-stat-label">Est. spend</p>
+                            <p className="cc-stat-value">{fmtUsd(usage.cost.total_usd)}</p>
+                          </div>
+                        </>
+                      ) : null}
+                      {orgDetail ? (
+                        <div className="cc-stat-card">
+                          <p className="cc-stat-label">Data stored</p>
+                          <p className="cc-stat-value">{formatBytes(orgDetail.total_data_size_bytes)}</p>
+                        </div>
+                      ) : null}
+                    </div>
                   ) : null}
+
                   {orgDetail ? (
                     <dl className="admin-stats">
                       <div>
@@ -962,11 +1022,12 @@ export function Admin() {
                         <dd>{orgDetail.audited_count}</dd>
                       </div>
                       <div>
-                        <dt>Data stored</dt>
-                        <dd>{formatBytes(orgDetail.total_data_size_bytes)}</dd>
+                        <dt>PyAI polls</dt>
+                        <dd>{pyai?.polls ?? 0}</dd>
                       </div>
                     </dl>
                   ) : null}
+
                   <h3>Usage trend — last 30 days</h3>
                   <UsageSparkline data={daily} />
                   <p className="admin-provision-hint">
@@ -1024,13 +1085,31 @@ export function Admin() {
                   ) : null}
                   {rubric ? (
                     <>
-                      <p className="admin-provision-hint">
-                        {rubric.source === 'custom'
-                          ? `Custom — version ${rubric.version}, updated ${
-                              rubric.updated_at ? new Date(rubric.updated_at).toLocaleString() : '—'
-                            }.`
-                          : 'Not yet customized — showing default weights.'}
-                      </p>
+                      <div className="cc-rubric-hero">
+                        <div>
+                          <p className="cc-rubric-hero-version">
+                            {rubric.source === 'custom'
+                              ? `Custom — version ${rubric.version}`
+                              : 'Not yet customized'}
+                          </p>
+                          <p className="cc-rubric-hero-updated">
+                            {rubric.updated_at
+                              ? `Updated ${new Date(rubric.updated_at).toLocaleString()}`
+                              : 'Showing default weights'}
+                          </p>
+                        </div>
+                        <div
+                          className={`cc-rubric-hero-total${
+                            rubricTotal === 100
+                              ? ' is-good'
+                              : rubricTotal > 100
+                                ? ' is-danger'
+                                : ' is-warn'
+                          }`}
+                        >
+                          {rubricTotal}
+                        </div>
+                      </div>
                       <div className="admin-rubric-grid">
                         {RUBRIC_DIMENSIONS.map((dim) => (
                           <label key={dim.id} className="admin-rubric-field">
