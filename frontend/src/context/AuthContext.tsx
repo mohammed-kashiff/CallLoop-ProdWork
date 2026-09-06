@@ -4,11 +4,12 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { apiFetch } from '../lib/api'
+import { apiFetch, trackEvent } from '../lib/api'
 import type { FeatureMap } from '../lib/features'
 import { supabase, supabaseConfigured, hasPasswordRecoveryHint, markPasswordRecovery, clearPasswordRecovery } from '../lib/supabase'
 
@@ -112,6 +113,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refreshMe()
   }, [refreshMe])
+
+  const sessionStartedRef = useRef(false)
+  useEffect(() => {
+    if (session && !sessionStartedRef.current) {
+      sessionStartedRef.current = true
+      trackEvent('session_started')
+    }
+  }, [session])
 
   const signOut = useCallback(async () => {
     clearPasswordRecovery()

@@ -19,6 +19,7 @@ from fastapi import File, HTTPException, Request, UploadFile
 
 from . import applog
 from . import auth
+from . import product_events
 from . import sentry_report
 from . import ticket_image_store
 from . import ticket_ingest
@@ -131,6 +132,10 @@ def upload_ticket(request: Request, file: UploadFile = File(...)):
         ticket_id=ticket_id,
         filename=filename,
         size_bytes=size,
+    )
+    product_events.track_event(
+        org_id, getattr(request.state, "user_id", None), "ticket_uploaded",
+        {"size_bytes": size},
     )
     return {
         "ticket_id": ticket_id,

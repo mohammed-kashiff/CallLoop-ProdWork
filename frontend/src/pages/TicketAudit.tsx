@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { apiFetch, readError } from '../lib/api'
+import { apiFetch, readError, trackEvent } from '../lib/api'
 import { capFirst } from '../lib/format'
 import { useAuth } from '../context/AuthContext'
 
@@ -302,6 +302,10 @@ export function TicketAudit() {
     if (ticketId) void loadTicket(ticketId)
     else setTicket(null)
   }, [ticketId, loadTicket])
+
+  useEffect(() => {
+    if (!ticketId) trackEvent('ticket_audit_opened')
+  }, [ticketId])
 
   const uploadFile = useCallback(
     async (file: File) => {

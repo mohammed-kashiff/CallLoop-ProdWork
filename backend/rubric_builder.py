@@ -22,6 +22,7 @@ from fastapi import HTTPException
 from . import applog
 from . import audit_store
 from . import db
+from . import product_events
 from .org_ids import org_scope, parse_org_id
 from .qa_v8 import RESOLUTION_QUESTION, TONE_QUESTION, list_dimensions
 
@@ -283,6 +284,11 @@ def save_rubric(
         activated=activate,
         changed_by=actor,
         dimension_ids=[d["id"] for d in dimensions],
+    )
+    has_custom = any(d.get("kind") == "custom" for d in dimensions)
+    product_events.track_event(
+        oid, None, "rubric_saved",
+        {"kind": "custom" if has_custom else "reweight", "dimension_count": len(dimensions)},
     )
     return _save_response(oid, saved)
 

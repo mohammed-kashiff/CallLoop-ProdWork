@@ -52,6 +52,7 @@ from . import org_features
 from . import org_vault
 from . import password_events
 from . import platform_admins
+from . import product_events
 from . import rubric_builder
 from . import sentry_report
 from .config import cors_origins, load_env, skip_startup
@@ -95,6 +96,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(auth.JwtAuthMiddleware)
+app.add_middleware(applog.RequestIdMiddleware)
 ticket_agent_aliases_api.register(app)
 ticket_score_api.register(app)
 ticket_api.register(app)
@@ -480,6 +482,33 @@ def log_password_reset_request(request: Request, body: AdminPasswordResetLogBody
             log, "password_event_write_failed", level=logging.WARNING,
             user_id=uid, error=applog.safe_exception_text(e),
         )
+    return {"ok": True}
+
+
+class TrackEventBody(BaseModel):
+    event_name: str
+    properties: dict | None = None
+
+
+_MAX_EVENT_PROPERTIES_BYTES = 2048
+
+
+@app.post("/api/events")
+def track_frontend_event(request: Request, body: TrackEventBody):
+    """AC-45/observability PRD §7: frontend-only interactions with no
+    natural backend call site (page views, buttons with no corresponding
+    mutation). Only accepts product_events.FRONTEND_ONLY_EVENTS, never the
+    backend-wired set — letting the browser name an arbitrary event would
+    mean it could fabricate one (a fake call_uploaded, a fake flag_created)
+    with no real action behind it."""
+    if body.event_name not in product_events.FRONTEND_ONLY_EVENTS:
+        raise HTTPException(status_code=400, detail="Unknown event_name.")
+    properties = body.properties or {}
+    if len(json.dumps(properties)) > _MAX_EVENT_PROPERTIES_BYTES:
+        raise HTTPException(status_code=400, detail="properties is too large.")
+    org_id = _org(request)
+    user_id = getattr(request.state, "user_id", None)
+    product_events.track_event(org_id, user_id, body.event_name, properties)
     return {"ok": True}
 
 
@@ -2090,6 +2119,11 @@ def flag_call_for_review(call_id: int, request: Request):
         already=already_manual,
         solved=bool(audit.get("review_solved")),
     )
+    if not already_manual:
+        product_events.track_event(
+            org_id, getattr(request.state, "user_id", None), "flag_created",
+            {"call_id": call_id, "source": "manual"},
+        )
     log.info("call %d flagged for manual review", call_id)
     return {
         "status": "ok",
@@ -2138,6 +2172,11 @@ def solve_flagged_review(call_id: int, request: Request):
         call_id=call_id,
         already=already,
     )
+    if not already:
+        product_events.track_event(
+            org_id, getattr(request.state, "user_id", None), "flag_solved",
+            {"call_id": call_id},
+        )
     log.info("call %d review marked solved", call_id)
     return {
         "status": "ok",
@@ -2190,6 +2229,10 @@ def post_feedback(call_id: int, request: Request):
     if existing.get("status") == "ok" and (existing.get("agent") or []):
         log.info("on-demand feedback cache HIT for call %d", call_id)
         applog.event(log, "feedback_cache", result="HIT", call_id=call_id)
+        product_events.track_event(
+            org_id, getattr(request.state, "user_id", None), "feedback_requested",
+            {"call_id": call_id, "cache_hit": True},
+        )
         return {"call_id": call_id, "feedback": existing}
 
     _cid, _meta, segments = qa.load_call(call_id, org_id=org_id)
@@ -2227,6 +2270,10 @@ def post_feedback(call_id: int, request: Request):
         model="claude-sonnet-5",
         effort="high",
     )
+    product_events.track_event(
+        org_id, getattr(request.state, "user_id", None), "feedback_requested",
+        {"call_id": call_id, "cache_hit": False, "status": feedback.get("status")},
+    )
     return {"call_id": call_id, "feedback": feedback}
 
 
@@ -2257,6 +2304,10 @@ def get_stakeholder_email_compose(call_id: int, request: Request):
         "stakeholder Gmail compose for call %d (risk=%s, to=%s, retention=%s)",
         call_id, risk, payload.get("to") or "(blank)",
         (audit.get("retention_email") or {}).get("status"),
+    )
+    product_events.track_event(
+        org_id, getattr(request.state, "user_id", None), "stakeholder_email_drafted",
+        {"call_id": call_id, "churn_risk": risk},
     )
     return {
         "call_id": call_id,
@@ -3011,11 +3062,17 @@ def upload(request: Request, file: UploadFile = File(...)):
         )
         log.error("upload/transcription failed: %s", msg)
         sentry_report.capture_exception(e)
+        product_events.track_event(
+            org_id, uploaded_by, "upload_failed", {"source": "manual"},
+        )
         raise _upload_error_status(msg)
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
 
+    product_events.track_event(
+        org_id, uploaded_by, "call_uploaded", {"source": "manual", "size_bytes": size},
+    )
     return {"call_id": call_id, "filename": _call_filename(call_id, org_id)}
 
 
@@ -3063,6 +3120,9 @@ def upload_batch(request: Request, file: UploadFile = File(...)):
                         uploaded_by=uploaded_by,
                     )
                 _store_playback(item["path"], call_id, org_id)
+                product_events.track_event(
+                    org_id, uploaded_by, "call_uploaded", {"source": "batch"},
+                )
                 return {
                     "index": item["index"],
                     "filename": item["filename"],
@@ -3078,6 +3138,9 @@ def upload_batch(request: Request, file: UploadFile = File(...)):
                     error=msg,
                 )
                 sentry_report.capture_exception(e)
+                product_events.track_event(
+                    org_id, uploaded_by, "upload_failed", {"source": "batch"},
+                )
                 return {
                     "index": item["index"],
                     "filename": item["filename"],
@@ -3172,6 +3235,12 @@ def upload_batch(request: Request, file: UploadFile = File(...)):
             count=len(calls),
             duration_ms=duration_ms,
         )
+        error_count = sum(1 for c in calls if c.get("status") == "error")
+        if 0 < error_count < len(calls):
+            product_events.track_event(
+                org_id, uploaded_by, "batch_partial_failure",
+                {"batch_id": batch_id, "total": len(calls), "failed": error_count},
+            )
         log.info("batch %s done in %.0f ms (%d call(s))", batch_id, duration_ms, len(calls))
         return {"count": len(calls), "calls": calls}
     finally:

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { apiFetch, readError } from '../lib/api'
+import { apiFetch, readError, trackEvent } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 
 type DimensionKind = 'builtin' | 'custom'
@@ -92,6 +92,10 @@ export function RubricBuilder() {
     setDraft(toDraft(payload.dimensions))
     setRubricName(payload.name || '')
   }
+
+  useEffect(() => {
+    trackEvent('rubric_builder_opened')
+  }, [])
 
   useEffect(() => {
     let cancelled = false

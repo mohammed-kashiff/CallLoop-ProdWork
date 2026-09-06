@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CallPicker } from '../components/CallPicker'
 import { ChurnCue } from '../components/LoopCues'
@@ -6,7 +6,7 @@ import { SketchWallpaper } from '../components/SketchWallpaper'
 import { KpiCard } from '../components/KpiCard'
 import { Workspace, callNoteScopeKey } from '../components/Workspace'
 import { capFirst, capWords, formatTime } from '../lib/format'
-import { apiFetch, readError } from '../lib/api'
+import { apiFetch, readError, trackEvent } from '../lib/api'
 import { useAudit } from '../context/AuditContext'
 import type { ChurnLevel } from '../types'
 
@@ -30,6 +30,10 @@ export function ChurnRisk() {
   const [switching, setSwitching] = useState(false)
   const [emailing, setEmailing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    trackEvent('churn_risk_viewed')
+  }, [])
 
   const callLabel = capFirst(report.fileName || report.callId || 'Current call')
   const agentLabel = capWords(report.agentName)
