@@ -7,8 +7,11 @@ from contextlib import contextmanager
 from fastapi.testclient import TestClient
 
 from backend.org_features import (
+    DEFAULT_OFF_KEYS,
+    FEATURE_DEFINITIONS,
     FEATURE_KEYS,
     default_features,
+    feature_definitions,
     feature_history,
     features_for_org,
     set_feature,
@@ -142,6 +145,66 @@ def test_default_features_keeps_trial_on_and_selfhosted_off():
         for key in FEATURE_KEYS
         if key not in off_by_default
     )
+
+
+def test_feature_keys_and_default_off_keys_are_derived_from_definitions():
+    """AC-36: FEATURE_KEYS/DEFAULT_OFF_KEYS must never drift from
+    FEATURE_DEFINITIONS again — they're derived from it, not maintained
+    separately, so this is really asserting the derivation held, not
+    re-testing two independent lists."""
+    assert set(FEATURE_KEYS) == set(FEATURE_DEFINITIONS.keys())
+    assert DEFAULT_OFF_KEYS == {
+        key for key, defn in FEATURE_DEFINITIONS.items() if not defn["default_enabled"]
+    }
+
+
+def test_feature_definitions_have_a_valid_risk_tier_and_full_metadata():
+    defs = feature_definitions()
+    assert len(defs) == len(FEATURE_KEYS)
+    seen_keys = set()
+    for entry in defs:
+        assert entry["key"] in FEATURE_KEYS
+        seen_keys.add(entry["key"])
+        assert entry["risk"] in ("low", "medium", "danger")
+        assert isinstance(entry["label"], str) and entry["label"]
+        assert isinstance(entry["description"], str) and entry["description"]
+        assert isinstance(entry["default_enabled"], bool)
+    assert seen_keys == set(FEATURE_KEYS)
+
+
+def test_bulk_call_clear_is_the_only_danger_tier_flag_today():
+    """The one genuinely destructive flag (hard-delete-adjacent, org-wide)
+    must be tiered as danger — this is the acceptance-critical case the
+    confirmation-prompt gating exists for."""
+    defs = {d["key"]: d for d in feature_definitions()}
+    assert defs["enable_bulk_call_clear"]["risk"] == "danger"
+    danger_keys = {k for k, d in defs.items() if d["risk"] == "danger"}
+    assert danger_keys == {"enable_bulk_call_clear"}
+
+
+def test_admin_feature_flags_route_returns_risk_metadata(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get("/api/admin/feature-flags")
+    assert r.status_code == 200
+    flags = r.json()["flags"]
+    assert len(flags) == len(FEATURE_KEYS)
+    by_key = {f["key"]: f for f in flags}
+    assert by_key["enable_bulk_call_clear"]["risk"] == "danger"
+    assert by_key["show_usage_bar"]["risk"] == "low"
+
+
+def test_admin_feature_flags_route_403_for_non_admin(monkeypatch):
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get("/api/admin/feature-flags")
+    assert r.status_code == 403
 
 
 def test_disabled_row_is_reported_false(monkeypatch):

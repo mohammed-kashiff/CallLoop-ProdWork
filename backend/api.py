@@ -447,6 +447,16 @@ def admin_activity(
     )
 
 
+@app.get("/api/admin/feature-flags")
+def admin_feature_flags(request: Request):
+    """AC-36: label/description/risk metadata for every flag in
+    FEATURE_DEFINITIONS, so Command Center can group Low/Medium/Danger and
+    gate a confirmation prompt on danger-zone toggles generically — no
+    frontend change needed when a flag is added here with a risk tier."""
+    auth.require_platform_admin(request)
+    return {"flags": org_features.feature_definitions()}
+
+
 @app.post("/api/admin/features")
 def admin_features(request: Request, body: AdminFeatureBody):
     auth.require_platform_admin(request)
