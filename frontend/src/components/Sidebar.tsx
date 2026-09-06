@@ -414,6 +414,15 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               >
                 Call logs
               </NavLink>
+              <NavLink
+                to="/platform-admins"
+                className={({ isActive }) =>
+                  ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+                }
+                onClick={onNavigate}
+              >
+                Platform Admins
+              </NavLink>
             </>
           ) : null}
         </nav>

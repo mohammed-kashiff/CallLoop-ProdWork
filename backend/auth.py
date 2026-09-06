@@ -49,6 +49,7 @@ class Membership:
     org_id: str
     role: str
     user_id: str
+    is_platform_admin: bool = False
 
 
 def _supabase_url() -> str:
@@ -174,6 +175,19 @@ def _optional_name(value: object) -> str | None:
     return text[:80]
 
 
+def _resolve_is_platform_admin(conn, email: str | None) -> bool:
+    """DB half of auth.is_platform_admin() — the static PLATFORM_ADMIN_EMAILS
+    env var is checked separately (cheap, no DB) and ORed with this.
+    is_platform_admin_email() is SECURITY DEFINER (0026): platform_admins
+    is never granted to callproof_app directly."""
+    if not email:
+        return False
+    row = conn.execute(
+        "SELECT public.is_platform_admin_email(%s) AS v", (email,),
+    ).fetchone()
+    return bool(row and row["v"])
+
+
 def ensure_membership(
     user_id: str,
     email: str | None = None,
@@ -201,7 +215,8 @@ def ensure_membership(
         if row:
             org_id = str(row["org_id"])
             _ensure_placeholder_rubric(conn, org_id=org_id, user_id=uid)
-            return Membership(org_id, str(row["role"]), uid)
+            is_admin = _resolve_is_platform_admin(conn, email)
+            return Membership(org_id, str(row["role"]), uid, is_admin)
 
         conn.execute("LOCK TABLE org_members IN EXCLUSIVE MODE")
         row = conn.execute(
@@ -215,7 +230,8 @@ def ensure_membership(
         if row:
             org_id = str(row["org_id"])
             _ensure_placeholder_rubric(conn, org_id=org_id, user_id=uid)
-            return Membership(org_id, str(row["role"]), uid)
+            is_admin = _resolve_is_platform_admin(conn, email)
+            return Membership(org_id, str(row["role"]), uid, is_admin)
 
         domain = _signup_domain(email)
         created = False
@@ -292,9 +308,11 @@ def ensure_membership(
             _ensure_placeholder_rubric(
                 conn, org_id=str(row["org_id"]), user_id=uid,
             )
-            return Membership(str(row["org_id"]), str(row["role"]), uid)
+            is_admin = _resolve_is_platform_admin(conn, email)
+            return Membership(str(row["org_id"]), str(row["role"]), uid, is_admin)
 
-        return Membership(org_id, role, uid)
+        is_admin = _resolve_is_platform_admin(conn, email)
+        return Membership(org_id, role, uid, is_admin)
 
 
 def ensure_placeholder_org(conn) -> None:
@@ -397,6 +415,7 @@ class JwtAuthMiddleware:
             request.state.org_id = membership.org_id
             request.state.role = membership.role
             request.state.email = email_s
+            request.state.is_platform_admin_db = membership.is_platform_admin
             org_token = bind_org_id(membership.org_id)
             await self.app(scope, receive, send)
         finally:
@@ -418,14 +437,22 @@ def org_id_from_request(request: Request) -> str:
 
 
 def is_platform_admin(request: Request) -> bool:
-    """True iff the verified JWT email is on PLATFORM_ADMIN_EMAILS. Fail closed."""
+    """True iff the verified JWT email is on PLATFORM_ADMIN_EMAILS (static,
+    env var) OR in the DB-managed platform_admins table (0026, Command
+    Center > Platform Admins). Fail closed either way.
+
+    The DB half is resolved once per request in ensure_membership() and
+    stashed on request.state.is_platform_admin_db — no extra DB round
+    trip here, this function stays pure/synchronous like before."""
     allowed = {
         e.strip().lower()
         for e in (os.getenv("PLATFORM_ADMIN_EMAILS") or "").split(",")
         if e.strip()
     }
     email = (getattr(request.state, "email", None) or "").strip().lower()
-    return bool(email and email in allowed)
+    if email and email in allowed:
+        return True
+    return bool(getattr(request.state, "is_platform_admin_db", False))
 
 
 def require_platform_admin(request: Request) -> None:

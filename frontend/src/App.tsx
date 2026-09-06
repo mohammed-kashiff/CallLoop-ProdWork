@@ -19,6 +19,7 @@ import { Home } from './pages/Home'
 import { Integrations } from './pages/Integrations'
 import { Login } from './pages/Login'
 import { Neighbourhood } from './pages/Neighbourhood'
+import { PlatformAdmins } from './pages/PlatformAdmins'
 import { Profile } from './pages/Profile'
 import { ResetPassword } from './pages/ResetPassword'
 import { RubricBuilder } from './pages/RubricBuilder'
@@ -69,6 +70,7 @@ function App() {
                     <Route path="training" element={<Training />} />
                     <Route path="admin" element={<Admin />} />
                     <Route path="call-logs" element={<CallLogs />} />
+                    <Route path="platform-admins" element={<PlatformAdmins />} />
                     <Route path="call-logs/:callId/trail" element={<CallTrail />} />
                     <Route path="ticket-audit" element={<TicketAudit />} />
                     <Route path="ticket-audit/:ticketId" element={<TicketAudit />} />

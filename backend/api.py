@@ -51,6 +51,7 @@ from . import justcall
 from . import org_features
 from . import org_vault
 from . import password_events
+from . import platform_admins
 from . import rubric_builder
 from . import sentry_report
 from .config import cors_origins, load_env, skip_startup
@@ -363,6 +364,41 @@ def provision_user(request: Request, body: ProvisionUserBody):
 def admin_directory(request: Request, q: str = ""):
     auth.require_platform_admin(request)
     return admin_console.search_directory(q)
+
+
+class AddPlatformAdminBody(BaseModel):
+    email: str
+
+
+@app.get("/api/admin/platform-admins")
+def list_platform_admins_route(request: Request):
+    """Command Center > Platform Admins. Does not include statically
+    configured PLATFORM_ADMIN_EMAILS entries — only ones granted here."""
+    auth.require_platform_admin(request)
+    return {"admins": platform_admins.list_platform_admins()}
+
+
+@app.post("/api/admin/platform-admins")
+def add_platform_admin_route(request: Request, body: AddPlatformAdminBody):
+    """Grants platform admin access. Internal CallLoop staff only — this
+    route itself is why: only an existing platform admin can reach it."""
+    auth.require_platform_admin(request)
+    return platform_admins.add_platform_admin(
+        body.email, added_by=getattr(request.state, "email", None),
+    )
+
+
+@app.delete("/api/admin/platform-admins/{email}")
+def remove_platform_admin_route(request: Request, email: str):
+    auth.require_platform_admin(request)
+    caller_email = (getattr(request.state, "email", None) or "").strip().lower()
+    if caller_email and caller_email == (email or "").strip().lower():
+        raise HTTPException(
+            status_code=400,
+            detail="You cannot remove your own platform admin access from this page.",
+        )
+    platform_admins.remove_platform_admin(email)
+    return {"ok": True}
 
 
 @app.get("/api/admin/usage")
