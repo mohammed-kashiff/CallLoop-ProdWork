@@ -9,7 +9,11 @@ and it won't drift since the template is fixed. The LLM-structuring path
 for genuinely unknown/variable exports is a different approach for a
 different source and is out of scope here.
 
-Confirmed template (verified against a real ticket export):
+Confirmed templates (verified against real exports — JustCall has two
+export screens that share the same turn/day/footer body and differ only
+in their header):
+
+  Helpdesk ticket export (has a Ticket Details section):
     Conversation with JustCall
     Ticket ID: #<id>
     Started on <date> at <time> <tz>
@@ -26,6 +30,15 @@ Confirmed template (verified against a real ticket export):
     <HH:MM AM/PM> | <Speaker>: <text, may wrap across lines>
     ...
     --- <Month Day, Year> ---
+    ...
+    Exported from JustCall on <date> at <time> <tz>
+
+  Conversation export (JustCall's chat/inbox view — no Ticket Details,
+  no Participants list; goes straight from the title into the turns):
+    Conversation with JustCall
+    Started on <date> at <time> <tz>
+    --- <Month Day, Year> ---
+    <HH:MM AM/PM> | <Speaker>: <text, may wrap across lines>
     ...
     Exported from JustCall on <date> at <time> <tz>
 
@@ -112,11 +125,21 @@ def extract_text(pdf_bytes: bytes) -> str:
 
 
 def looks_like_justcall_export(text: str) -> bool:
-    """Cheap signature check: does this match the known, stable JustCall
-    template TA-2 verified, or something else (print-to-PDF, a different
-    platform)? Callers should only use parse_turns() when this is True —
-    anything else needs the (not yet built) LLM-structuring fallback."""
-    return "Ticket Details" in text and bool(_TURN_RE_MULTILINE.search(text))
+    """Cheap signature check: does this match one of the known, stable
+    JustCall export templates (see module docstring), or something else
+    (print-to-PDF, a different platform)? Callers should only use
+    parse_turns() when this is True — anything else needs the (not yet
+    built) LLM-structuring fallback.
+
+    Both confirmed templates share the same turn/day/footer body and the
+    same deterministic parser below — a Helpdesk ticket export always has
+    a "Ticket Details" section, while a Conversation export (JustCall's
+    chat/inbox view) never does, so either marker is sufficient once the
+    turn shape itself is confirmed present.
+    """
+    if not _TURN_RE_MULTILINE.search(text):
+        return False
+    return "Ticket Details" in text or "Conversation with JustCall" in text
 
 
 def _speaker_role(raw_name: str) -> str:

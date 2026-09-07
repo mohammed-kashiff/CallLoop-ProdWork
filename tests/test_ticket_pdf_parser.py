@@ -39,12 +39,39 @@ Exported from JustCall on September 5, 2026 at 03:46 AM Asia/Calcutta time IST (
 """
 
 
+CONVERSATION_SAMPLE_TEXT = """\
+Conversation with JustCall
+Started on August 18, 2026 at 09:38 PM Asia/Calcutta time IST (GMT+0530)
+--- August 18, 2026 ---
+09:38 PM | Anthony Brunetti: Dashboard is buggy, getting error messages.
+09:38 PM | Welma Bot: Got it — dashboard errors are often browser-related.
+09:40 PM | Kashif from JustCall: Hi Anthony, thank you for reporting this.
+Exported from JustCall on September 7, 2026 at 08:15 PM Asia/Calcutta time IST (GMT+0530)
+"""
+
+
 def test_looks_like_justcall_export_detects_the_known_template():
     assert tpp.looks_like_justcall_export(SAMPLE_TEXT) is True
 
 
+def test_looks_like_justcall_export_detects_the_conversation_export_variant():
+    """The 'Conversation' export (JustCall's chat/inbox view) has no
+    Ticket Details/Participants section at all — only the Helpdesk ticket
+    export does. Rejecting anything without "Ticket Details" used to
+    reject this entirely legitimate export too (a real /api/tickets/upload
+    400 caused by this)."""
+    assert "Ticket Details" not in CONVERSATION_SAMPLE_TEXT
+    assert tpp.looks_like_justcall_export(CONVERSATION_SAMPLE_TEXT) is True
+
+
 def test_looks_like_justcall_export_rejects_unrelated_text():
     assert tpp.looks_like_justcall_export("Just some random PDF text.") is False
+
+
+def test_looks_like_justcall_export_rejects_justcall_title_with_no_turns():
+    """The title string alone must not be enough — still needs at least
+    one real turn line, same bar as the Ticket Details path."""
+    assert tpp.looks_like_justcall_export("Conversation with JustCall\nNo turns here.") is False
 
 
 def test_parse_turns_produces_one_entry_per_turn_in_order():
@@ -231,6 +258,33 @@ def test_parse_ticket_pdf_against_the_real_sample():
     assert turns[0]["speaker_name"] == "Kevin Abraham"
     assert any(t["speaker"] == "bot" and t["speaker_name"] == "Welma Bot" for t in turns)
     assert any(t["speaker"] == "agent" for t in turns)
+    seqs = [t["seq"] for t in turns]
+    assert seqs == list(range(len(turns)))
+    all_text = " ".join(t["text"] for t in turns)
+    assert "Exported from JustCall" not in all_text
+
+
+REAL_CONVERSATION_SAMPLE_PATH = os.path.expanduser(
+    "~/Downloads/justcall_2026_08_18_215475538155779.pdf"
+)
+
+
+@pytest.mark.skipif(
+    not os.path.isfile(REAL_CONVERSATION_SAMPLE_PATH),
+    reason="real sample PDF only present on the dev machine that has it",
+)
+def test_parse_ticket_pdf_against_the_real_conversation_export_sample():
+    """The Conversation-export variant (no Ticket Details section) that
+    used to 400 on /api/tickets/upload with 'not a JustCall ticket
+    export' — this is the exact file that surfaced the gap."""
+    with open(REAL_CONVERSATION_SAMPLE_PATH, "rb") as f:
+        pdf_bytes = f.read()
+    turns = tpp.parse_ticket_pdf(pdf_bytes)
+    assert len(turns) > 5
+    assert turns[0]["speaker"] == "customer"
+    assert turns[0]["speaker_name"] == "Anthony Brunetti"
+    assert any(t["speaker"] == "bot" and t["speaker_name"] == "Welma Bot" for t in turns)
+    assert any(t["speaker"] == "agent" and t["speaker_name"] == "Kashif" for t in turns)
     seqs = [t["seq"] for t in turns]
     assert seqs == list(range(len(turns)))
     all_text = " ".join(t["text"] for t in turns)
