@@ -211,3 +211,26 @@ def test_exchange_code_for_token_never_sends_a_get_request_or_logs_the_secret(mo
             assert "client_secret" not in lowered
             assert "access_token" not in lowered
             assert "code" not in lowered or "status_code" in lowered
+
+
+# ── poll_seconds ──────────────────────────────────────────────────────────────
+
+
+def test_poll_seconds_defaults_to_300(monkeypatch):
+    monkeypatch.delenv("INTERCOM_POLL_SECONDS", raising=False)
+    assert intercom_oauth.poll_seconds() == 300
+
+
+def test_poll_seconds_reads_env_var(monkeypatch):
+    monkeypatch.setenv("INTERCOM_POLL_SECONDS", "600")
+    assert intercom_oauth.poll_seconds() == 600
+
+
+def test_poll_seconds_clamps_to_a_30_second_floor(monkeypatch):
+    monkeypatch.setenv("INTERCOM_POLL_SECONDS", "1")
+    assert intercom_oauth.poll_seconds() == 30
+
+
+def test_poll_seconds_falls_back_to_default_on_garbage(monkeypatch):
+    monkeypatch.setenv("INTERCOM_POLL_SECONDS", "not-a-number")
+    assert intercom_oauth.poll_seconds() == 300

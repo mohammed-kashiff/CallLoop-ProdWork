@@ -3,6 +3,7 @@ callback, status, disconnect. No live Intercom API calls, no real Vault."""
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.org_ids import DEFAULT_ORG_ID, bound_org_id
@@ -433,3 +434,94 @@ def test_webhook_ignores_unhandled_topics(monkeypatch):
     )
     assert r.status_code == 200
     assert r.json()["accepted"] is False
+
+
+# ── _sync_intercom_recent (IN-6 polling backstop) ────────────────────────────
+
+
+def test_status_reports_polling_fields(monkeypatch):
+    from backend.api import app
+    from tests.conftest import authorize
+
+    _stub_vault(monkeypatch)
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get("/api/integrations/intercom")
+    assert r.status_code == 200
+    body = r.json()
+    assert "polling" in body
+    assert body["poll_seconds"] == 300
+
+
+def test_sync_intercom_recent_requires_a_stored_token(monkeypatch):
+    import backend.api as api_module
+
+    monkeypatch.setattr(api_module.org_vault, "load_credential", lambda *a, **k: None)
+    with pytest.raises(RuntimeError, match="not connected"):
+        api_module._sync_intercom_recent(DEFAULT_ORG_ID)
+
+
+def test_sync_intercom_recent_ingests_every_found_conversation(monkeypatch):
+    import backend.api as api_module
+
+    monkeypatch.setattr(
+        api_module.org_vault, "load_credential",
+        lambda org_id, provider: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        api_module.intercom_client, "search_closed_conversations",
+        lambda token, since: [{"id": "c1"}, {"id": "c2"}],
+    )
+    ingested = []
+    monkeypatch.setattr(
+        api_module.intercom_ingest, "ingest_intercom_conversation",
+        lambda org_id, cid: ingested.append(cid) or "ticket-id",
+    )
+    result = api_module._sync_intercom_recent(DEFAULT_ORG_ID)
+    assert ingested == ["c1", "c2"]
+    assert result == {"found": 2, "processed": 2, "errors": 0}
+
+
+def test_sync_intercom_recent_continues_past_a_single_ingest_failure(monkeypatch):
+    """One bad conversation must not stop the rest of the batch from
+    being processed — same discipline as _sync_justcall_recent."""
+    import backend.api as api_module
+
+    monkeypatch.setattr(
+        api_module.org_vault, "load_credential",
+        lambda org_id, provider: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        api_module.intercom_client, "search_closed_conversations",
+        lambda token, since: [{"id": "bad"}, {"id": "good"}],
+    )
+
+    def _ingest(org_id, cid):
+        if cid == "bad":
+            raise RuntimeError("boom")
+        return "ticket-id"
+
+    monkeypatch.setattr(api_module.intercom_ingest, "ingest_intercom_conversation", _ingest)
+    result = api_module._sync_intercom_recent(DEFAULT_ORG_ID)
+    assert result == {"found": 2, "processed": 1, "errors": 1}
+
+
+def test_sync_intercom_recent_skips_entries_with_no_id(monkeypatch):
+    import backend.api as api_module
+
+    monkeypatch.setattr(
+        api_module.org_vault, "load_credential",
+        lambda org_id, provider: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        api_module.intercom_client, "search_closed_conversations",
+        lambda token, since: [{"no_id": "here"}],
+    )
+    called = []
+    monkeypatch.setattr(
+        api_module.intercom_ingest, "ingest_intercom_conversation",
+        lambda org_id, cid: called.append(cid),
+    )
+    result = api_module._sync_intercom_recent(DEFAULT_ORG_ID)
+    assert called == []
+    assert result == {"found": 1, "processed": 0, "errors": 0}

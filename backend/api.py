@@ -47,6 +47,7 @@ from . import env_keys
 from . import call_trail
 from . import error_notify
 from . import impersonation
+from . import intercom_client
 from . import intercom_ingest
 from . import intercom_oauth
 from . import justcall
@@ -2874,6 +2875,8 @@ def intercom_integration_status(request: Request):
         "app_configured": intercom_oauth.is_configured(),
         "configured": bool(org_status.get("configured")),
         "suffix": org_status.get("suffix"),
+        "polling": _intercom_poller_started,
+        "poll_seconds": intercom_oauth.poll_seconds(),
     }
 
 
@@ -2961,6 +2964,7 @@ def intercom_callback(request: Request, code: str = "", state: str = "", error: 
         raise HTTPException(
             status_code=502, detail="Could not store the Intercom connection.",
         ) from None
+    _start_intercom_poller()
     applog.event(log, "intercom_callback", accepted=True, org_id=org_id)
     return {"ok": True, "connected": True}
 
@@ -3080,6 +3084,81 @@ async def intercom_webhook(request: Request):
         accepted=False, org_id=org_id, topic=topic, reason="unhandled_topic",
     )
     return {"ok": True, "accepted": False}
+
+
+_intercom_poller_started = False
+
+
+def _sync_intercom_recent(org_id: str, *, hours: int = 24) -> dict:
+    """Pull recently-closed Intercom conversations for one org and ingest
+    any not already ingested (find_ticket_by_external_id/create_ticket's
+    unique index makes this idempotent). Mirrors _sync_justcall_recent's
+    exact role — backfill on connect, backstop for a missed/delayed
+    webhook — just against Intercom's Search API instead of JustCall's
+    plain list, since that's the endpoint that can actually filter by
+    state and date (see intercom_client.search_closed_conversations).
+    """
+    creds = org_vault.load_credential(org_id, intercom_oauth.PROVIDER)
+    if not creds or not creds.get("access_token"):
+        raise RuntimeError("Intercom is not connected for this org.")
+    since_unix = int(time.time()) - hours * 3600
+    conversations = intercom_client.search_closed_conversations(
+        creds["access_token"], since_unix,
+    )
+    processed = 0
+    errors = 0
+    for conv in conversations:
+        cid = str(conv.get("id") or "").strip()
+        if not cid:
+            continue
+        try:
+            intercom_ingest.ingest_intercom_conversation(org_id, cid)
+            processed += 1
+        except Exception as e:  # noqa: BLE001
+            errors += 1
+            applog.event(
+                log, "intercom_sync_failed", level=logging.ERROR,
+                org_id=org_id, conversation_id=cid, error=applog.safe_exception_text(e),
+            )
+    applog.event(
+        log, "intercom_sync",
+        org_id=org_id, found=len(conversations), processed=processed, errors=errors,
+    )
+    return {"found": len(conversations), "processed": processed, "errors": errors}
+
+
+def _intercom_poll_loop():
+    while True:
+        try:
+            ids = org_vault.list_org_ids_for_provider(intercom_oauth.PROVIDER)
+        except Exception:  # noqa: BLE001
+            ids = []
+        for oid in ids:
+            try:
+                with org_scope(oid):
+                    _sync_intercom_recent(oid)
+            except Exception as e:  # noqa: BLE001
+                applog.event(
+                    log, "intercom_poll_error", level=logging.ERROR,
+                    org_id=oid, error=str(e)[:300],
+                )
+        time.sleep(intercom_oauth.poll_seconds())
+
+
+def _start_intercom_poller():
+    global _intercom_poller_started
+    if _intercom_poller_started or skip_startup():
+        return
+    _intercom_poller_started = True
+    threading.Thread(
+        target=_intercom_poll_loop,
+        name="intercom-poller",
+        daemon=True,
+    ).start()
+    applog.event(
+        log, "intercom_poller_started",
+        interval_seconds=intercom_oauth.poll_seconds(),
+    )
 
 
 def _upload_error_status(msg: str) -> HTTPException:
@@ -3506,3 +3585,4 @@ def upload_batch(request: Request, file: UploadFile = File(...)):
 
 if not skip_startup():
     _start_justcall_poller()
+    _start_intercom_poller()

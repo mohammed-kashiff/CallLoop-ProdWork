@@ -72,6 +72,18 @@ def is_configured() -> bool:
     return bool(client_id() and client_secret())
 
 
+def poll_seconds() -> int:
+    """Backstop poll interval (IN-6) — deliberately much lower-frequency
+    than JustCall's (45s default): this only needs to catch what a missed
+    webhook dropped, not drive primary ingestion, so there's no reason to
+    hammer Intercom's Search API on a tight loop."""
+    raw = (os.getenv("INTERCOM_POLL_SECONDS") or "300").strip()
+    try:
+        return max(30, int(raw))
+    except ValueError:
+        return 300
+
+
 def _b64url_encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
