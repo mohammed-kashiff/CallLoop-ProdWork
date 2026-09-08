@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from backend.org_ids import DEFAULT_ORG_ID
+from backend.org_ids import DEFAULT_ORG_ID, bound_org_id
 
 ORG_B = "00000000-0000-4000-8000-000000000002"
 
@@ -128,6 +128,36 @@ def test_callback_stores_the_token_under_the_org_id_from_state(monkeypatch):
     assert r.status_code == 200
     assert store[(DEFAULT_ORG_ID, "intercom")]["data"]["access_token"] == "tok_wxyz9999"
     assert store[(DEFAULT_ORG_ID, "intercom")]["suffix"] == "9999"
+
+
+def test_callback_binds_org_scope_before_writing_the_credential(monkeypatch):
+    """Regression test for a real production bug: the callback is a public
+    route (never touches JwtAuthMiddleware, which is what normally binds
+    org_id for RLS), so org_credentials' RLS policy — org_id =
+    current_org_id() — rejected the INSERT with no bound org, and that raw
+    exception wasn't VaultError, so it surfaced as a bare 500. The earlier
+    version of this test file stubbed put_credential entirely, which is
+    exactly why it didn't catch this — the stub never checked whether an
+    org was actually bound. This one does."""
+    from backend import intercom_oauth
+    from backend.api import app
+
+    _configure_app(monkeypatch)
+    monkeypatch.setattr(intercom_oauth, "exchange_code_for_token", lambda code: "tok_scoped_0001")
+
+    seen_bound_org_id = {}
+
+    def put_credential(org_id, provider, data, *, key_suffix=None):
+        seen_bound_org_id["value"] = bound_org_id()
+        return key_suffix or ""
+
+    monkeypatch.setattr("backend.org_vault.put_credential", put_credential)
+    client = TestClient(app)
+
+    state = intercom_oauth.make_state(DEFAULT_ORG_ID)
+    r = client.get(f"/api/integrations/intercom/callback?code=abc&state={state}")
+    assert r.status_code == 200
+    assert seen_bound_org_id["value"] == DEFAULT_ORG_ID
 
 
 def test_callback_never_echoes_the_access_token(monkeypatch):

@@ -2933,9 +2933,18 @@ def intercom_callback(request: Request, code: str = "", state: str = "", error: 
         ) from None
     suffix = token[-4:] if len(token) >= 8 else None
     try:
-        org_vault.put_credential(
-            org_id, intercom_oauth.PROVIDER, {"access_token": token}, key_suffix=suffix,
-        )
+        # This request never went through JwtAuthMiddleware (it's public —
+        # see the docstring above), so nothing bound an org for RLS yet.
+        # org_credentials is RLS'd on org_id = current_org_id(); without an
+        # explicit org_scope() here, the INSERT has no bound org, RLS
+        # correctly rejects it, and that raw exception isn't VaultError —
+        # it was surfacing as a bare 500. Same fix _process_justcall_call
+        # already applies for the identical "public route, needs org
+        # context" situation.
+        with org_scope(org_id):
+            org_vault.put_credential(
+                org_id, intercom_oauth.PROVIDER, {"access_token": token}, key_suffix=suffix,
+            )
     except org_vault.VaultUnavailable:
         raise HTTPException(
             status_code=503, detail="Credential vault is not available on this database.",
