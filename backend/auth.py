@@ -36,7 +36,15 @@ from .org_ids import (
 log = logging.getLogger("callproof.auth")
 
 _PUBLIC_EXACT = frozenset({"/", "/health", "/healthz"})
-_PUBLIC_PATHS = frozenset({"/api/integrations/justcall/webhook"})
+_PUBLIC_PATHS = frozenset({
+    "/api/integrations/justcall/webhook",
+    # Intercom redirects the browser here after consent with no CallLoop
+    # JWT attached (it's a top-level navigation from a third-party site,
+    # not an XHR from the SPA) — org_id comes from the signed `state`
+    # param instead (see intercom_oauth.verify_state), same trust model
+    # the JustCall webhook uses (signature, not a bearer token).
+    "/api/integrations/intercom/callback",
+})
 _jwks_client: PyJWKClient | None = None
 
 

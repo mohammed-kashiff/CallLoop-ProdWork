@@ -33,7 +33,7 @@ from xml.sax.saxutils import escape as xml_escape
 import httpx
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 
 from . import admin_console
@@ -47,6 +47,7 @@ from . import env_keys
 from . import call_trail
 from . import error_notify
 from . import impersonation
+from . import intercom_oauth
 from . import justcall
 from . import org_features
 from . import org_vault
@@ -2858,6 +2859,108 @@ async def justcall_webhook(request: Request):
     ).start()
     applog.event(log, "justcall_webhook", accepted=True, justcall_id=cid)
     return {"ok": True, "queued": cid}
+
+
+@app.get("/api/integrations/intercom")
+def intercom_integration_status(request: Request):
+    """IN-3: app-level configured (host has INTERCOM_CLIENT_ID/SECRET) is
+    separate from org-level configured (this org completed OAuth) — the
+    frontend needs both to tell "nobody's set this up yet" apart from
+    "it's set up, just not for your org"."""
+    org_id = _org(request)
+    org_status = org_vault.credential_status(org_id, intercom_oauth.PROVIDER)
+    return {
+        "app_configured": intercom_oauth.is_configured(),
+        "configured": bool(org_status.get("configured")),
+        "suffix": org_status.get("suffix"),
+    }
+
+
+@app.get("/api/integrations/intercom/connect")
+def intercom_connect(request: Request):
+    """Redirects the browser to Intercom's OAuth consent screen. state
+    carries this org's id, signed — see intercom_oauth module docstring."""
+    org_id = _org(request)
+    if not intercom_oauth.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Intercom is not configured on this host "
+                "(INTERCOM_CLIENT_ID/INTERCOM_CLIENT_SECRET)."
+            ),
+        )
+    url = intercom_oauth.build_authorize_url(org_id)
+    applog.event(log, "intercom_connect_started", org_id=org_id)
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get("/api/integrations/intercom/callback")
+def intercom_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    """
+    Public route (auth._PUBLIC_PATHS) — this is a top-level browser
+    redirect from Intercom, not an XHR from CallLoop's own SPA, so it
+    arrives with no usable CallLoop JWT. org_id comes from the signed
+    `state` param instead (intercom_oauth.verify_state), never from
+    request auth — mirrors the trust model the JustCall webhook already
+    uses (a verified signature standing in for a bearer token).
+    """
+    if error:
+        applog.event(
+            log, "intercom_callback",
+            accepted=False, reason=f"intercom_error:{error[:80]}",
+        )
+        raise HTTPException(
+            status_code=400, detail="Intercom authorization was not granted.",
+        )
+    try:
+        org_id = intercom_oauth.verify_state(state)
+    except intercom_oauth.StateError as e:
+        applog.event(log, "intercom_callback", accepted=False, reason=str(e))
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired connection request. Please try connecting again.",
+        ) from None
+    try:
+        token = intercom_oauth.exchange_code_for_token(code)
+    except intercom_oauth.IntercomAuthError as e:
+        applog.event(
+            log, "intercom_callback",
+            accepted=False, org_id=org_id, reason=str(e),
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Could not complete the Intercom connection. Please try again.",
+        ) from None
+    suffix = token[-4:] if len(token) >= 8 else None
+    try:
+        org_vault.put_credential(
+            org_id, intercom_oauth.PROVIDER, {"access_token": token}, key_suffix=suffix,
+        )
+    except org_vault.VaultUnavailable:
+        raise HTTPException(
+            status_code=503, detail="Credential vault is not available on this database.",
+        ) from None
+    except org_vault.VaultError:
+        raise HTTPException(
+            status_code=502, detail="Could not store the Intercom connection.",
+        ) from None
+    applog.event(log, "intercom_callback", accepted=True, org_id=org_id)
+    return {"ok": True, "connected": True}
+
+
+@app.delete("/api/integrations/intercom")
+def intercom_disconnect(request: Request):
+    org_id = _org(request)
+    try:
+        existed = org_vault.delete_credential(org_id, intercom_oauth.PROVIDER)
+    except org_vault.VaultUnavailable:
+        existed = False
+    except org_vault.VaultError:
+        raise HTTPException(
+            status_code=502, detail="Could not remove the Intercom connection.",
+        ) from None
+    applog.event(log, "intercom_disconnected", org_id=org_id, existed=existed)
+    return {"ok": True, "configured": False, "removed": existed}
 
 
 def _upload_error_status(msg: str) -> HTTPException:
