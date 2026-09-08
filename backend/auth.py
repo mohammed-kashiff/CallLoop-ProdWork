@@ -44,6 +44,11 @@ _PUBLIC_PATHS = frozenset({
     # param instead (see intercom_oauth.verify_state), same trust model
     # the JustCall webhook uses (signature, not a bearer token).
     "/api/integrations/intercom/callback",
+    # Intercom's server calls this directly, same shared-URL-for-every-
+    # workspace situation as the JustCall webhook — org identity comes
+    # from the payload's app_id (org_vault.find_org_id_by_external_account),
+    # trust comes from the X-Hub-Signature check, not a bearer token.
+    "/api/integrations/intercom/webhook",
 })
 _jwks_client: PyJWKClient | None = None
 

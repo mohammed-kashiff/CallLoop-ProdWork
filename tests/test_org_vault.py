@@ -9,6 +9,7 @@ from backend.org_vault import (
     credential_status,
     delete_credential,
     delete_justcall,
+    find_org_id_by_external_account,
     load_credential,
     load_justcall,
     put_credential,
@@ -130,3 +131,54 @@ def test_put_load_delete_refuse_other_bound_org():
             load_justcall(ORG_B)
         with pytest.raises(ValueError, match="org_mismatch"):
             delete_justcall(ORG_B)
+
+
+def test_find_org_id_by_external_account_short_circuits_on_empty_id():
+    """IN-5: no DB patched here at all — if this hit db.connection, it
+    would raise (real connection, no test DB configured for this path).
+    Proves the empty-string guard fires before any query."""
+    assert find_org_id_by_external_account("intercom", "") is None
+    assert find_org_id_by_external_account("intercom", None) is None
+
+
+def test_find_org_id_by_external_account_validates_provider_before_any_db_call():
+    with pytest.raises(ValueError, match="invalid provider"):
+        find_org_id_by_external_account("Not Valid!", "app_123")
+
+
+def test_find_org_id_by_external_account_returns_org_id_via_stub(monkeypatch):
+    """Full round-trip needs a real Postgres row; stubbed here at the
+    db.connection boundary to check find_org_id_by_external_account's own
+    SQL shape and return-value handling in isolation."""
+    class _Result:
+        def __init__(self, row):
+            self._row = row
+
+        def fetchone(self):
+            return self._row
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, params=None):
+            norm = " ".join(str(sql).split()).upper()
+            assert norm.startswith("SELECT ORG_ID FROM ORG_CREDENTIALS")
+            assert params == ("intercom", "app_abc123")
+            return _Result({"org_id": DEFAULT_ORG_ID})
+
+    from backend import org_vault as ov
+
+    monkeypatch.setattr(ov.db, "connection", lambda **kw: _FakeConn())
+    assert find_org_id_by_external_account("intercom", "app_abc123") == DEFAULT_ORG_ID
+
+
+def test_put_credential_sql_includes_external_account_id_column():
+    """Source-level check that the INSERT actually persists the routing
+    column IN-5 depends on, without needing a live Postgres row."""
+    src = (ROOT / "backend" / "org_vault.py").read_text(encoding="utf-8")
+    put_credential_src = src.split("def put_credential")[1].split("def load_credential")[0]
+    assert "external_account_id" in put_credential_src

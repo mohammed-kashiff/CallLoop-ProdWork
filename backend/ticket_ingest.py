@@ -49,19 +49,44 @@ from . import tracing
 from .org_ids import org_scope
 
 
-def create_ticket(org_id: str, *, source: str = "pdf_upload") -> str:
-    """One row in `tickets`. status defaults to 'uploaded'. Returns the new id."""
+def create_ticket(org_id: str, *, source: str = "pdf_upload", external_id: str | None = None) -> str:
+    """One row in `tickets`. status defaults to 'uploaded'. Returns the new id.
+
+    external_id (IN-5) is the provider-side id (an Intercom conversation
+    id) — nullable, unique per (org_id, source) when set, via
+    idx_tickets_org_source_external. PDF uploads have no natural external
+    id and leave it NULL, same as before this parameter existed.
+    """
     with org_scope(org_id):
         with db.connection() as conn:
             row = conn.execute(
                 """
-                INSERT INTO tickets (org_id, source)
-                VALUES (%s, %s)
+                INSERT INTO tickets (org_id, source, external_id)
+                VALUES (%s, %s, %s)
                 RETURNING id
                 """,
-                (org_id, source),
+                (org_id, source, external_id),
             ).fetchone()
     return str(row["id"])
+
+
+def find_ticket_by_external_id(org_id: str, *, source: str, external_id: str) -> str | None:
+    """Dedup lookup (IN-5): has this provider-side id already been
+    ingested for this org? Used to make webhook/retry delivery idempotent
+    — Intercom retries on any non-2xx/timeout, and a naive re-ingest would
+    otherwise create a duplicate ticket every time."""
+    if not external_id:
+        return None
+    with org_scope(org_id):
+        with db.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id FROM tickets
+                WHERE org_id = %s AND source = %s AND external_id = %s
+                """,
+                (org_id, source, external_id),
+            ).fetchone()
+    return str(row["id"]) if row else None
 
 
 def set_ticket_status(ticket_id: str, org_id: str, status: str) -> None:

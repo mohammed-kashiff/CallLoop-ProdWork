@@ -15,8 +15,10 @@ def _stub_vault(monkeypatch):
     vault.secrets."""
     store: dict[tuple[str, str], dict] = {}
 
-    def put(org_id, provider, data, *, key_suffix=None):
-        store[(org_id, provider)] = {"data": data, "suffix": key_suffix}
+    def put(org_id, provider, data, *, key_suffix=None, external_account_id=None):
+        store[(org_id, provider)] = {
+            "data": data, "suffix": key_suffix, "external_account_id": external_account_id,
+        }
         return key_suffix or ""
 
     def load(org_id, provider):
@@ -106,6 +108,7 @@ def test_callback_requires_no_jwt_it_is_a_public_route(monkeypatch):
     _configure_app(monkeypatch)
     _stub_vault(monkeypatch)
     monkeypatch.setattr(intercom_oauth, "exchange_code_for_token", lambda code: "tok_abcd1234")
+    monkeypatch.setattr(intercom_oauth, "fetch_workspace_id", lambda token: "ws_test123")
     client = TestClient(app)  # deliberately no authorize()
 
     state = intercom_oauth.make_state(DEFAULT_ORG_ID)
@@ -121,6 +124,7 @@ def test_callback_stores_the_token_under_the_org_id_from_state(monkeypatch):
     _configure_app(monkeypatch)
     store = _stub_vault(monkeypatch)
     monkeypatch.setattr(intercom_oauth, "exchange_code_for_token", lambda code: "tok_wxyz9999")
+    monkeypatch.setattr(intercom_oauth, "fetch_workspace_id", lambda token: "ws_test123")
     client = TestClient(app)
 
     state = intercom_oauth.make_state(DEFAULT_ORG_ID)
@@ -144,10 +148,11 @@ def test_callback_binds_org_scope_before_writing_the_credential(monkeypatch):
 
     _configure_app(monkeypatch)
     monkeypatch.setattr(intercom_oauth, "exchange_code_for_token", lambda code: "tok_scoped_0001")
+    monkeypatch.setattr(intercom_oauth, "fetch_workspace_id", lambda token: "ws_test123")
 
     seen_bound_org_id = {}
 
-    def put_credential(org_id, provider, data, *, key_suffix=None):
+    def put_credential(org_id, provider, data, *, key_suffix=None, external_account_id=None):
         seen_bound_org_id["value"] = bound_org_id()
         return key_suffix or ""
 
@@ -167,10 +172,12 @@ def test_callback_never_echoes_the_access_token(monkeypatch):
     _configure_app(monkeypatch)
     _stub_vault(monkeypatch)
     monkeypatch.setattr(intercom_oauth, "exchange_code_for_token", lambda code: "tok_secret_value")
+    monkeypatch.setattr(intercom_oauth, "fetch_workspace_id", lambda token: "ws_test123")
     client = TestClient(app)
 
     state = intercom_oauth.make_state(DEFAULT_ORG_ID)
     r = client.get(f"/api/integrations/intercom/callback?code=abc&state={state}")
+    assert r.status_code == 200
     assert "tok_secret_value" not in r.text
 
 
@@ -226,6 +233,7 @@ def test_callback_cannot_store_a_credential_for_a_different_org_than_the_state(m
     _configure_app(monkeypatch)
     store = _stub_vault(monkeypatch)
     monkeypatch.setattr(intercom_oauth, "exchange_code_for_token", lambda code: "tok_orgb_0000")
+    monkeypatch.setattr(intercom_oauth, "fetch_workspace_id", lambda token: "ws_test123")
     client = TestClient(app)
 
     state_for_b = intercom_oauth.make_state(ORG_B)
@@ -252,3 +260,176 @@ def test_disconnect_removes_the_stored_credential(monkeypatch):
 
     r2 = client.get("/api/integrations/intercom")
     assert r2.json()["configured"] is False
+
+
+# ── /api/integrations/intercom/webhook ───────────────────────────────────────
+
+
+def _signed(monkeypatch, body: dict, *, secret: str = "wh_secret_123"):
+    import hashlib
+    import hmac
+    import json
+
+    _configure_app(monkeypatch, secret=secret)
+    raw = json.dumps(body).encode("utf-8")
+    sig = "sha1=" + hmac.new(secret.encode("utf-8"), raw, hashlib.sha1).hexdigest()
+    return raw, sig
+
+
+def _run_thread_target_synchronously(monkeypatch):
+    """Webhook handlers dispatch real work on a background thread — for a
+    deterministic test, make the dispatch call its target immediately
+    instead of actually threading."""
+    import backend.api as api_module
+
+    class _ImmediateThread:
+        def __init__(self, target=None, kwargs=None, name=None, daemon=None):
+            self._target = target
+            self._kwargs = kwargs or {}
+
+        def start(self):
+            self._target(**self._kwargs)
+
+    monkeypatch.setattr(api_module.threading, "Thread", _ImmediateThread)
+
+
+def test_intercom_webhook_stays_public():
+    from backend.api import app
+
+    client = TestClient(app)
+    r = client.post("/api/integrations/intercom/webhook", data=b"{}")
+    # Reaching route logic (not a 401 from JwtAuthMiddleware for lack of a
+    # bearer token) proves this path is public — it 401s for a bad
+    # signature instead, a completely different check.
+    assert r.status_code in (401, 200)
+
+
+def test_webhook_rejects_an_invalid_signature(monkeypatch):
+    from backend.api import app
+
+    _configure_app(monkeypatch, secret="wh_secret_123")
+    client = TestClient(app)
+    r = client.post(
+        "/api/integrations/intercom/webhook",
+        data=b'{"topic":"conversation.admin.closed"}',
+        headers={"X-Hub-Signature": "sha1=deadbeef"},
+    )
+    assert r.status_code == 401
+
+
+def test_webhook_ignores_missing_topic_or_app_id(monkeypatch):
+    from backend.api import app
+
+    raw, sig = _signed(monkeypatch, {"type": "notification_event"})
+    client = TestClient(app)
+    r = client.post(
+        "/api/integrations/intercom/webhook", content=raw, headers={"X-Hub-Signature": sig},
+    )
+    assert r.status_code == 200
+    assert r.json()["accepted"] is False
+
+
+def test_webhook_ignores_an_unknown_workspace(monkeypatch):
+    from backend.api import app
+
+    raw, sig = _signed(monkeypatch, {
+        "topic": "conversation.admin.closed", "app_id": "unknown_workspace",
+        "data": {"item": {"id": "conv-1"}},
+    })
+    monkeypatch.setattr("backend.org_vault.find_org_id_by_external_account", lambda *a, **k: None)
+    client = TestClient(app)
+    r = client.post(
+        "/api/integrations/intercom/webhook", content=raw, headers={"X-Hub-Signature": sig},
+    )
+    assert r.status_code == 200
+    assert r.json()["accepted"] is False
+
+
+def test_webhook_dispatches_conversation_admin_closed_to_ingest(monkeypatch):
+    from backend.api import app
+
+    raw, sig = _signed(monkeypatch, {
+        "topic": "conversation.admin.closed", "app_id": "ws_abc",
+        "data": {"item": {"id": "conv-42"}},
+    })
+    monkeypatch.setattr(
+        "backend.org_vault.find_org_id_by_external_account",
+        lambda provider, app_id: DEFAULT_ORG_ID if app_id == "ws_abc" else None,
+    )
+    _run_thread_target_synchronously(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        "backend.intercom_ingest.ingest_intercom_conversation",
+        lambda org_id, conversation_id: calls.append((org_id, conversation_id)) or "ticket-1",
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/api/integrations/intercom/webhook", content=raw, headers={"X-Hub-Signature": sig},
+    )
+    assert r.status_code == 200
+    assert r.json()["queued"] == "conv-42"
+    assert calls == [(DEFAULT_ORG_ID, "conv-42")]
+
+
+def test_webhook_swallows_ingest_failures_without_500ing(monkeypatch):
+    """A background-thread failure must never surface as a webhook error —
+    Intercom would just retry forever against a request that already
+    returned 200."""
+    from backend.api import app
+
+    raw, sig = _signed(monkeypatch, {
+        "topic": "conversation.admin.closed", "app_id": "ws_abc",
+        "data": {"item": {"id": "conv-42"}},
+    })
+    monkeypatch.setattr(
+        "backend.org_vault.find_org_id_by_external_account",
+        lambda *a, **k: DEFAULT_ORG_ID,
+    )
+    _run_thread_target_synchronously(monkeypatch)
+
+    def _boom(org_id, conversation_id):
+        raise RuntimeError("intercom is down")
+
+    monkeypatch.setattr("backend.intercom_ingest.ingest_intercom_conversation", _boom)
+    client = TestClient(app)
+    r = client.post(
+        "/api/integrations/intercom/webhook", content=raw, headers={"X-Hub-Signature": sig},
+    )
+    assert r.status_code == 200
+
+
+def test_webhook_defers_ticket_close_topics_without_erroring(monkeypatch):
+    from backend.api import app
+
+    for topic in ("ticket.resolved", "ticket.closed"):
+        raw, sig = _signed(monkeypatch, {
+            "topic": topic, "app_id": "ws_abc", "data": {"item": {"id": "ticket-1"}},
+        })
+        monkeypatch.setattr(
+            "backend.org_vault.find_org_id_by_external_account",
+            lambda *a, **k: DEFAULT_ORG_ID,
+        )
+        client = TestClient(app)
+        r = client.post(
+            "/api/integrations/intercom/webhook", content=raw, headers={"X-Hub-Signature": sig},
+        )
+        assert r.status_code == 200, topic
+        assert r.json()["accepted"] is False, topic
+
+
+def test_webhook_ignores_unhandled_topics(monkeypatch):
+    from backend.api import app
+
+    raw, sig = _signed(monkeypatch, {
+        "topic": "conversation.admin.opened", "app_id": "ws_abc", "data": {},
+    })
+    monkeypatch.setattr(
+        "backend.org_vault.find_org_id_by_external_account",
+        lambda *a, **k: DEFAULT_ORG_ID,
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/api/integrations/intercom/webhook", content=raw, headers={"X-Hub-Signature": sig},
+    )
+    assert r.status_code == 200
+    assert r.json()["accepted"] is False

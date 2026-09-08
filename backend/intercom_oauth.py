@@ -41,6 +41,7 @@ log = logging.getLogger("callproof.intercom")
 
 AUTHORIZE_URL = "https://app.intercom.com/oauth"
 TOKEN_URL = "https://api.intercom.io/auth/eagle/token"
+ME_URL = "https://api.intercom.io/me"
 PROVIDER = "intercom"
 
 # Long enough for a real login+consent click-through, short enough that a
@@ -171,3 +172,58 @@ def exchange_code_for_token(code: str) -> str:
     if not token:
         raise IntercomAuthError("token_exchange_failed")
     return token
+
+
+def fetch_workspace_id(access_token: str) -> str:
+    """GET /me with the freshly-exchanged token to learn which workspace we
+    just connected — Intercom's `app.id_code`. This is the same value that
+    shows up as `app_id` on every webhook payload from that workspace, so
+    it's what lets a shared, per-app webhook URL route an inbound event
+    back to the right CallLoop org (see org_vault.find_org_id_by_external_account).
+    Never logs the token."""
+    if not (access_token or "").strip():
+        raise IntercomAuthError("missing_code")
+    try:
+        r = httpx.get(
+            ME_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=30.0,
+        )
+    except httpx.HTTPError as e:
+        log.warning("intercom /me request failed: %s", applog.safe_exception_text(e))
+        raise IntercomAuthError("workspace_lookup_failed") from None
+    if r.status_code != 200:
+        log.warning("intercom /me rejected: status=%s", r.status_code)
+        raise IntercomAuthError("workspace_lookup_failed")
+    try:
+        body = r.json() if r.content else {}
+    except ValueError:
+        raise IntercomAuthError("workspace_lookup_failed") from None
+    app = body.get("app") if isinstance(body, dict) else None
+    workspace_id = str((app or {}).get("id_code") or "").strip()
+    if not workspace_id:
+        raise IntercomAuthError("workspace_lookup_failed")
+    return workspace_id
+
+
+def verify_webhook_signature(raw_body: bytes, signature: str | None) -> bool:
+    """Intercom signs webhook deliveries with `X-Hub-Signature: sha1=<hex>`,
+    HMAC-SHA1 over the raw request body, keyed by the app's client_secret
+    (Intercom's documented webhook security scheme — same family as
+    JustCall's HMAC check, different digest). If the app isn't configured
+    at all there's no secret to check against; that state already 503s
+    everywhere else Intercom-related, so this fails closed (returns False)
+    rather than waving every request through."""
+    secret = client_secret()
+    if not secret:
+        return False
+    if not signature:
+        return False
+    sig = signature.strip()
+    if sig.lower().startswith("sha1="):
+        sig = sig[5:]
+    digest = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha1).hexdigest()
+    try:
+        return hmac.compare_digest(digest, sig)
+    except (TypeError, ValueError):
+        return False

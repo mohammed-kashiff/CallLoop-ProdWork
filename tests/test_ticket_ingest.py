@@ -41,10 +41,23 @@ class _FakeConn:
     def execute(self, sql, params=None):
         norm = " ".join(str(sql).split()).upper()
         if norm.startswith("INSERT INTO TICKETS"):
-            org_id, source = params
+            org_id, source, external_id = params
             new_id = str(uuid.uuid4())
-            self.tickets.append({"id": new_id, "org_id": org_id, "source": source})
+            self.tickets.append({
+                "id": new_id, "org_id": org_id, "source": source, "external_id": external_id,
+            })
             return _Result([{"id": new_id}])
+        if norm.startswith("SELECT ID FROM TICKETS"):
+            org_id, source, external_id = params
+            match = next(
+                (
+                    t for t in self.tickets
+                    if t["org_id"] == org_id and t["source"] == source
+                    and t["external_id"] == external_id
+                ),
+                None,
+            )
+            return _Result([{"id": match["id"]}] if match else [])
         if norm.startswith("UPDATE TICKETS SET STATUS"):
             status, ticket_id, org_id = params
             self.status_updates.append((ticket_id, status))
@@ -81,7 +94,58 @@ def test_create_ticket_inserts_with_default_source_and_returns_id(monkeypatch):
     conn = _FakeConn()
     with _fake_db(monkeypatch, conn):
         ticket_id = ticket_ingest.create_ticket(ORG_A, source="pdf_upload")
-    assert conn.tickets == [{"id": ticket_id, "org_id": ORG_A, "source": "pdf_upload"}]
+    assert conn.tickets == [
+        {"id": ticket_id, "org_id": ORG_A, "source": "pdf_upload", "external_id": None},
+    ]
+
+
+def test_create_ticket_stores_an_external_id_when_given(monkeypatch):
+    """IN-5: an Intercom-sourced ticket carries the conversation id, so a
+    retried webhook delivery can be recognized as the same ticket."""
+    from backend import ticket_ingest
+
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ticket_id = ticket_ingest.create_ticket(
+            ORG_A, source="intercom_api", external_id="conv-123",
+        )
+    assert conn.tickets == [
+        {"id": ticket_id, "org_id": ORG_A, "source": "intercom_api", "external_id": "conv-123"},
+    ]
+
+
+def test_find_ticket_by_external_id_returns_the_existing_ticket(monkeypatch):
+    from backend import ticket_ingest
+
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ticket_id = ticket_ingest.create_ticket(
+            ORG_A, source="intercom_api", external_id="conv-123",
+        )
+        found = ticket_ingest.find_ticket_by_external_id(
+            ORG_A, source="intercom_api", external_id="conv-123",
+        )
+    assert found == ticket_id
+
+
+def test_find_ticket_by_external_id_returns_none_when_not_found(monkeypatch):
+    from backend import ticket_ingest
+
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        found = ticket_ingest.find_ticket_by_external_id(
+            ORG_A, source="intercom_api", external_id="conv-does-not-exist",
+        )
+    assert found is None
+
+
+def test_find_ticket_by_external_id_short_circuits_on_empty_id(monkeypatch):
+    from backend import ticket_ingest
+
+    # No _fake_db patching at all — if this hit the DB layer, it would
+    # raise (no connection patched), proving the empty-string guard fires
+    # before any query.
+    assert ticket_ingest.find_ticket_by_external_id(ORG_A, source="intercom_api", external_id="") is None
 
 
 def test_set_ticket_status_updates_the_right_row(monkeypatch):

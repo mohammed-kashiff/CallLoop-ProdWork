@@ -134,6 +134,71 @@ def test_exchange_code_for_token_requires_configuration(monkeypatch):
         intercom_oauth.exchange_code_for_token("some-code")
 
 
+def test_fetch_workspace_id_returns_the_app_id_code(monkeypatch):
+    _configure(monkeypatch)
+    monkeypatch.setattr(
+        intercom_oauth.httpx, "get",
+        lambda *a, **k: _FakeResponse(200, {"app": {"id_code": "o36ety8e"}, "type": "admin"}),
+    )
+    assert intercom_oauth.fetch_workspace_id("tok_abc") == "o36ety8e"
+
+
+def test_fetch_workspace_id_raises_on_non_200(monkeypatch):
+    _configure(monkeypatch)
+    monkeypatch.setattr(intercom_oauth.httpx, "get", lambda *a, **k: _FakeResponse(401, {}))
+    with pytest.raises(intercom_oauth.IntercomAuthError, match="workspace_lookup_failed"):
+        intercom_oauth.fetch_workspace_id("tok_abc")
+
+
+def test_fetch_workspace_id_raises_when_app_object_missing(monkeypatch):
+    _configure(monkeypatch)
+    monkeypatch.setattr(
+        intercom_oauth.httpx, "get", lambda *a, **k: _FakeResponse(200, {"type": "admin"}),
+    )
+    with pytest.raises(intercom_oauth.IntercomAuthError, match="workspace_lookup_failed"):
+        intercom_oauth.fetch_workspace_id("tok_abc")
+
+
+def test_fetch_workspace_id_requires_a_token():
+    with pytest.raises(intercom_oauth.IntercomAuthError, match="missing_code"):
+        intercom_oauth.fetch_workspace_id("")
+
+
+# ── verify_webhook_signature ─────────────────────────────────────────────────
+
+
+def test_verify_webhook_signature_matches_a_real_hmac_sha1(monkeypatch):
+    import hashlib
+    import hmac as hmac_module
+
+    _configure(monkeypatch, secret="whsecret")
+    body = b'{"topic":"conversation.admin.closed"}'
+    digest = hmac_module.new(b"whsecret", body, hashlib.sha1).hexdigest()
+    assert intercom_oauth.verify_webhook_signature(body, f"sha1={digest}") is True
+    assert intercom_oauth.verify_webhook_signature(body, digest) is True  # bare hex also accepted
+
+
+def test_verify_webhook_signature_rejects_a_tampered_body(monkeypatch):
+    import hashlib
+    import hmac as hmac_module
+
+    _configure(monkeypatch, secret="whsecret")
+    digest = hmac_module.new(b"whsecret", b"original body", hashlib.sha1).hexdigest()
+    assert intercom_oauth.verify_webhook_signature(b"tampered body", f"sha1={digest}") is False
+
+
+def test_verify_webhook_signature_fails_closed_with_no_signature(monkeypatch):
+    _configure(monkeypatch, secret="whsecret")
+    assert intercom_oauth.verify_webhook_signature(b"{}", None) is False
+    assert intercom_oauth.verify_webhook_signature(b"{}", "") is False
+
+
+def test_verify_webhook_signature_fails_closed_when_app_not_configured(monkeypatch):
+    monkeypatch.delenv("INTERCOM_CLIENT_ID", raising=False)
+    monkeypatch.delenv("INTERCOM_CLIENT_SECRET", raising=False)
+    assert intercom_oauth.verify_webhook_signature(b"{}", "sha1=whatever") is False
+
+
 def test_exchange_code_for_token_never_sends_a_get_request_or_logs_the_secret(monkeypatch):
     """Contract check, not behavior: the module must never leak client_secret
     or the returned token through logging."""

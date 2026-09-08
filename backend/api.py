@@ -47,6 +47,7 @@ from . import env_keys
 from . import call_trail
 from . import error_notify
 from . import impersonation
+from . import intercom_ingest
 from . import intercom_oauth
 from . import justcall
 from . import org_features
@@ -2922,6 +2923,12 @@ def intercom_callback(request: Request, code: str = "", state: str = "", error: 
         ) from None
     try:
         token = intercom_oauth.exchange_code_for_token(code)
+        # Intercom sends every connected workspace's webhooks to the same
+        # app-wide URL — app_id on the payload is the only thing that says
+        # which workspace (and therefore which CallLoop org) an event
+        # belongs to. Capture it now, right when we have a working token,
+        # or the webhook handler has no way to route events back here.
+        workspace_id = intercom_oauth.fetch_workspace_id(token)
     except intercom_oauth.IntercomAuthError as e:
         applog.event(
             log, "intercom_callback",
@@ -2943,7 +2950,8 @@ def intercom_callback(request: Request, code: str = "", state: str = "", error: 
         # context" situation.
         with org_scope(org_id):
             org_vault.put_credential(
-                org_id, intercom_oauth.PROVIDER, {"access_token": token}, key_suffix=suffix,
+                org_id, intercom_oauth.PROVIDER, {"access_token": token},
+                key_suffix=suffix, external_account_id=workspace_id,
             )
     except org_vault.VaultUnavailable:
         raise HTTPException(
@@ -2970,6 +2978,108 @@ def intercom_disconnect(request: Request):
         ) from None
     applog.event(log, "intercom_disconnected", org_id=org_id, existed=existed)
     return {"ok": True, "configured": False, "removed": existed}
+
+
+_intercom_inflight: set[str] = set()
+_intercom_inflight_lock = threading.Lock()
+
+# Confirmed against Intercom's own webhook-topics reference (2026-09-09).
+# ticket.resolved/ticket.closed are accepted (never a signature-verification
+# failure, never a 4xx that would make Intercom keep retrying) but not yet
+# ingested — Intercom's ticket object schema was never checked against a
+# real payload, same open risk the original PRD flagged for tickets; IN-8
+# builds real ticket ingestion once a ticket-first sample exists to verify
+# against, rather than guessing at the shape now.
+_INTERCOM_TICKET_CLOSE_TOPICS = frozenset({"ticket.resolved", "ticket.closed"})
+
+
+def _process_intercom_conversation(org_id: str, conversation_id: str) -> None:
+    key = f"{org_id}:{conversation_id}"
+    with _intercom_inflight_lock:
+        if key in _intercom_inflight:
+            return
+        _intercom_inflight.add(key)
+    try:
+        intercom_ingest.ingest_intercom_conversation(org_id, conversation_id)
+    except Exception as e:  # noqa: BLE001
+        applog.event(
+            log, "intercom_ingest_failed", level=logging.ERROR,
+            org_id=org_id, conversation_id=conversation_id,
+            error=applog.safe_exception_text(e),
+        )
+    finally:
+        with _intercom_inflight_lock:
+            _intercom_inflight.discard(key)
+
+
+@app.post("/api/integrations/intercom/webhook")
+async def intercom_webhook(request: Request):
+    """
+    Public route (auth._PUBLIC_PATHS) — Intercom sends every connected
+    workspace's events to this one URL (webhooks are configured per-app,
+    not per-workspace), so trust comes from the X-Hub-Signature check and
+    org identity comes from the payload's app_id, never from request auth.
+    Returns 200 quickly; ingestion runs on a background thread, mirroring
+    the JustCall webhook's exact shape.
+    """
+    raw = await request.body()
+    sig = request.headers.get("X-Hub-Signature") or request.headers.get("x-hub-signature")
+    if not intercom_oauth.verify_webhook_signature(raw, sig):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature.")
+    try:
+        payload = json.loads(raw.decode("utf-8") or "{}") if raw else {}
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    topic = str(payload.get("topic") or "")
+    app_id = str(payload.get("app_id") or "").strip()
+    if not topic or not app_id:
+        applog.event(log, "intercom_webhook", accepted=False, reason="missing_topic_or_app_id")
+        return {"ok": True, "accepted": False}
+
+    org_id = org_vault.find_org_id_by_external_account(intercom_oauth.PROVIDER, app_id)
+    if not org_id:
+        applog.event(
+            log, "intercom_webhook",
+            accepted=False, reason="unknown_workspace", app_id=app_id, topic=topic,
+        )
+        return {"ok": True, "accepted": False}
+
+    if topic == "conversation.admin.closed":
+        item = (payload.get("data") or {}).get("item") or {}
+        conversation_id = str(item.get("id") or "").strip()
+        if not conversation_id:
+            applog.event(
+                log, "intercom_webhook",
+                accepted=False, org_id=org_id, topic=topic, reason="missing_conversation_id",
+            )
+            return {"ok": True, "accepted": False}
+        threading.Thread(
+            target=_process_intercom_conversation,
+            kwargs={"org_id": org_id, "conversation_id": conversation_id},
+            name=f"intercom-{conversation_id}",
+            daemon=True,
+        ).start()
+        applog.event(
+            log, "intercom_webhook",
+            accepted=True, org_id=org_id, topic=topic, conversation_id=conversation_id,
+        )
+        return {"ok": True, "queued": conversation_id}
+
+    if topic in _INTERCOM_TICKET_CLOSE_TOPICS:
+        applog.event(
+            log, "intercom_webhook",
+            accepted=False, org_id=org_id, topic=topic, reason="ticket_ingestion_deferred",
+        )
+        return {"ok": True, "accepted": False}
+
+    applog.event(
+        log, "intercom_webhook",
+        accepted=False, org_id=org_id, topic=topic, reason="unhandled_topic",
+    )
+    return {"ok": True, "accepted": False}
 
 
 def _upload_error_status(msg: str) -> HTTPException:

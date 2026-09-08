@@ -73,12 +73,32 @@ def _assert_org_context(oid: str) -> None:
 
 
 def put_credential(
-    org_id: str, provider: str, data: dict, *, key_suffix: str | None = None,
+    org_id: str,
+    provider: str,
+    data: dict,
+    *,
+    key_suffix: str | None = None,
+    external_account_id: str | None = None,
 ) -> str:
     """Encrypt and store this org's credential payload for `provider`.
     `data` must be a JSON-serializable dict — its shape is entirely up to
     the caller (a JustCall api_key/api_secret pair, an Intercom OAuth
-    token, ...). Returns key_suffix (empty string if none given)."""
+    token, ...). Returns key_suffix (empty string if none given).
+
+    external_account_id is for providers where many orgs' webhooks arrive
+    at one shared URL and the payload only carries a provider-side account/
+    workspace id (Intercom's `app_id`) — store it here so
+    find_org_id_by_external_account() can route an inbound webhook back to
+    the right org without guessing from request auth (there usually isn't
+    any on a public webhook route).
+
+    IN-17 lesson: the caller MUST already be inside org_scope(org_id) (or a
+    normally-authenticated request, which binds it via JwtAuthMiddleware) —
+    org_credentials is RLS'd on org_id = current_org_id(), and this
+    function does not bind that context itself. A public route (a webhook,
+    an OAuth callback) needs an explicit `with org_scope(org_id):` around
+    this call, same as _process_justcall_call already does.
+    """
     oid = parse_org_id(org_id)
     if not oid:
         raise ValueError("invalid org_id")
@@ -112,19 +132,46 @@ def put_credential(
             log.info("vault put failed provider=%s org_id=%s", prov, oid)
             raise VaultError("vault_write_failed") from None
         suffix = (key_suffix or "").strip() or None
+        ext_account = (external_account_id or "").strip() or None
         with db.connection() as conn:
             conn.execute(
                 """
-                INSERT INTO org_credentials (org_id, provider, key_suffix, updated_at)
-                VALUES (%s, %s, %s, now())
+                INSERT INTO org_credentials
+                    (org_id, provider, key_suffix, external_account_id, updated_at)
+                VALUES (%s, %s, %s, %s, now())
                 ON CONFLICT (org_id, provider) DO UPDATE
                 SET key_suffix = EXCLUDED.key_suffix,
+                    external_account_id = COALESCE(
+                        EXCLUDED.external_account_id, org_credentials.external_account_id
+                    ),
                     updated_at = now()
                 """,
-                (oid, prov, suffix),
+                (oid, prov, suffix, ext_account),
             )
     log.info("vault put provider=%s org_id=%s", prov, oid)
     return suffix or ""
+
+
+def find_org_id_by_external_account(provider: str, external_account_id: str) -> str | None:
+    """Reverse lookup for a shared-URL webhook: given the provider-side
+    account/workspace id from the payload (Intercom's `app_id`), find which
+    org connected it. bypass_rls — this runs on a public route with no org
+    bound yet; that's exactly the problem this function solves."""
+    prov = _validate_provider(provider)
+    ext = (external_account_id or "").strip()
+    if not ext:
+        return None
+    with db.connection(bypass_rls=True) as conn:
+        row = conn.execute(
+            """
+            SELECT org_id FROM org_credentials
+            WHERE provider = %s AND external_account_id = %s
+            """,
+            (prov, ext),
+        ).fetchone()
+    if not row:
+        return None
+    return parse_org_id(row["org_id"])
 
 
 def load_credential(org_id: str, provider: str) -> dict | None:
