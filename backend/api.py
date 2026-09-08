@@ -2988,17 +2988,11 @@ _intercom_inflight: set[str] = set()
 _intercom_inflight_lock = threading.Lock()
 
 # Confirmed against Intercom's own webhook-topics reference (2026-09-09).
-# ticket.resolved/ticket.closed are accepted (never a signature-verification
-# failure, never a 4xx that would make Intercom keep retrying) but not yet
-# ingested — Intercom's ticket object schema was never checked against a
-# real payload, same open risk the original PRD flagged for tickets; IN-8
-# builds real ticket ingestion once a ticket-first sample exists to verify
-# against, rather than guessing at the shape now.
 _INTERCOM_TICKET_CLOSE_TOPICS = frozenset({"ticket.resolved", "ticket.closed"})
 
 
 def _process_intercom_conversation(org_id: str, conversation_id: str) -> None:
-    key = f"{org_id}:{conversation_id}"
+    key = f"conversation:{org_id}:{conversation_id}"
     with _intercom_inflight_lock:
         if key in _intercom_inflight:
             return
@@ -3014,6 +3008,39 @@ def _process_intercom_conversation(org_id: str, conversation_id: str) -> None:
     finally:
         with _intercom_inflight_lock:
             _intercom_inflight.discard(key)
+
+
+def _process_intercom_ticket(org_id: str, ticket_id: str) -> None:
+    key = f"ticket:{org_id}:{ticket_id}"
+    with _intercom_inflight_lock:
+        if key in _intercom_inflight:
+            return
+        _intercom_inflight.add(key)
+    try:
+        intercom_ingest.ingest_intercom_ticket(org_id, ticket_id)
+    except Exception as e:  # noqa: BLE001
+        applog.event(
+            log, "intercom_ingest_failed", level=logging.ERROR,
+            org_id=org_id, ticket_id=ticket_id,
+            error=applog.safe_exception_text(e),
+        )
+    finally:
+        with _intercom_inflight_lock:
+            _intercom_inflight.discard(key)
+
+
+def _intercom_ticket_id_from_payload(topic: str, payload: dict) -> str:
+    """ticket.resolved and ticket.closed put the ticket object in
+    different places — confirmed against Intercom's own webhook-topics
+    reference (2026-09-09), which explicitly warns consumers to branch on
+    topic (or check for data.item.ticket) rather than assume one shape:
+      - ticket.resolved: the ticket IS data.item (fields directly on it).
+      - ticket.closed:   the ticket is nested at data.item.ticket.
+    """
+    item = (payload.get("data") or {}).get("item") or {}
+    if topic == "ticket.closed":
+        item = item.get("ticket") or {}
+    return str(item.get("id") or "").strip()
 
 
 @app.post("/api/integrations/intercom/webhook")
@@ -3073,11 +3100,24 @@ async def intercom_webhook(request: Request):
         return {"ok": True, "queued": conversation_id}
 
     if topic in _INTERCOM_TICKET_CLOSE_TOPICS:
+        ticket_id = _intercom_ticket_id_from_payload(topic, payload)
+        if not ticket_id:
+            applog.event(
+                log, "intercom_webhook",
+                accepted=False, org_id=org_id, topic=topic, reason="missing_ticket_id",
+            )
+            return {"ok": True, "accepted": False}
+        threading.Thread(
+            target=_process_intercom_ticket,
+            kwargs={"org_id": org_id, "ticket_id": ticket_id},
+            name=f"intercom-ticket-{ticket_id}",
+            daemon=True,
+        ).start()
         applog.event(
             log, "intercom_webhook",
-            accepted=False, org_id=org_id, topic=topic, reason="ticket_ingestion_deferred",
+            accepted=True, org_id=org_id, topic=topic, ticket_id=ticket_id,
         )
-        return {"ok": True, "accepted": False}
+        return {"ok": True, "queued": ticket_id}
 
     applog.event(
         log, "intercom_webhook",

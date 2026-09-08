@@ -43,6 +43,23 @@ def get_conversation(access_token: str, conversation_id: str) -> dict:
     return r.json() if r.content else {}
 
 
+def get_ticket(access_token: str, ticket_id: str) -> dict:
+    """GET /tickets/{id} — full object, including ticket_attributes
+    (opening description), contacts (requester), and ticket_parts (the
+    reply/note thread). Raises httpx.HTTPStatusError on a non-2xx
+    response, same contract as get_conversation."""
+    tid = str(ticket_id).strip()
+    if not tid:
+        raise ValueError("ticket_id is required")
+    r = httpx.get(
+        f"{BASE_URL}/tickets/{tid}",
+        headers=_headers(access_token),
+        timeout=30.0,
+    )
+    r.raise_for_status()
+    return r.json() if r.content else {}
+
+
 def search_closed_conversations(
     access_token: str, since_unix: int, *, per_page: int = 50,
 ) -> list[dict]:

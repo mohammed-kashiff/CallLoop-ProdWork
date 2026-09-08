@@ -235,3 +235,244 @@ def test_ingest_intercom_conversation_happy_path_writes_turns_and_marks_ready(mo
     assert statuses == ["processing", "ready"]
     assert inserted["ticket_id"] == "new-ticket-id"
     assert len(inserted["turns"]) == 3
+
+
+# ── _external_id namespacing ──────────────────────────────────────────────────
+
+
+def test_external_id_namespaces_by_kind():
+    """A conversation and a ticket sharing the same raw Intercom id must
+    never collide — both land in the same tickets.source='intercom_api'
+    bucket, and Intercom doesn't document conversation/ticket ids as
+    distinct spaces."""
+    assert intercom_ingest._external_id("conversation", "123") == "conversation:123"
+    assert intercom_ingest._external_id("ticket", "123") == "ticket:123"
+    assert (
+        intercom_ingest._external_id("conversation", "123")
+        != intercom_ingest._external_id("ticket", "123")
+    )
+
+
+def test_ingest_intercom_conversation_uses_the_namespaced_external_id(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id",
+        lambda org_id, *, source, external_id: seen.setdefault("dedup", external_id) and None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: seen.setdefault("create", external_id) and "t1",
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_status", lambda *a, **k: None)
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "insert_ticket_messages", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.intercom_client, "get_conversation", lambda *a, **k: {},
+    )
+    intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
+    assert seen["dedup"] == "conversation:conv-123"
+    assert seen["create"] == "conversation:conv-123"
+
+
+def test_ingest_intercom_ticket_uses_the_namespaced_external_id(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id",
+        lambda org_id, *, source, external_id: seen.setdefault("dedup", external_id) and None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: seen.setdefault("create", external_id) and "t1",
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_status", lambda *a, **k: None)
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "insert_ticket_messages", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(intercom_ingest.intercom_client, "get_ticket", lambda *a, **k: {})
+    intercom_ingest.ingest_intercom_ticket("org-1", "ticket-456")
+    assert seen["dedup"] == "ticket:ticket-456"
+    assert seen["create"] == "ticket:ticket-456"
+
+
+# ── normalize_ticket ──────────────────────────────────────────────────────────
+
+REAL_SHAPED_TICKET = {
+    "created_at": 1788900000,
+    "ticket_attributes": {
+        "_default_title_": "Dashboard is buggy",
+        "_default_description_": "<p>Getting error messages on the dashboard.</p>",
+    },
+    "contacts": {"contacts": [{"email": "anthony@example.com", "name": "Anthony Brunetti"}]},
+    "ticket_parts": {
+        "ticket_parts": [
+            {
+                "part_type": "comment",
+                "created_at": 1788900100,
+                "body": "<p>We're looking into this now.</p>",
+                "author": {"type": "admin", "email": "kashif@intercom.example", "name": "Kashif"},
+            },
+            {
+                "part_type": "assignment",
+                "created_at": 1788900150,
+                "body": None,
+                "author": {"type": "admin", "email": "kashif@intercom.example", "name": "Kashif"},
+            },
+        ],
+    },
+}
+
+
+def test_normalize_ticket_includes_the_description_as_the_opening_turn():
+    """A ticket has no `source` object like a conversation — its opening
+    content is ticket_attributes._default_description_, attributed to the
+    requester (contacts[0]), not an agent."""
+    turns = intercom_ingest.normalize_ticket(REAL_SHAPED_TICKET)
+    assert turns[0]["speaker"] == "customer"
+    assert turns[0]["speaker_name"] == "anthony@example.com"
+    assert "error messages" in turns[0]["text"]
+    assert turns[0]["seq"] == 0
+
+
+def test_normalize_ticket_includes_ticket_parts_and_skips_empty_ones():
+    turns = intercom_ingest.normalize_ticket(REAL_SHAPED_TICKET)
+    assert len(turns) == 2  # description + one real comment; assignment has no body
+    assert turns[1]["speaker"] == "agent"
+    assert "looking into this" in turns[1]["text"]
+
+
+def test_normalize_ticket_seq_is_contiguous():
+    turns = intercom_ingest.normalize_ticket(REAL_SHAPED_TICKET)
+    assert [t["seq"] for t in turns] == list(range(len(turns)))
+
+
+def test_normalize_ticket_agent_user_id_always_none():
+    turns = intercom_ingest.normalize_ticket(REAL_SHAPED_TICKET)
+    assert all(t["agent_user_id"] is None for t in turns)
+
+
+def test_normalize_ticket_handles_missing_description_and_parts():
+    assert intercom_ingest.normalize_ticket({}) == []
+
+
+def test_normalize_ticket_handles_a_flat_ticket_parts_list():
+    """ticket_parts' container nesting isn't confirmed the way
+    conversation_parts' was — must accept a flat list too, not just the
+    conversation-style nested container, without raising."""
+    ticket = {
+        "ticket_attributes": {},
+        "ticket_parts": [
+            {
+                "part_type": "comment",
+                "body": "<p>Flat shape reply.</p>",
+                "author": {"type": "admin", "email": "a@b.com"},
+                "created_at": 1788900000,
+            },
+        ],
+    }
+    turns = intercom_ingest.normalize_ticket(ticket)
+    assert len(turns) == 1
+    assert "Flat shape reply" in turns[0]["text"]
+
+
+def test_normalize_ticket_handles_no_contacts_gracefully():
+    ticket = {
+        "ticket_attributes": {"_default_description_": "<p>hi</p>"},
+        "contacts": {"contacts": []},
+    }
+    turns = intercom_ingest.normalize_ticket(ticket)
+    assert len(turns) == 1
+    assert turns[0]["speaker_name"] == ""
+
+
+# ── ingest_intercom_ticket ─────────────────────────────────────────────────────
+
+
+def test_ingest_intercom_ticket_dedupes(monkeypatch):
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id",
+        lambda org_id, *, source, external_id: "existing-ticket-id",
+    )
+    fetch_called = []
+    monkeypatch.setattr(
+        intercom_ingest.intercom_client, "get_ticket",
+        lambda token, tid: fetch_called.append(tid) or {},
+    )
+    result = intercom_ingest.ingest_intercom_ticket("org-1", "ticket-1")
+    assert result == "existing-ticket-id"
+    assert fetch_called == []
+
+
+def test_ingest_intercom_ticket_requires_a_stored_token(monkeypatch):
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(intercom_ingest.org_vault, "load_credential", lambda *a, **k: None)
+    with pytest.raises(RuntimeError, match="not connected"):
+        intercom_ingest.ingest_intercom_ticket("org-1", "ticket-1")
+
+
+def test_ingest_intercom_ticket_happy_path(monkeypatch):
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: "new-ticket-id",
+    )
+    statuses = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "set_ticket_status",
+        lambda ticket_id, org_id, status: statuses.append(status),
+    )
+    inserted = {}
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "insert_ticket_messages",
+        lambda ticket_id, org_id, turns: inserted.update(turns=turns),
+    )
+    monkeypatch.setattr(
+        intercom_ingest.intercom_client, "get_ticket", lambda token, tid: REAL_SHAPED_TICKET,
+    )
+    result = intercom_ingest.ingest_intercom_ticket("org-1", "ticket-1")
+    assert result == "new-ticket-id"
+    assert statuses == ["processing", "ready"]
+    assert len(inserted["turns"]) == 2
+
+
+def test_ingest_intercom_ticket_marks_failed_on_fetch_error(monkeypatch):
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: "new-ticket-id",
+    )
+    statuses = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "set_ticket_status",
+        lambda ticket_id, org_id, status: statuses.append(status),
+    )
+
+    def _boom(token, tid):
+        raise RuntimeError("intercom is down")
+
+    monkeypatch.setattr(intercom_ingest.intercom_client, "get_ticket", _boom)
+    with pytest.raises(RuntimeError, match="intercom is down"):
+        intercom_ingest.ingest_intercom_ticket("org-1", "ticket-1")
+    assert statuses == ["processing", "failed"]

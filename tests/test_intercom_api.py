@@ -399,12 +399,92 @@ def test_webhook_swallows_ingest_failures_without_500ing(monkeypatch):
     assert r.status_code == 200
 
 
-def test_webhook_defers_ticket_close_topics_without_erroring(monkeypatch):
+def test_webhook_dispatches_ticket_resolved_ticket_id_is_top_level(monkeypatch):
+    """ticket.resolved puts the ticket directly at data.item — confirmed
+    against Intercom's own webhook-topics reference."""
     from backend.api import app
 
-    for topic in ("ticket.resolved", "ticket.closed"):
+    raw, sig = _signed(monkeypatch, {
+        "topic": "ticket.resolved", "app_id": "ws_abc", "data": {"item": {"id": "ticket-1"}},
+    })
+    monkeypatch.setattr(
+        "backend.org_vault.find_org_id_by_external_account",
+        lambda *a, **k: DEFAULT_ORG_ID,
+    )
+    _run_thread_target_synchronously(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        "backend.intercom_ingest.ingest_intercom_ticket",
+        lambda org_id, tid: calls.append((org_id, tid)) or "ticket-row-1",
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/api/integrations/intercom/webhook", content=raw, headers={"X-Hub-Signature": sig},
+    )
+    assert r.status_code == 200
+    assert r.json()["queued"] == "ticket-1"
+    assert calls == [(DEFAULT_ORG_ID, "ticket-1")]
+
+
+def test_webhook_dispatches_ticket_closed_ticket_id_is_nested(monkeypatch):
+    """ticket.closed nests the ticket under data.item.ticket, not at the
+    top level — the exact shape difference Intercom's own docs warn
+    consumers to branch on."""
+    from backend.api import app
+
+    raw, sig = _signed(monkeypatch, {
+        "topic": "ticket.closed", "app_id": "ws_abc",
+        "data": {"item": {"ticket": {"id": "ticket-2"}}},
+    })
+    monkeypatch.setattr(
+        "backend.org_vault.find_org_id_by_external_account",
+        lambda *a, **k: DEFAULT_ORG_ID,
+    )
+    _run_thread_target_synchronously(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        "backend.intercom_ingest.ingest_intercom_ticket",
+        lambda org_id, tid: calls.append((org_id, tid)) or "ticket-row-2",
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/api/integrations/intercom/webhook", content=raw, headers={"X-Hub-Signature": sig},
+    )
+    assert r.status_code == 200
+    assert r.json()["queued"] == "ticket-2"
+    assert calls == [(DEFAULT_ORG_ID, "ticket-2")]
+
+
+def test_webhook_ticket_closed_does_not_read_the_resolved_shape_by_mistake(monkeypatch):
+    """A ticket.closed payload shaped like ticket.resolved (id at the top
+    level, no nested "ticket" key) must not be misread — that would ingest
+    the wrong id or silently succeed on malformed data."""
+    from backend.api import app
+
+    raw, sig = _signed(monkeypatch, {
+        "topic": "ticket.closed", "app_id": "ws_abc", "data": {"item": {"id": "not-nested"}},
+    })
+    monkeypatch.setattr(
+        "backend.org_vault.find_org_id_by_external_account",
+        lambda *a, **k: DEFAULT_ORG_ID,
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/api/integrations/intercom/webhook", content=raw, headers={"X-Hub-Signature": sig},
+    )
+    assert r.status_code == 200
+    assert r.json()["accepted"] is False
+
+
+def test_webhook_ticket_topics_ignore_missing_ticket_id(monkeypatch):
+    from backend.api import app
+
+    for topic, item in (
+        ("ticket.resolved", {}),
+        ("ticket.closed", {"ticket": {}}),
+    ):
         raw, sig = _signed(monkeypatch, {
-            "topic": topic, "app_id": "ws_abc", "data": {"item": {"id": "ticket-1"}},
+            "topic": topic, "app_id": "ws_abc", "data": {"item": item},
         })
         monkeypatch.setattr(
             "backend.org_vault.find_org_id_by_external_account",

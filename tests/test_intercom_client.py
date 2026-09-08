@@ -38,6 +38,20 @@ def test_get_conversation_returns_the_parsed_body(monkeypatch):
     assert result == {"id": "conv-1", "source": {}}
 
 
+def test_get_ticket_requires_an_id():
+    with pytest.raises(ValueError):
+        intercom_client.get_ticket("tok", "")
+
+
+def test_get_ticket_returns_the_parsed_body(monkeypatch):
+    monkeypatch.setattr(
+        intercom_client.httpx, "get",
+        lambda url, **k: _FakeResponse(200, {"id": "ticket-1", "ticket_attributes": {}}),
+    )
+    result = intercom_client.get_ticket("tok", "ticket-1")
+    assert result == {"id": "ticket-1", "ticket_attributes": {}}
+
+
 def test_search_closed_conversations_sends_the_right_query_shape(monkeypatch):
     captured = {}
 
