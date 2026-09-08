@@ -81,7 +81,7 @@ def test_org_credentials_provider_check_is_generic_not_justcall_only():
     """IN-4: the DB-level CHECK from 0009 was JustCall-only — inserting
     provider='intercom' would fail it before the app code even ran. 0030
     must replace it with a format check, not just widen the enum by one."""
-    rev = ROOT / "alembic" / "versions" / "0030_org_credentials_generic_provider.py"
+    rev = ROOT / "alembic" / "versions" / "0030_org_credentials_provider.py"
     raw = rev.read_text(encoding="utf-8")
     upgrade_body = raw.split("def upgrade")[1].split("def downgrade")[0]
     assert "org_credentials_provider_check" in upgrade_body
