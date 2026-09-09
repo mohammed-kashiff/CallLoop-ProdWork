@@ -22,11 +22,21 @@ const SCRIPT_ID = '_intercom_widget_loader'
 
 type IntercomSettings = {
   app_id: string
+  api_base?: string
   user_id?: string
   email?: string
   name?: string
-  user_hash?: string
+  intercom_user_jwt?: string
 }
+
+// Intercom migrated their security scheme after this widget was first
+// built: the old raw-HMAC "user_hash" ("Identity Verification") still
+// works, but Intercom's own dashboard only marks the Messenger as
+// "securely installed" under the newer "Messenger Security with JWTs" —
+// confirmed by testing (a correctly-computed user_hash still showed
+// "Insecurely installed"). api_base is required for the JWT scheme per
+// Intercom's own installation sample.
+const API_BASE = 'https://api-iam.intercom.io'
 
 declare global {
   interface Window {
@@ -87,22 +97,23 @@ export function IntercomWidget() {
     let cancelled = false
     const name = [firstName, lastName].filter(Boolean).join(' ').trim()
 
-    // Messenger Security hash (user_hash) is computed server-side — the
-    // secret that produces it must never reach the browser. If it's not
-    // configured yet (INTERCOM_MESSENGER_SECRET unset), the widget still
-    // boots, just unverified, same as Messenger Security being off in
-    // Intercom's own settings.
+    // Messenger Security JWT is signed server-side — the secret that
+    // produces it must never reach the browser. If it's not configured
+    // yet (INTERCOM_MESSENGER_SECRET unset), the widget still boots, just
+    // unverified, same as Messenger Security being off in Intercom's
+    // own settings.
     apiFetch('/api/support/widget-identity')
-      .then((r) => (r.ok ? r.json() : { configured: false, user_hash: null }))
-      .catch(() => ({ configured: false, user_hash: null }))
-      .then((data: { configured?: boolean; user_hash?: string | null }) => {
+      .then((r) => (r.ok ? r.json() : { configured: false, intercom_user_jwt: null }))
+      .catch(() => ({ configured: false, intercom_user_jwt: null }))
+      .then((data: { configured?: boolean; intercom_user_jwt?: string | null }) => {
         if (cancelled) return
         bootIntercom({
           app_id: APP_ID,
+          api_base: API_BASE,
           user_id: userId,
           email: email ?? undefined,
           name: name || undefined,
-          ...(data.user_hash ? { user_hash: data.user_hash } : {}),
+          ...(data.intercom_user_jwt ? { intercom_user_jwt: data.intercom_user_jwt } : {}),
         })
         bootedForUserId.current = userId
       })
