@@ -1,5 +1,5 @@
 """
-CallProof - Intercom conversation + ticket ingest (IN-5/IN-6/IN-7/IN-8/IN-9).
+CallProof - Intercom conversation + ticket ingest (IN-5/IN-6/IN-7/IN-8/IN-9/IN-10).
 
 Normalizes a fetched Intercom Conversation or Ticket object into the same
 canonical turn shape ticket_pdf_parser.parse_turns() produces — {seq,
@@ -67,10 +67,17 @@ acceptance criterion (merge a ticket's own linked_objects, not a
 transitive closure over the whole graph) — undocumented and unbuilt if
 Intercom's linking graph ever isn't a fully-connected single hop.
 
-agent_user_id is always None here, same honest gap ticket_pdf_parser
-already documents for PDF-sourced tickets — IN-10 (email-keyed agent
-identity resolution) needs its own schema decision before this can resolve
-to a real org_members user_id.
+agent_user_id (IN-10): resolved at the end of _ingest_intercom_object,
+batched (one query per ingest, mirroring ticket_ingest.ingest_ticket_pdf's
+exact pattern for the PDF path) via ticket_agent_identity_aliases —
+built on its own schema (0034), a table parallel to TA-15's
+ticket_agent_aliases rather than a retrofit of it (see that module's
+docstring for why: display_name there is a freeform PDF name, a
+genuinely different identifier kind from Intercom's structured email).
+An agent turn's speaker_name IS already its email (_speaker_name()
+prefers author.email over author.name), so no separate raw-identifier
+field is needed the way agent_display_name is for the PDF path — the
+existing turn shape already carries the lookup key.
 """
 
 from __future__ import annotations
@@ -83,6 +90,7 @@ from html.parser import HTMLParser
 from . import applog
 from . import intercom_client
 from . import org_vault
+from . import ticket_agent_identity_aliases
 from . import ticket_ingest
 from .intercom_oauth import PROVIDER
 
@@ -356,6 +364,31 @@ def _merge_turns(turn_lists: list[list[dict]]) -> list[dict]:
     return combined
 
 
+def _resolve_agent_identities(org_id: str, turns: list[dict]) -> None:
+    """IN-10: mutates every agent turn's agent_user_id in place, batched
+    — one query per ingest rather than one per turn, the same pattern
+    ingest_ticket_pdf() already uses for the PDF path's display-name
+    resolution. An agent turn's speaker_name is already its email
+    (_speaker_name() prefers author.email over author.name); this just
+    resolves it against ticket_agent_identity_aliases instead of always
+    leaving it None. No-op, not an error, for an org with no aliases
+    configured yet — those turns simply stay unresolved."""
+    unresolved = {
+        t["speaker_name"] for t in turns
+        if t["speaker"] == "agent" and not t.get("agent_user_id") and t.get("speaker_name")
+    }
+    if not unresolved:
+        return
+    resolved = ticket_agent_identity_aliases.resolve_agent_user_ids(org_id, PROVIDER, unresolved)
+    if not resolved:
+        return
+    for t in turns:
+        if t["speaker"] == "agent" and not t.get("agent_user_id"):
+            uid = resolved.get(t["speaker_name"].strip().lower())
+            if uid:
+                t["agent_user_id"] = uid
+
+
 def _ingest_intercom_object(org_id: str, kind: str, obj_id: str) -> str:
     """Shared write path for both ingest_intercom_conversation and
     ingest_intercom_ticket. Two dedup checks, in order:
@@ -421,6 +454,7 @@ def _ingest_intercom_object(org_id: str, kind: str, obj_id: str) -> str:
         for member_kind, member_id in linked:
             members.append((member_kind, member_id, _fetch_member(access_token, member_kind, member_id)))
         turns = _merge_turns([_normalize_member(k, o) for k, _, o in members])
+        _resolve_agent_identities(org_id, turns)
         ticket_ingest.insert_ticket_messages(ticket_id, org_id, turns)
         # statistics (IN-7) only exists on Conversation, and only means
         # something unambiguous for a lone conversation — a grouped case

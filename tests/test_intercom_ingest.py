@@ -9,6 +9,20 @@ import pytest
 from backend import intercom_ingest
 
 
+@pytest.fixture(autouse=True)
+def _no_agent_identity_resolution_by_default(monkeypatch):
+    """IN-10: every ingest path now calls _resolve_agent_identities,
+    which queries a real table via org_scope() — every test in this
+    file uses a fake org_id ("org-1"), not a real UUID, so that would
+    raise unless mocked. Default: no aliases configured, matching the
+    real behavior for an org that hasn't set any up yet. Tests that
+    specifically exercise resolution override this themselves."""
+    monkeypatch.setattr(
+        intercom_ingest.ticket_agent_identity_aliases, "resolve_agent_user_ids",
+        lambda *a, **k: {},
+    )
+
+
 # ── _html_to_text ────────────────────────────────────────────────────────────
 
 
@@ -214,6 +228,79 @@ def test_normalize_conversation_skips_conversation_summary_parts():
 
 def test_normalize_conversation_handles_missing_source_and_parts():
     assert intercom_ingest.normalize_conversation({}) == []
+
+
+# ── _resolve_agent_identities (IN-10) ────────────────────────────────────────
+
+
+def test_resolve_agent_identities_fills_in_agent_user_id(monkeypatch):
+    turns = intercom_ingest.normalize_conversation(REAL_SHAPED_CONVERSATION)
+    monkeypatch.setattr(
+        intercom_ingest.ticket_agent_identity_aliases, "resolve_agent_user_ids",
+        lambda org_id, provider, idents: {"kashif@intercom.example": "u1"},
+    )
+    intercom_ingest._resolve_agent_identities("org-1", turns)
+    agent_turns = [t for t in turns if t["speaker"] == "agent"]
+    assert agent_turns and all(t["agent_user_id"] == "u1" for t in agent_turns)
+
+
+def test_resolve_agent_identities_leaves_unmapped_turns_none(monkeypatch):
+    turns = intercom_ingest.normalize_conversation(REAL_SHAPED_CONVERSATION)
+    monkeypatch.setattr(
+        intercom_ingest.ticket_agent_identity_aliases, "resolve_agent_user_ids",
+        lambda *a, **k: {},
+    )
+    intercom_ingest._resolve_agent_identities("org-1", turns)
+    assert all(t["agent_user_id"] is None for t in turns if t["speaker"] == "agent")
+
+
+def test_resolve_agent_identities_never_touches_non_agent_turns(monkeypatch):
+    turns = intercom_ingest.normalize_conversation(REAL_SHAPED_CONVERSATION)
+    monkeypatch.setattr(
+        intercom_ingest.ticket_agent_identity_aliases, "resolve_agent_user_ids",
+        lambda *a, **k: {"anthony@example.com": "should-never-be-used", "welma bot": "nope"},
+    )
+    intercom_ingest._resolve_agent_identities("org-1", turns)
+    assert all(
+        t["agent_user_id"] is None for t in turns if t["speaker"] in ("customer", "bot")
+    )
+
+
+def test_resolve_agent_identities_matches_case_insensitively(monkeypatch):
+    turns = [{"seq": 0, "speaker": "agent", "speaker_name": "Kashif@Intercom.Example",
+              "agent_user_id": None, "text": "hi"}]
+    captured = {}
+    monkeypatch.setattr(
+        intercom_ingest.ticket_agent_identity_aliases, "resolve_agent_user_ids",
+        lambda org_id, provider, idents: captured.setdefault("idents", idents)
+        and {"kashif@intercom.example": "u1"},
+    )
+    intercom_ingest._resolve_agent_identities("org-1", turns)
+    assert turns[0]["agent_user_id"] == "u1"
+
+
+def test_resolve_agent_identities_short_circuits_when_nothing_unresolved(monkeypatch):
+    turns = [{"seq": 0, "speaker": "agent", "speaker_name": "a@b.com", "agent_user_id": "already-set"}]
+
+    def _boom(*a, **k):
+        raise AssertionError("must not query when every agent turn is already resolved")
+
+    monkeypatch.setattr(intercom_ingest.ticket_agent_identity_aliases, "resolve_agent_user_ids", _boom)
+    intercom_ingest._resolve_agent_identities("org-1", turns)
+    assert turns[0]["agent_user_id"] == "already-set"
+
+
+def test_resolve_agent_identities_passes_the_intercom_provider(monkeypatch):
+    turns = [{"seq": 0, "speaker": "agent", "speaker_name": "a@b.com", "agent_user_id": None}]
+    captured = {}
+
+    def _fake(org_id, provider, idents):
+        captured["provider"] = provider
+        return {}
+
+    monkeypatch.setattr(intercom_ingest.ticket_agent_identity_aliases, "resolve_agent_user_ids", _fake)
+    intercom_ingest._resolve_agent_identities("org-1", turns)
+    assert captured["provider"] == intercom_ingest.PROVIDER == "intercom"
 
 
 # ── ingest_intercom_conversation ──────────────────────────────────────────────
