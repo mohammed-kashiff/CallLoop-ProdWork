@@ -752,13 +752,20 @@ def _org_name(org_id: str) -> str | None:
 
 
 def _org_name_for_log(org_id: str) -> str | None:
-    """Workspace name for poller/ingest error lines. bypass_rls: this runs
-    off the request path (org_scope has already exited) and only reads
-    orgs.name for an id the poller already listed from Vault."""
+    """Workspace name for poller/ingest error lines — this runs off the
+    request path (org_scope has already exited), but repo-wide policy
+    (tests/test_rls.py) forbids api.py from ever reaching for the RLS
+    escape hatch db.connection() offers. Same approach _org_name()
+    already uses instead: a normal, policy-respecting connection with
+    apply_tenant_gucs() binding it to this specific org_id directly (no
+    ambient request/JWT context needed) — orgs' own row-level policy
+    already lets a session see its own row, so no escape hatch is
+    required to read this one org's name."""
     if not org_id:
         return None
     try:
-        with db.connection(bypass_rls=True) as conn:
+        with db.connection() as conn:
+            db.apply_tenant_gucs(conn, org_id=org_id)
             row = conn.execute(
                 "SELECT name FROM orgs WHERE id = %s", (org_id,),
             ).fetchone()
