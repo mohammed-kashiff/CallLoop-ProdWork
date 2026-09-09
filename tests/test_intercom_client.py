@@ -102,7 +102,7 @@ def test_search_closed_tickets_sends_the_right_query_shape(monkeypatch):
     query = captured["json"]["query"]
     assert query["operator"] == "AND"
     fields = {f["field"]: f for f in query["value"]}
-    assert fields["state"]["value"] == "closed"
+    assert fields["open"]["value"] is False
     assert fields["updated_at"]["operator"] == ">"
     assert fields["updated_at"]["value"] == "1700000000"
     assert result == [{"id": "t1"}, {"id": "t2"}]

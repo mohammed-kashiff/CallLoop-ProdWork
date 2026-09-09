@@ -103,20 +103,23 @@ def search_closed_tickets(
     access_token: str, since_unix: int, *, per_page: int = 50,
 ) -> list[dict]:
     """POST /tickets/search — tickets closed since `since_unix` (Unix
-    seconds). Same shape and same reasoning as search_closed_conversations
-    (confirmed against Intercom's own reference before use).
+    seconds).
 
-    Filters state = "closed" only, not "resolved" — a resolved ticket can
-    still be reopened, closed is Intercom's more final state. A resolved-
-    but-not-yet-closed ticket is only caught by the ticket.resolved
-    webhook, not this backstop; tightening that (an OR across both states)
-    is possible later if it turns out to matter, not assumed here.
+    Filters on `open = false`, not a `state` string value. Tickets don't
+    share Conversations' state vocabulary ("open"/"closed"/"snoozed") —
+    a ticket's lifecycle is tracked via `ticket_state.category` (type-
+    specific stages like "submitted"/"in_progress"/"resolved") plus a
+    separate top-level `open` boolean that only flips to false on actual
+    closure. Confirmed live: a real ticket that went through "Resolved"
+    then "closed" in Intercom's UI never once matched `state = "closed"`
+    across 12+ poll cycles (empty results, not an error) — `open` is
+    the correct, type-agnostic closed signal.
     """
     body = {
         "query": {
             "operator": "AND",
             "value": [
-                {"field": "state", "operator": "=", "value": "closed"},
+                {"field": "open", "operator": "=", "value": False},
                 {"field": "updated_at", "operator": ">", "value": str(int(since_unix))},
             ],
         },
