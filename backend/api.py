@@ -2741,21 +2741,31 @@ def _justcall_poll_error_level(consecutive: int) -> int:
 def _record_justcall_poll_failure(org_id: str, exc: BaseException) -> None:
     n = _justcall_poll_failures.get(org_id, 0) + 1
     _justcall_poll_failures[org_id] = n
+    org_name = (_org_name(org_id) or "").strip() or None
+    err = applog.safe_exception_text(exc)[:300]
+    # Prefix the error with the workspace so Better Stack views that group
+    # by exception text (the "failure" dimension) split per org instead of
+    # looking like one system-wide outage. There is no user on this path —
+    # it is a background poller.
+    who = org_name or org_id
     applog.event(
         log, "justcall_poll_error",
         level=_justcall_poll_error_level(n),
         org_id=org_id,
+        org_name=org_name or "-",
         consecutive=n,
-        error=applog.safe_exception_text(exc)[:300],
+        error=f"{who}: {err}",
     )
 
 
 def _record_justcall_poll_success(org_id: str) -> None:
     prev = _justcall_poll_failures.pop(org_id, 0)
     if prev:
+        org_name = (_org_name(org_id) or "").strip() or None
         applog.event(
             log, "justcall_poll_recovered",
             org_id=org_id,
+            org_name=org_name or "-",
             previous_consecutive=prev,
         )
 

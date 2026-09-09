@@ -307,6 +307,7 @@ def _stub_poll_orgs(monkeypatch, api_module, org_ids, *, sync_fn):
     monkeypatch.setattr(api_module, "integration_org_id", lambda: DEFAULT_ORG_ID)
     monkeypatch.setattr(api_module, "org_scope", lambda oid: _Scope())
     monkeypatch.setattr(api_module, "_sync_justcall_recent", sync_fn)
+    monkeypatch.setattr(api_module, "_org_name", lambda oid: None)
     api_module._justcall_poll_failures.clear()
 
 
@@ -412,3 +413,29 @@ def test_justcall_poll_failures_are_tracked_per_org(monkeypatch, caplog):
     org_b = [lv for msg, lv in by_org_level if ORG_B in msg]
     assert org_a == [logging.ERROR, logging.WARNING]
     assert org_b == [logging.ERROR, logging.WARNING]
+
+
+def test_justcall_poll_error_names_the_org_in_error_and_fields(monkeypatch, caplog):
+    """Better Stack was grouping by exception text with no org, so every
+    misconfigured workspace looked like one system-wide failure."""
+    import logging
+
+    import backend.api as api_module
+
+    def boom(**_k):
+        raise RuntimeError("credentials_unresolved")
+
+    _stub_poll_orgs(monkeypatch, api_module, [DEFAULT_ORG_ID], sync_fn=boom)
+    monkeypatch.setattr(api_module, "_org_name", lambda oid: "Acme Support")
+
+    with caplog.at_level(logging.ERROR, logger="callproof.api"):
+        api_module._justcall_poll_once()
+
+    rows = [r for r in caplog.records if "justcall_poll_error" in r.getMessage()]
+    assert len(rows) == 1
+    msg = rows[0].getMessage()
+    assert f"org_id={DEFAULT_ORG_ID}" in msg
+    assert 'org_name="Acme Support"' in msg
+    assert "Acme Support" in msg
+    assert "credentials_unresolved" in msg
+    assert "user_id=" not in msg
