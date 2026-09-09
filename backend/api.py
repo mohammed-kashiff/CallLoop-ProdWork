@@ -60,7 +60,7 @@ from . import product_events
 from . import rubric_builder
 from . import sentry_report
 from . import tracing
-from .config import cors_origins, load_env, skip_startup
+from .config import CUSTOMER_ORIGIN, cors_origins, load_env, skip_startup
 
 load_env()
 applog.setup_logging()
@@ -2906,10 +2906,30 @@ def intercom_integration_status(request: Request):
     }
 
 
+def _intercom_integrations_redirect(*, connected: bool) -> RedirectResponse:
+    """IN-18: land back on the customer SPA after Intercom OAuth.
+
+    API and frontend are separate Render hosts, so this must be an
+    absolute CUSTOMER_ORIGIN URL — never a relative path and never
+    derived from the incoming request (same bug class as AC-53).
+    """
+    flag = "connected" if connected else "error"
+    return RedirectResponse(
+        f"{CUSTOMER_ORIGIN}/integrations?intercom={flag}",
+        status_code=302,
+    )
+
+
 @app.get("/api/integrations/intercom/connect")
 def intercom_connect(request: Request):
     """Redirects the browser to Intercom's OAuth consent screen. state
-    carries this org's id, signed — see intercom_oauth module docstring."""
+    carries this org's id, signed — see intercom_oauth module docstring.
+
+    A top-level navigation cannot send the SPA's Bearer JWT (split API /
+    frontend hosts). The Integrations page therefore fetches this route
+    with Accept: application/json, then navigates to authorize_url.
+    A normal browser GET still 302s to Intercom.
+    """
     org_id = _org(request)
     if not intercom_oauth.is_configured():
         raise HTTPException(
@@ -2921,6 +2941,9 @@ def intercom_connect(request: Request):
         )
     url = intercom_oauth.build_authorize_url(org_id)
     applog.event(log, "intercom_connect_started", org_id=org_id)
+    accept = (request.headers.get("accept") or "").lower()
+    if "application/json" in accept:
+        return {"authorize_url": url}
     return RedirectResponse(url, status_code=302)
 
 
@@ -2933,23 +2956,22 @@ def intercom_callback(request: Request, code: str = "", state: str = "", error: 
     `state` param instead (intercom_oauth.verify_state), never from
     request auth — mirrors the trust model the JustCall webhook already
     uses (a verified signature standing in for a bearer token).
+
+    Always RedirectResponse to the Integrations page (IN-18). Never JSON
+    — Intercom sends the browser here, and a JSON blob on the API host
+    is a dead end.
     """
     if error:
         applog.event(
             log, "intercom_callback",
             accepted=False, reason=f"intercom_error:{error[:80]}",
         )
-        raise HTTPException(
-            status_code=400, detail="Intercom authorization was not granted.",
-        )
+        return _intercom_integrations_redirect(connected=False)
     try:
         org_id = intercom_oauth.verify_state(state)
     except intercom_oauth.StateError as e:
         applog.event(log, "intercom_callback", accepted=False, reason=str(e))
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid or expired connection request. Please try connecting again.",
-        ) from None
+        return _intercom_integrations_redirect(connected=False)
     try:
         token = intercom_oauth.exchange_code_for_token(code)
         # Intercom sends every connected workspace's webhooks to the same
@@ -2963,10 +2985,7 @@ def intercom_callback(request: Request, code: str = "", state: str = "", error: 
             log, "intercom_callback",
             accepted=False, org_id=org_id, reason=str(e),
         )
-        raise HTTPException(
-            status_code=502,
-            detail="Could not complete the Intercom connection. Please try again.",
-        ) from None
+        return _intercom_integrations_redirect(connected=False)
     suffix = token[-4:] if len(token) >= 8 else None
     try:
         # This request never went through JwtAuthMiddleware (it's public —
@@ -2983,16 +3002,20 @@ def intercom_callback(request: Request, code: str = "", state: str = "", error: 
                 key_suffix=suffix, external_account_id=workspace_id,
             )
     except org_vault.VaultUnavailable:
-        raise HTTPException(
-            status_code=503, detail="Credential vault is not available on this database.",
-        ) from None
+        applog.event(
+            log, "intercom_callback",
+            accepted=False, org_id=org_id, reason="vault_unavailable",
+        )
+        return _intercom_integrations_redirect(connected=False)
     except org_vault.VaultError:
-        raise HTTPException(
-            status_code=502, detail="Could not store the Intercom connection.",
-        ) from None
+        applog.event(
+            log, "intercom_callback",
+            accepted=False, org_id=org_id, reason="vault_error",
+        )
+        return _intercom_integrations_redirect(connected=False)
     _start_intercom_poller()
     applog.event(log, "intercom_callback", accepted=True, org_id=org_id)
-    return {"ok": True, "connected": True}
+    return _intercom_integrations_redirect(connected=True)
 
 
 @app.delete("/api/integrations/intercom")

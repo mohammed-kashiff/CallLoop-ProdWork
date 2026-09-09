@@ -6,9 +6,25 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.config import CUSTOMER_ORIGIN
 from backend.org_ids import DEFAULT_ORG_ID, bound_org_id
 
 ORG_B = "00000000-0000-4000-8000-000000000002"
+CONNECTED_LANDING = f"{CUSTOMER_ORIGIN}/integrations?intercom=connected"
+ERROR_LANDING = f"{CUSTOMER_ORIGIN}/integrations?intercom=error"
+
+
+def _assert_intercom_land(r, *, connected: bool) -> None:
+    """IN-18: callback must 302 to an absolute customer-app URL, never a
+    relative path and never anything derived from the API host."""
+    assert r.status_code == 302
+    loc = r.headers["location"]
+    expected = CONNECTED_LANDING if connected else ERROR_LANDING
+    assert loc == expected
+    assert loc.startswith("https://call-loop.com/")
+    assert not loc.startswith("/")
+    assert "onrender.com" not in loc
+    assert "localhost" not in loc
 
 
 def _stub_vault(monkeypatch):
@@ -86,6 +102,29 @@ def test_connect_redirects_to_intercom_when_configured(monkeypatch):
     assert "state=" in location
 
 
+def test_connect_returns_authorize_url_json_when_accept_is_json(monkeypatch):
+    """The SPA cannot top-level-navigate to /connect (split hosts + JWT).
+    Fetching with Accept: application/json returns the Intercom URL so
+    the browser can then navigate there for real."""
+    from backend.api import app
+    from tests.conftest import authorize
+
+    _configure_app(monkeypatch, client_id="ic_client_json")
+    _stub_vault(monkeypatch)
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+
+    r = client.get(
+        "/api/integrations/intercom/connect",
+        headers={"Accept": "application/json"},
+    )
+    assert r.status_code == 200
+    url = r.json()["authorize_url"]
+    assert url.startswith("https://app.intercom.com/oauth")
+    assert "client_id=ic_client_json" in url
+    assert "state=" in url
+
+
 def test_connect_503_when_app_not_configured(monkeypatch):
     from backend.api import app
     from tests.conftest import authorize
@@ -113,9 +152,35 @@ def test_callback_requires_no_jwt_it_is_a_public_route(monkeypatch):
     client = TestClient(app)  # deliberately no authorize()
 
     state = intercom_oauth.make_state(DEFAULT_ORG_ID)
-    r = client.get(f"/api/integrations/intercom/callback?code=abc&state={state}")
-    assert r.status_code == 200
-    assert r.json()["connected"] is True
+    r = client.get(
+        f"/api/integrations/intercom/callback?code=abc&state={state}",
+        follow_redirects=False,
+    )
+    _assert_intercom_land(r, connected=True)
+
+
+def test_callback_redirect_ignores_the_request_host(monkeypatch):
+    """Same bug class as AC-53: API and SPA are separate hosts. A Host
+    header from the API (or a reverse proxy) must not change the landing
+    URL — only CUSTOMER_ORIGIN."""
+    from backend import intercom_oauth
+    from backend.api import app
+
+    _configure_app(monkeypatch)
+    _stub_vault(monkeypatch)
+    monkeypatch.setattr(intercom_oauth, "exchange_code_for_token", lambda code: "tok_abcd1234")
+    monkeypatch.setattr(intercom_oauth, "fetch_workspace_id", lambda token: "ws_test123")
+    client = TestClient(app)
+
+    state = intercom_oauth.make_state(DEFAULT_ORG_ID)
+    r = client.get(
+        f"/api/integrations/intercom/callback?code=abc&state={state}",
+        headers={"Host": "callloop-prodwork.onrender.com"},
+        follow_redirects=False,
+    )
+    _assert_intercom_land(r, connected=True)
+    assert "onrender.com" not in r.headers["location"]
+    assert r.headers["location"].startswith("https://call-loop.com/")
 
 
 def test_callback_stores_the_token_under_the_org_id_from_state(monkeypatch):
@@ -129,8 +194,11 @@ def test_callback_stores_the_token_under_the_org_id_from_state(monkeypatch):
     client = TestClient(app)
 
     state = intercom_oauth.make_state(DEFAULT_ORG_ID)
-    r = client.get(f"/api/integrations/intercom/callback?code=abc&state={state}")
-    assert r.status_code == 200
+    r = client.get(
+        f"/api/integrations/intercom/callback?code=abc&state={state}",
+        follow_redirects=False,
+    )
+    _assert_intercom_land(r, connected=True)
     assert store[(DEFAULT_ORG_ID, "intercom")]["data"]["access_token"] == "tok_wxyz9999"
     assert store[(DEFAULT_ORG_ID, "intercom")]["suffix"] == "9999"
 
@@ -161,8 +229,11 @@ def test_callback_binds_org_scope_before_writing_the_credential(monkeypatch):
     client = TestClient(app)
 
     state = intercom_oauth.make_state(DEFAULT_ORG_ID)
-    r = client.get(f"/api/integrations/intercom/callback?code=abc&state={state}")
-    assert r.status_code == 200
+    r = client.get(
+        f"/api/integrations/intercom/callback?code=abc&state={state}",
+        follow_redirects=False,
+    )
+    _assert_intercom_land(r, connected=True)
     assert seen_bound_org_id["value"] == DEFAULT_ORG_ID
 
 
@@ -177,9 +248,13 @@ def test_callback_never_echoes_the_access_token(monkeypatch):
     client = TestClient(app)
 
     state = intercom_oauth.make_state(DEFAULT_ORG_ID)
-    r = client.get(f"/api/integrations/intercom/callback?code=abc&state={state}")
-    assert r.status_code == 200
+    r = client.get(
+        f"/api/integrations/intercom/callback?code=abc&state={state}",
+        follow_redirects=False,
+    )
+    _assert_intercom_land(r, connected=True)
     assert "tok_secret_value" not in r.text
+    assert "tok_secret_value" not in r.headers.get("location", "")
 
 
 def test_callback_rejects_a_bad_state(monkeypatch):
@@ -189,8 +264,11 @@ def test_callback_rejects_a_bad_state(monkeypatch):
     _stub_vault(monkeypatch)
     client = TestClient(app)
 
-    r = client.get("/api/integrations/intercom/callback?code=abc&state=garbage")
-    assert r.status_code == 400
+    r = client.get(
+        "/api/integrations/intercom/callback?code=abc&state=garbage",
+        follow_redirects=False,
+    )
+    _assert_intercom_land(r, connected=False)
 
 
 def test_callback_rejects_intercom_denial(monkeypatch):
@@ -200,8 +278,11 @@ def test_callback_rejects_intercom_denial(monkeypatch):
     _stub_vault(monkeypatch)
     client = TestClient(app)
 
-    r = client.get("/api/integrations/intercom/callback?error=access_denied")
-    assert r.status_code == 400
+    r = client.get(
+        "/api/integrations/intercom/callback?error=access_denied",
+        follow_redirects=False,
+    )
+    _assert_intercom_land(r, connected=False)
 
 
 def test_callback_500s_gracefully_when_token_exchange_fails(monkeypatch):
@@ -218,8 +299,11 @@ def test_callback_500s_gracefully_when_token_exchange_fails(monkeypatch):
     client = TestClient(app)
 
     state = intercom_oauth.make_state(DEFAULT_ORG_ID)
-    r = client.get(f"/api/integrations/intercom/callback?code=abc&state={state}")
-    assert r.status_code == 502
+    r = client.get(
+        f"/api/integrations/intercom/callback?code=abc&state={state}",
+        follow_redirects=False,
+    )
+    _assert_intercom_land(r, connected=False)
 
 
 def test_callback_cannot_store_a_credential_for_a_different_org_than_the_state(monkeypatch):
@@ -238,8 +322,11 @@ def test_callback_cannot_store_a_credential_for_a_different_org_than_the_state(m
     client = TestClient(app)
 
     state_for_b = intercom_oauth.make_state(ORG_B)
-    r = client.get(f"/api/integrations/intercom/callback?code=abc&state={state_for_b}")
-    assert r.status_code == 200
+    r = client.get(
+        f"/api/integrations/intercom/callback?code=abc&state={state_for_b}",
+        follow_redirects=False,
+    )
+    _assert_intercom_land(r, connected=True)
     assert (ORG_B, "intercom") in store
     assert (DEFAULT_ORG_ID, "intercom") not in store
 

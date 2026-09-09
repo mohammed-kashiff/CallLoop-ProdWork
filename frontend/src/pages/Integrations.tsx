@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { SketchWallpaper } from '../components/SketchWallpaper'
 import { useAudit } from '../context/AuditContext'
 import { apiFetch, readError } from '../lib/api'
@@ -13,10 +13,22 @@ interface JustCallStatus {
   key_suffix?: string | null
 }
 
+interface IntercomStatus {
+  app_configured: boolean
+  configured: boolean
+  suffix?: string | null
+  polling: boolean
+  poll_seconds: number
+}
+
+const INTERCOM_AUTHORIZE_PREFIX = 'https://app.intercom.com/'
+
 export function Integrations() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { selectCall, refreshCalls } = useAudit()
   const [status, setStatus] = useState<JustCallStatus | null>(null)
+  const [intercom, setIntercom] = useState<IntercomStatus | null>(null)
   const [calls, setCalls] = useState<CallListItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -24,6 +36,8 @@ export function Integrations() {
   const [opening, setOpening] = useState<number | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [removing, setRemoving] = useState(false)
+  const [removingIntercom, setRemovingIntercom] = useState(false)
+  const [connectingIntercom, setConnectingIntercom] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [apiSecret, setApiSecret] = useState('')
 
@@ -38,11 +52,45 @@ export function Integrations() {
     setCalls((await list.json()) as CallListItem[])
   }, [])
 
+  const loadIntercom = useCallback(async () => {
+    const r = await apiFetch('/api/integrations/intercom')
+    if (!r.ok) throw new Error(await readError(r, 'Could not load Intercom status.'))
+    setIntercom((await r.json()) as IntercomStatus)
+  }, [])
+
   useEffect(() => {
     load().catch((e: unknown) =>
       setError(e instanceof Error ? e.message : 'Could not load integrations.'),
     )
   }, [load])
+
+  useEffect(() => {
+    loadIntercom().catch((e: unknown) =>
+      setError(e instanceof Error ? e.message : 'Could not load Intercom status.'),
+    )
+  }, [loadIntercom])
+
+  useEffect(() => {
+    const flag = searchParams.get('intercom')
+    if (flag !== 'connected' && flag !== 'error') return
+    if (flag === 'connected') {
+      setError(null)
+      setNote(
+        'Intercom is connected for this organization. Closed conversations and tickets will be ingested automatically.',
+      )
+    } else {
+      setNote(null)
+      setError(
+        'Could not connect Intercom. Authorization was denied or expired. Try connecting again.',
+      )
+    }
+    const next = new URLSearchParams(searchParams)
+    next.delete('intercom')
+    setSearchParams(next, { replace: true })
+    void loadIntercom().catch((e: unknown) =>
+      setError(e instanceof Error ? e.message : 'Could not load Intercom status.'),
+    )
+  }, [searchParams, setSearchParams, loadIntercom])
 
   const onSave = async () => {
     const key = apiKey.trim()
@@ -95,6 +143,46 @@ export function Integrations() {
     }
   }
 
+  const onConnectIntercom = async () => {
+    setError(null)
+    setNote(null)
+    setConnectingIntercom(true)
+    try {
+      const r = await apiFetch('/api/integrations/intercom/connect', {
+        headers: { Accept: 'application/json' },
+      })
+      if (!r.ok) throw new Error(await readError(r, 'Could not start Intercom connection.'))
+      const body = (await r.json()) as { authorize_url?: string }
+      const url = (body.authorize_url || '').trim()
+      // Real navigation to Intercom's consent screen. The connect route is
+      // JWT-gated on a separate API host, so a bare window.location to
+      // /api/... would 401 (no Authorization) or hit the SPA host.
+      if (!url.startsWith(INTERCOM_AUTHORIZE_PREFIX)) {
+        throw new Error('Could not start Intercom connection.')
+      }
+      window.location.assign(url)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not start Intercom connection.')
+      setConnectingIntercom(false)
+    }
+  }
+
+  const onDisconnectIntercom = async () => {
+    setError(null)
+    setNote(null)
+    setRemovingIntercom(true)
+    try {
+      const r = await apiFetch('/api/integrations/intercom', { method: 'DELETE' })
+      if (!r.ok) throw new Error(await readError(r, 'Could not disconnect Intercom.'))
+      setNote('Intercom was disconnected for this organization.')
+      await loadIntercom()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not disconnect Intercom.')
+    } finally {
+      setRemovingIntercom(false)
+    }
+  }
+
   const onSync = async () => {
     setError(null)
     setNote(null)
@@ -143,12 +231,14 @@ export function Integrations() {
 
   const connected = Boolean(status?.configured)
   const interval = status?.poll_seconds || 45
+  const intercomConnected = Boolean(intercom?.configured)
+  const intercomSuffix = (intercom?.suffix || '').trim()
 
   return (
     <>
       <header className="page-bar">
         <div>
-          <p className="crumb">Loop / JustCall</p>
+          <p className="crumb">Loop / Integrations</p>
           <h1>Integrations</h1>
         </div>
         <button
@@ -167,6 +257,48 @@ export function Integrations() {
         </p>
       )}
       {note && !error ? <p className="panel-lede">{note}</p> : null}
+
+      {intercom?.app_configured ? (
+        <section className="integrations-status" aria-label="Intercom connection">
+          <div className="keys-row">
+            <p className="pyai-kicker">Intercom</p>
+            <span
+              className={['keys-chip', intercomConnected ? 'is-live' : 'is-pending'].join(' ')}
+            >
+              {intercomConnected ? 'Connected' : 'Not connected'}
+            </span>
+          </div>
+          <h2>Closed conversations and tickets are ingested automatically</h2>
+          <p className="panel-lede">
+            {intercomConnected
+              ? `Connected${intercomSuffix ? ` · ending ${intercomSuffix}` : ''}. Closed conversations and tickets are ingested automatically.`
+              : 'Connect Intercom to ingest closed conversations and tickets as they close. PDF upload still works if you are not on Intercom.'}
+          </p>
+          <div className="integrations-fields">
+            <div className="integrations-actions">
+              {intercomConnected ? (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  disabled={removingIntercom || connectingIntercom}
+                  onClick={() => void onDisconnectIntercom()}
+                >
+                  {removingIntercom ? 'Removing…' : 'Disconnect'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  disabled={connectingIntercom || removingIntercom}
+                  onClick={() => void onConnectIntercom()}
+                >
+                  {connectingIntercom ? 'Connecting…' : 'Connect Intercom'}
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <section className="integrations-status" aria-label="JustCall connection">
         <div className="keys-row">
