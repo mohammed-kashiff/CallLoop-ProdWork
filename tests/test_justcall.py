@@ -307,7 +307,7 @@ def _stub_poll_orgs(monkeypatch, api_module, org_ids, *, sync_fn):
     monkeypatch.setattr(api_module, "integration_org_id", lambda: DEFAULT_ORG_ID)
     monkeypatch.setattr(api_module, "org_scope", lambda oid: _Scope())
     monkeypatch.setattr(api_module, "_sync_justcall_recent", sync_fn)
-    monkeypatch.setattr(api_module, "_org_name", lambda oid: None)
+    monkeypatch.setattr(api_module, "_org_name_for_log", lambda oid: None)
     api_module._justcall_poll_failures.clear()
 
 
@@ -423,10 +423,12 @@ def test_justcall_poll_error_names_the_org_in_error_and_fields(monkeypatch, capl
     import backend.api as api_module
 
     def boom(**_k):
-        raise RuntimeError("credentials_unresolved")
+        raise RuntimeError(
+            "JustCall is not connected. Save the API key and secret on the Integrations page."
+        )
 
     _stub_poll_orgs(monkeypatch, api_module, [DEFAULT_ORG_ID], sync_fn=boom)
-    monkeypatch.setattr(api_module, "_org_name", lambda oid: "Acme Support")
+    monkeypatch.setattr(api_module, "_org_name_for_log", lambda oid: "Acme Support")
 
     with caplog.at_level(logging.ERROR, logger="callproof.api"):
         api_module._justcall_poll_once()
@@ -436,6 +438,9 @@ def test_justcall_poll_error_names_the_org_in_error_and_fields(monkeypatch, capl
     msg = rows[0].getMessage()
     assert f"org_id={DEFAULT_ORG_ID}" in msg
     assert 'org_name="Acme Support"' in msg
-    assert "Acme Support" in msg
-    assert "credentials_unresolved" in msg
+    assert (
+        "[org=Acme Support] JustCall is not connected. "
+        "Save the API key and secret on the Integrations page."
+    ) in msg
+    assert "RuntimeError" not in msg
     assert "user_id=" not in msg

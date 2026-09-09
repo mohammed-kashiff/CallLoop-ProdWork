@@ -751,6 +751,37 @@ def _org_name(org_id: str) -> str | None:
     return (row or {}).get("name")
 
 
+def _org_name_for_log(org_id: str) -> str | None:
+    """Workspace name for poller/ingest error lines. bypass_rls: this runs
+    off the request path (org_scope has already exited) and only reads
+    orgs.name for an id the poller already listed from Vault."""
+    if not org_id:
+        return None
+    try:
+        with db.connection(bypass_rls=True) as conn:
+            row = conn.execute(
+                "SELECT name FROM orgs WHERE id = %s", (org_id,),
+            ).fetchone()
+    except Exception as e:  # noqa: BLE001
+        log.debug("org_name log lookup skipped: %s", e)
+        return None
+    name = (row or {}).get("name")
+    if not isinstance(name, str):
+        return None
+    name = name.strip()
+    return name or None
+
+
+def _org_error_fields(org_id: str, exc: BaseException) -> dict:
+    """org_id/org_name for raw search, plus error=[org=name] … for charts."""
+    org_name = _org_name_for_log(org_id)
+    return {
+        "org_id": org_id,
+        "org_name": org_name or "-",
+        "error": applog.org_tagged_exception(exc, org_name=org_name, org_id=org_id),
+    }
+
+
 def _member_names(org_id: str, user_id: str | None) -> tuple[str | None, str | None]:
     """Caller's own first/last name from org_members. JWT user_id only."""
     if not org_id or not user_id:
@@ -2693,12 +2724,11 @@ def _sync_justcall_recent(hours: int = 24, *, org_id: str, host_fallback: bool =
             )
         except Exception as e:  # noqa: BLE001
             errors += 1
-            msg = str(e)[:300]
             applog.event(
                 log, "justcall_ingest_failed",
                 level=logging.ERROR,
                 justcall_id=cid,
-                error=msg,
+                **_org_error_fields(org_id, e),
             )
             results.append({"justcall_id": cid, "status": "error"})
             continue
@@ -2741,27 +2771,18 @@ def _justcall_poll_error_level(consecutive: int) -> int:
 def _record_justcall_poll_failure(org_id: str, exc: BaseException) -> None:
     n = _justcall_poll_failures.get(org_id, 0) + 1
     _justcall_poll_failures[org_id] = n
-    org_name = (_org_name(org_id) or "").strip() or None
-    err = applog.safe_exception_text(exc)[:300]
-    # Prefix the error with the workspace so Better Stack views that group
-    # by exception text (the "failure" dimension) split per org instead of
-    # looking like one system-wide outage. There is no user on this path —
-    # it is a background poller.
-    who = org_name or org_id
     applog.event(
         log, "justcall_poll_error",
         level=_justcall_poll_error_level(n),
-        org_id=org_id,
-        org_name=org_name or "-",
         consecutive=n,
-        error=f"{who}: {err}",
+        **_org_error_fields(org_id, exc),
     )
 
 
 def _record_justcall_poll_success(org_id: str) -> None:
     prev = _justcall_poll_failures.pop(org_id, 0)
     if prev:
-        org_name = (_org_name(org_id) or "").strip() or None
+        org_name = _org_name_for_log(org_id)
         applog.event(
             log, "justcall_poll_recovered",
             org_id=org_id,
@@ -3104,8 +3125,8 @@ def _process_intercom_conversation(org_id: str, conversation_id: str) -> None:
     except Exception as e:  # noqa: BLE001
         applog.event(
             log, "intercom_ingest_failed", level=logging.ERROR,
-            org_id=org_id, conversation_id=conversation_id,
-            error=applog.safe_exception_text(e),
+            conversation_id=conversation_id,
+            **_org_error_fields(org_id, e),
         )
     finally:
         with _intercom_inflight_lock:
@@ -3123,8 +3144,8 @@ def _process_intercom_ticket(org_id: str, ticket_id: str) -> None:
     except Exception as e:  # noqa: BLE001
         applog.event(
             log, "intercom_ingest_failed", level=logging.ERROR,
-            org_id=org_id, ticket_id=ticket_id,
-            error=applog.safe_exception_text(e),
+            ticket_id=ticket_id,
+            **_org_error_fields(org_id, e),
         )
     finally:
         with _intercom_inflight_lock:
@@ -3270,8 +3291,8 @@ def _sync_intercom_recent(org_id: str, *, hours: int = 24) -> dict:
             errors += 1
             applog.event(
                 log, "intercom_sync_failed", level=logging.ERROR,
-                org_id=org_id, kind="conversation", conversation_id=cid,
-                error=applog.safe_exception_text(e),
+                kind="conversation", conversation_id=cid,
+                **_org_error_fields(org_id, e),
             )
 
     tickets = intercom_client.search_closed_tickets(token, since_unix)
@@ -3287,8 +3308,8 @@ def _sync_intercom_recent(org_id: str, *, hours: int = 24) -> dict:
             errors += 1
             applog.event(
                 log, "intercom_sync_failed", level=logging.ERROR,
-                org_id=org_id, kind="ticket", intercom_ticket_id=tid,
-                error=applog.safe_exception_text(e),
+                kind="ticket", intercom_ticket_id=tid,
+                **_org_error_fields(org_id, e),
             )
 
     applog.event(
@@ -3311,7 +3332,7 @@ def _intercom_poll_loop():
             except Exception as e:  # noqa: BLE001
                 applog.event(
                     log, "intercom_poll_error", level=logging.ERROR,
-                    org_id=oid, error=str(e)[:300],
+                    **_org_error_fields(oid, e),
                 )
         time.sleep(intercom_oauth.poll_seconds())
 

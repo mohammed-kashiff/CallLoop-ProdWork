@@ -297,6 +297,40 @@ def safe_exception_text(exc: BaseException) -> str:
     return f"{name}: {redacted}" if redacted else name
 
 
+def org_tagged_error(
+    message: str,
+    *,
+    org_name: str | None = None,
+    org_id: str | None = None,
+) -> str:
+    """Prefix an error with [org=...] so Better Stack charts can group it.
+
+    Dashboard charts only group a fixed promoted set (event_name, path,
+    error, level, detail, service). org_id/org_name as extra fields are
+    searchable in raw logs but invisible to those charts — so the org
+    name has to live inside `error` itself. Prefer org_name; fall back to
+    org_id so two workspaces never collapse into one series.
+    """
+    who = (org_name or "").strip() or (org_id or "").strip() or "-"
+    who = who.replace("[", " ").replace("]", " ").replace("\n", " ").strip()[:80]
+    body = redact_line((message or "").replace("\n", " ").strip()) or "-"
+    return f"[org={who}] {body}"[:400]
+
+
+def org_tagged_exception(
+    exc: BaseException,
+    *,
+    org_name: str | None = None,
+    org_id: str | None = None,
+) -> str:
+    """Same [org=...] prefix, using a redacted exception *message* (no Type: prefix)."""
+    text = safe_exception_text(exc)
+    prefix = f"{type(exc).__name__}: "
+    if text.startswith(prefix):
+        text = text[len(prefix):]
+    return org_tagged_error(text, org_name=org_name, org_id=org_id)
+
+
 class _RedactFilter(logging.Filter):
     """Last line of defense so a secret in record.msg/args never hits the log file."""
 

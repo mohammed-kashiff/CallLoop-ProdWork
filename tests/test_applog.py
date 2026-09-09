@@ -20,6 +20,44 @@ def test_safe_exception_text_strips_illegal_header_value():
     assert "LocalProtocolError" in text
 
 
+def test_org_tagged_error_puts_org_name_inside_the_promoted_error_field():
+    from backend.applog import org_tagged_error, org_tagged_exception
+
+    out = org_tagged_error(
+        "JustCall is not connected. Save the API key and secret on the Integrations page.",
+        org_name="Acme Support",
+        org_id="00000000-0000-4000-8000-000000000001",
+    )
+    assert out.startswith("[org=Acme Support] ")
+    assert "JustCall is not connected" in out
+    assert "00000000-0000-4000-8000-000000000001" not in out  # name wins
+
+    fallback = org_tagged_error("boom", org_name=None, org_id="org-uuid-1")
+    assert fallback == "[org=org-uuid-1] boom"
+
+    tagged = org_tagged_exception(
+        RuntimeError("JustCall is not connected. Save the API key and secret on the Integrations page."),
+        org_name="Acme Support",
+        org_id="00000000-0000-4000-8000-000000000001",
+    )
+    assert tagged == (
+        "[org=Acme Support] JustCall is not connected. "
+        "Save the API key and secret on the Integrations page."
+    )
+    assert "RuntimeError" not in tagged
+
+
+def test_org_tagged_error_redacts_secrets_in_the_message():
+    from backend.applog import org_tagged_error
+
+    out = org_tagged_error(
+        "Bearer sk-ant-totallysecretvalue1234 exploded",
+        org_name="Acme",
+    )
+    assert "sk-ant-totallysecretvalue1234" not in out
+    assert out.startswith("[org=Acme] ")
+
+
 def test_redact_line_covers_header_blob_and_key_prefix():
     line = "claude attempt 1/4 exception: LocalProtocolError: Illegal header value b'sk-ant-zzzzzzzzzzzzzzzz'"
     out = redact_line(line)
