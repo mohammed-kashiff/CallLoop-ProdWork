@@ -3082,6 +3082,12 @@ def intercom_callback(request: Request, code: str = "", state: str = "", error: 
                 org_id, intercom_oauth.PROVIDER, {"access_token": token},
                 key_suffix=suffix, external_account_id=workspace_id,
             )
+    except org_vault.CredentialConflict:
+        applog.event(
+            log, "intercom_callback",
+            accepted=False, org_id=org_id, reason="workspace_already_linked",
+        )
+        return _intercom_integrations_redirect(connected=False)
     except org_vault.VaultUnavailable:
         applog.event(
             log, "intercom_callback",

@@ -182,3 +182,78 @@ def test_put_credential_sql_includes_external_account_id_column():
     src = (ROOT / "backend" / "org_vault.py").read_text(encoding="utf-8")
     put_credential_src = src.split("def put_credential")[1].split("def load_credential")[0]
     assert "external_account_id" in put_credential_src
+
+
+# ---------- live Postgres: real Vault, the actual bug from IN-15's pilot ----------
+
+
+def test_put_credential_refuses_a_second_org_for_the_same_workspace(monkeypatch):
+    """Real regression: connecting the same real Intercom workspace to a
+    second org used to raise a raw UniqueViolation from Postgres (the
+    ON CONFLICT clause only covers (org_id, provider), not the separate
+    (provider, external_account_id) index) — a 500 straight out of the
+    OAuth callback instead of a clean, actionable error. Needs real Vault
+    (vault.create_secret), so this only runs against a real Supabase
+    project, same convention as test_ticket_ingest.py's live tests."""
+    import os
+    import uuid
+
+    from dotenv import dotenv_values
+
+    from backend.db_url import database_url, psycopg_url
+    from backend.paths import ENV_FILE
+
+    raw_env = dotenv_values(ENV_FILE)
+    real_supabase_url = raw_env.get("SUPABASE_URL")
+    real_service_role_key = raw_env.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not real_supabase_url or not real_service_role_key or "test.supabase.co" in real_supabase_url:
+        pytest.skip("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set")
+    monkeypatch.setenv("SUPABASE_URL", real_supabase_url)
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", real_service_role_key)
+    for key, value in raw_env.items():
+        if key not in os.environ and value is not None:
+            monkeypatch.setenv(key, value)
+
+    raw = database_url()
+    if not raw:
+        pytest.skip("DATABASE_URL not set")
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from backend import org_vault as ov
+
+    admin = psycopg.connect(psycopg_url(raw), row_factory=dict_row, prepare_threshold=0)
+    org_a = str(uuid.uuid4())
+    org_b = str(uuid.uuid4())
+    workspace_id = f"live-test-{uuid.uuid4().hex[:12]}"
+    try:
+        admin.execute("INSERT INTO orgs (id, name) VALUES (%s, %s)", (org_a, "vault-conflict-a"))
+        admin.execute("INSERT INTO orgs (id, name) VALUES (%s, %s)", (org_b, "vault-conflict-b"))
+        admin.commit()
+
+        with org_scope(org_a):
+            ov.put_credential(
+                org_a, "intercom", {"access_token": "tok-a"},
+                external_account_id=workspace_id,
+            )
+            # Same org reconnecting its own workspace stays a clean upsert.
+            ov.put_credential(
+                org_a, "intercom", {"access_token": "tok-a-refreshed"},
+                external_account_id=workspace_id,
+            )
+
+        with org_scope(org_b):
+            with pytest.raises(ov.CredentialConflict):
+                ov.put_credential(
+                    org_b, "intercom", {"access_token": "tok-b"},
+                    external_account_id=workspace_id,
+                )
+    finally:
+        with org_scope(org_a):
+            ov.delete_credential(org_a, "intercom")
+        with org_scope(org_b):
+            ov.delete_credential(org_b, "intercom")
+        admin.execute("DELETE FROM orgs WHERE id IN (%s, %s)", (org_a, org_b))
+        admin.commit()
+        admin.close()

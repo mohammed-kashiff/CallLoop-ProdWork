@@ -21,6 +21,8 @@ import re
 import threading
 from dataclasses import dataclass
 
+from psycopg.errors import UniqueViolation
+
 from . import db
 from .org_ids import bound_org_id, parse_org_id
 
@@ -30,6 +32,7 @@ PROVIDER = "justcall"
 _lock = threading.Lock()
 
 _PROVIDER_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_EXTERNAL_ACCOUNT_CONFLICT = "idx_org_credentials_provider_external_account"
 
 
 class VaultUnavailable(Exception):
@@ -38,6 +41,13 @@ class VaultUnavailable(Exception):
 
 class VaultError(Exception):
     """Vault rejected the operation. Message must not include secrets."""
+
+
+class CredentialConflict(VaultError):
+    """This provider account (external_account_id) is already linked to a
+    different org. One provider workspace can only ever route webhooks to
+    one org (find_org_id_by_external_account() would otherwise be
+    ambiguous), so re-linking it here must be refused, not silently allowed."""
 
 
 @dataclass(frozen=True)
@@ -134,20 +144,31 @@ def put_credential(
         suffix = (key_suffix or "").strip() or None
         ext_account = (external_account_id or "").strip() or None
         with db.connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO org_credentials
-                    (org_id, provider, key_suffix, external_account_id, updated_at)
-                VALUES (%s, %s, %s, %s, now())
-                ON CONFLICT (org_id, provider) DO UPDATE
-                SET key_suffix = EXCLUDED.key_suffix,
-                    external_account_id = COALESCE(
-                        EXCLUDED.external_account_id, org_credentials.external_account_id
-                    ),
-                    updated_at = now()
-                """,
-                (oid, prov, suffix, ext_account),
-            )
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO org_credentials
+                        (org_id, provider, key_suffix, external_account_id, updated_at)
+                    VALUES (%s, %s, %s, %s, now())
+                    ON CONFLICT (org_id, provider) DO UPDATE
+                    SET key_suffix = EXCLUDED.key_suffix,
+                        external_account_id = COALESCE(
+                            EXCLUDED.external_account_id, org_credentials.external_account_id
+                        ),
+                        updated_at = now()
+                    """,
+                    (oid, prov, suffix, ext_account),
+                )
+            except UniqueViolation as e:
+                # ON CONFLICT above only covers (org_id, provider); this
+                # account is already linked to a *different* org_id, which
+                # trips the separate (provider, external_account_id) index
+                # instead and isn't caught by that clause.
+                if getattr(e.diag, "constraint_name", None) == _EXTERNAL_ACCOUNT_CONFLICT:
+                    raise CredentialConflict(
+                        f"{prov} account already linked to a different org"
+                    ) from None
+                raise
     log.info("vault put provider=%s org_id=%s", prov, oid)
     return suffix or ""
 
