@@ -454,7 +454,7 @@ def test_identity_alias_resolution_live_end_to_end():
     from psycopg.rows import dict_row
 
     from backend import (
-        intercom_ingest, org_vault, ticket_agent_identity_aliases as m,
+        intercom_ingest, ticket_agent_identity_aliases as m,
         ticket_ingest, ticket_scoring,
     )
     from backend.db import connection
@@ -490,9 +490,6 @@ def test_identity_alias_resolution_live_end_to_end():
                  "author": {"type": "admin", "email": "kashif@intercom.example"}},
             ]},
         }
-        with org_scope(org_id):
-            org_vault.put_credential(org_id, "intercom", {"access_token": "tok"})
-
         # Exercise the real resolution step directly against a real turn
         # list, same shape ingest_intercom_conversation produces — avoids
         # needing a live Intercom API call for this test.
@@ -520,11 +517,6 @@ def test_identity_alias_resolution_live_end_to_end():
         spans = ticket_scoring.agent_spans(formatted)
         assert agent_kashif in {s["agent_user_id"] for s in spans}
     finally:
-        with org_scope(org_id):
-            try:
-                org_vault.delete_credential(org_id, "intercom")
-            except Exception:
-                pass
         admin.execute("DELETE FROM ticket_messages WHERE org_id = %s", (org_id,))
         admin.execute("DELETE FROM tickets WHERE org_id = %s", (org_id,))
         admin.execute("DELETE FROM ticket_agent_identity_aliases WHERE org_id = %s", (org_id,))
