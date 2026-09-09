@@ -194,10 +194,31 @@ def test_insert_ticket_messages_writes_one_row_per_turn_in_order(monkeypatch):
     with _fake_db(monkeypatch, conn):
         ticket_ingest.insert_ticket_messages("t1", ORG_A, turns)
     assert conn.messages == [
-        ("t1", ORG_A, 0, None, "customer", "hi", None, None),
-        ("t1", ORG_A, 1, "u1", "agent", "hello", None, "Kashif"),
-        ("t1", ORG_A, 2, None, "bot", "beep", None, None),
+        ("t1", ORG_A, 0, None, "customer", "hi", None, None, False),
+        ("t1", ORG_A, 1, "u1", "agent", "hello", None, "Kashif", False),
+        ("t1", ORG_A, 2, None, "bot", "beep", None, None, False),
     ]
+
+
+def test_insert_ticket_messages_writes_is_internal_from_internal_contribution(monkeypatch):
+    """IN-9: a turn's internal_contribution flag (set by intercom_ingest
+    for a note-type part) persists as ticket_messages.is_internal. A
+    turn with no such key at all (every PDF-sourced turn) defaults False,
+    not an error — that source has no concept of this."""
+    from backend import ticket_ingest
+
+    turns = [
+        {"seq": 0, "speaker": "customer", "speaker_name": "Kevin", "agent_user_id": None,
+         "text": "hi", "internal_contribution": False},
+        {"seq": 1, "speaker": "agent", "speaker_name": "Kashif", "agent_user_id": "u1",
+         "text": "refund approved internally", "internal_contribution": True},
+        {"seq": 2, "speaker": "agent", "speaker_name": "Kashif", "agent_user_id": "u1",
+         "text": "no key at all — a PDF-sourced turn"},
+    ]
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ticket_ingest.insert_ticket_messages("t1", ORG_A, turns)
+    assert [row[-1] for row in conn.messages] == [False, True, False]
 
 
 def test_insert_ticket_messages_agent_display_name_is_null_for_non_agent_turns(monkeypatch):
@@ -214,7 +235,7 @@ def test_insert_ticket_messages_agent_display_name_is_null_for_non_agent_turns(m
     conn = _FakeConn()
     with _fake_db(monkeypatch, conn):
         ticket_ingest.insert_ticket_messages("t1", ORG_A, turns)
-    assert [row[-1] for row in conn.messages] == [None, None]
+    assert [row[-2] for row in conn.messages] == [None, None]  # agent_display_name; is_internal is last
 
 
 def test_insert_ticket_messages_is_a_noop_for_no_turns(monkeypatch):

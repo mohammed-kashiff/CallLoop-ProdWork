@@ -133,6 +133,74 @@ def test_empty_question_does_not_call_claude():
     assert result["evidence_verified"] is False
 
 
+# ── _scoreable_turns / run_ticket_wave customer_facing_only (IN-9) ───────────
+
+
+TURNS_WITH_A_NOTE = [
+    TURNS[0],
+    TURNS[1],
+    {"seq": 2, "speaker": "agent", "agent_user_id": "agent-a",
+     "text": "Refund approved per policy, internal note only.", "internal_contribution": True},
+    TURNS[3],
+]
+
+
+def test_scoreable_turns_returns_everything_when_flag_is_absent():
+    from backend.ticket_scoring import _scoreable_turns
+
+    assert _scoreable_turns(TURNS_WITH_A_NOTE, {"id": "ownership"}) == TURNS_WITH_A_NOTE
+
+
+def test_scoreable_turns_excludes_internal_when_customer_facing_only():
+    from backend.ticket_scoring import _scoreable_turns
+
+    result = _scoreable_turns(TURNS_WITH_A_NOTE, {"id": "tone", "customer_facing_only": True})
+    assert result == [TURNS[0], TURNS[1], TURNS[3]]
+    assert all(not t.get("internal_contribution") for t in result)
+
+
+def test_run_ticket_wave_excludes_a_note_from_a_customer_facing_only_dimension():
+    """The note's own text must never reach Claude's prompt for a
+    customer_facing_only dimension — proven by having the stub Claude
+    fail the test if the note's text is anywhere in what it receives."""
+    from backend.ticket_scoring import run_ticket_wave
+
+    captured_prompts = []
+
+    def _claude(prompt: str) -> str:
+        captured_prompts.append(prompt)
+        return json.dumps({
+            "verdict": "pass", "reasoning": "ok",
+            "evidence_quote": "I can help with that.", "evidence_seq": 1,
+        })
+
+    dims = [{"id": "tone", "name": "Tone", "weight": 15,
+             "question": "Was the tone professional?", "customer_facing_only": True}]
+    run_ticket_wave(TURNS_WITH_A_NOTE, dims, call_claude_fn=_claude)
+    assert len(captured_prompts) == 1
+    assert "Refund approved per policy" not in captured_prompts[0]
+
+
+def test_run_ticket_wave_includes_a_note_for_a_dimension_without_the_flag():
+    from backend.ticket_scoring import run_ticket_wave
+
+    captured_prompts = []
+
+    def _claude(prompt: str) -> str:
+        captured_prompts.append(prompt)
+        return json.dumps({
+            "verdict": "pass", "reasoning": "ok",
+            "evidence_quote": "Refund approved per policy, internal note only.",
+            "evidence_seq": 2,
+        })
+
+    dims = [{"id": "ownership", "name": "Ownership", "weight": 15,
+             "question": "Was ownership clear across the thread?"}]
+    findings = run_ticket_wave(TURNS_WITH_A_NOTE, dims, call_claude_fn=_claude)
+    assert "Refund approved per policy" in captured_prompts[0]
+    assert findings[0]["evidence_verified"] is True
+
+
 def test_agent_spans_split_when_a_different_agent_picks_up():
     from backend.ticket_scoring import agent_spans
 

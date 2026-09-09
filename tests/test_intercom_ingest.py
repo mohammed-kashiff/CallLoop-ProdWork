@@ -48,6 +48,48 @@ def test_speaker_role_defaults_unknown_to_customer():
     assert intercom_ingest._speaker_role("") == "customer"
 
 
+# ── _is_internal_note (IN-9) ─────────────────────────────────────────────────
+
+
+def test_is_internal_note_matches_the_one_confirmed_real_value():
+    assert intercom_ingest._is_internal_note("note_and_unsnooze") is True
+
+
+def test_is_internal_note_matches_bare_note_and_any_note_and_prefix():
+    assert intercom_ingest._is_internal_note("note") is True
+    assert intercom_ingest._is_internal_note("note_and_reopen") is True
+    assert intercom_ingest._is_internal_note("note_and_close") is True
+
+
+def test_is_internal_note_false_for_customer_facing_part_types():
+    assert intercom_ingest._is_internal_note("comment") is False
+    assert intercom_ingest._is_internal_note("assignment") is False
+    assert intercom_ingest._is_internal_note("") is False
+
+
+def test_turn_from_part_tags_a_note_as_internal():
+    part = {
+        "part_type": "note_and_unsnooze",
+        "body": "<p>Refund approved per policy §6.2.</p>",
+        "author": {"type": "admin", "email": "kashif@intercom.example"},
+        "created_at": 1788900100,
+    }
+    turn = intercom_ingest._turn_from_part(part, 0)
+    assert turn["internal_contribution"] is True
+    assert "Refund approved" in turn["text"]
+
+
+def test_turn_from_part_tags_a_comment_as_not_internal():
+    part = {
+        "part_type": "comment",
+        "body": "<p>Thanks for reaching out!</p>",
+        "author": {"type": "admin", "email": "kashif@intercom.example"},
+        "created_at": 1788900100,
+    }
+    turn = intercom_ingest._turn_from_part(part, 0)
+    assert turn["internal_contribution"] is False
+
+
 # ── normalize_conversation ────────────────────────────────────────────────────
 
 REAL_SHAPED_CONVERSATION = {
@@ -94,6 +136,34 @@ def test_normalize_conversation_includes_the_opening_source_message():
     assert turns[0]["speaker_name"] == "anthony@example.com"
     assert "Dashboard is buggy" in turns[0]["text"]
     assert turns[0]["seq"] == 0
+    assert turns[0]["internal_contribution"] is False
+
+
+def test_normalize_conversation_tags_a_note_part_as_internal():
+    """IN-9: a note-type part is captured (not discarded) and tagged, not
+    silently merged in as an ordinary agent turn."""
+    convo = {
+        "created_at": 1788900000,
+        "source": {"body": "<p>hi</p>", "author": {"type": "user", "email": "a@b.com"}},
+        "conversation_parts": {
+            "conversation_parts": [
+                {
+                    "part_type": "note_and_unsnooze",
+                    "body": "<p>Refund approved internally.</p>",
+                    "author": {"type": "admin", "email": "kashif@intercom.example"},
+                    "created_at": 1788900100,
+                },
+                {
+                    "part_type": "comment",
+                    "body": "<p>Thanks, all set!</p>",
+                    "author": {"type": "admin", "email": "kashif@intercom.example"},
+                    "created_at": 1788900200,
+                },
+            ],
+        },
+    }
+    turns = intercom_ingest.normalize_conversation(convo)
+    assert [t["internal_contribution"] for t in turns] == [False, True, False]
 
 
 def test_normalize_conversation_skips_empty_body_parts():
@@ -636,6 +706,7 @@ def test_normalize_ticket_includes_the_description_as_the_opening_turn():
     assert turns[0]["speaker_name"] == "anthony@example.com"
     assert "error messages" in turns[0]["text"]
     assert turns[0]["seq"] == 0
+    assert turns[0]["internal_contribution"] is False
 
 
 def test_normalize_ticket_includes_ticket_parts_and_skips_empty_ones():

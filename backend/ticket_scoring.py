@@ -22,6 +22,13 @@ Image-derived turns (TA-5) arrive as ordinary sequenced text — a vision
 description injected at the right seq — so this module has no reason to know
 a given turn originated from a picture. A finding that cites that seq is what
 lets a reviewer open the stored screenshot next to the verdict.
+
+internal_contribution turns (IN-9, Intercom source only) arrive the same
+way — ordinary sequenced text — except a dimension flagged
+customer_facing_only in ticket_rubric.py has that subset filtered out
+before scoring (_scoreable_turns), since some dimensions specifically
+judge what the customer actually saw. Span/ownership logic always sees
+the unfiltered thread; only per-dimension scoring is affected.
 """
 
 from __future__ import annotations
@@ -241,6 +248,18 @@ def _dimension_question(dim: dict) -> str:
     return (dim.get("question") or dim.get("llm_question") or "").strip()
 
 
+def _scoreable_turns(turns: list[dict], dim: dict) -> list[dict]:
+    """IN-9: a dimension flagged customer_facing_only (ticket_rubric.py)
+    is judged — and its evidence verified — only against turns that
+    aren't internal_contribution (a captured-but-not-customer-visible
+    note). Filters, doesn't renumber, so evidence_seq values returned
+    still index the real thread for attributed_agent()/agent_spans()
+    downstream, which always see the full, unfiltered turns list."""
+    if not dim.get("customer_facing_only"):
+        return turns
+    return [t for t in turns if not t.get("internal_contribution")]
+
+
 def run_ticket_wave(
     turns: list[dict],
     dimensions: list[dict],
@@ -251,15 +270,18 @@ def run_ticket_wave(
 ) -> list[dict]:
     """Ticket engine's own evaluation loop. Not run_v8_wave.
 
-    Scores the whole thread once per dimension (v1). Span split and
-    primary-owner assignment happen after, in score_ticket — they do not
-    change how many Claude calls fire.
+    Scores the whole thread once per dimension (v1) — except a
+    customer_facing_only dimension (IN-9), which scores only the
+    non-internal subset; see _scoreable_turns. Span split and
+    primary-owner assignment happen after, in score_ticket, always
+    against the full thread — they do not change how many Claude calls
+    fire.
     """
     findings = []
     for dim in dimensions:
         result = evaluate_criterion(
             _dimension_question(dim),
-            turns,
+            _scoreable_turns(turns, dim),
             build_prompt_fn=build_prompt_fn,
             call_claude_fn=call_claude_fn,
             validate_evidence_fn=validate_evidence_fn,

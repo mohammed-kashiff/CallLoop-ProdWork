@@ -1,5 +1,5 @@
 """
-CallProof - Intercom conversation + ticket ingest (IN-5/IN-6/IN-7/IN-8).
+CallProof - Intercom conversation + ticket ingest (IN-5/IN-6/IN-7/IN-8/IN-9).
 
 Normalizes a fetched Intercom Conversation or Ticket object into the same
 canonical turn shape ticket_pdf_parser.parse_turns() produces — {seq,
@@ -147,16 +147,35 @@ def _sent_at(unix_ts) -> datetime | None:
         return None
 
 
+def _is_internal_note(part_type: str) -> bool:
+    """IN-9: Intercom's part_type isn't a documented closed enum (its own
+    OpenAPI spec types it as a bare string, no enum list) — the one
+    confirmed real value is "note_and_unsnooze" (a real sample carried a
+    decisive, customer-impacting decision through exactly this part,
+    never surfaced as a customer-facing comment — the original "discard
+    all notes" design was wrong because of this). Matched by prefix
+    rather than an exhaustive literal list, so an unseen sibling
+    ("note_and_reopen", "note_and_close", etc.) is still caught rather
+    than silently mis-tagged as customer-facing."""
+    return part_type == "note" or part_type.startswith("note_and_")
+
+
 def _turn_from_part(part: dict, seq: int) -> dict | None:
     """A conversation_part and a ticket_part share the exact same shape
     per Intercom's schema (part_type/author/body/created_at) — one
     extractor covers both. Returns None for parts with no scoreable text
     (workflow/system events — assignment, snooze, close, etc. — or
     conversation_summary, which the PRD explicitly says is a neutral
-    recap, not a stand-in for CallLoop's own evaluative audit_summary)."""
+    recap, not a stand-in for CallLoop's own evaluative audit_summary).
+
+    internal_contribution (IN-9) tags a note-type part — captured, not
+    discarded, but excluded from scoring dimensions that specifically
+    judge customer-facing communication (see ticket_rubric.py's
+    customer_facing_only flag and ticket_scoring.run_ticket_wave)."""
     if not isinstance(part, dict):
         return None
-    if part.get("part_type") == "conversation_summary":
+    part_type = str(part.get("part_type") or "")
+    if part_type == "conversation_summary":
         return None
     author = part.get("author") or {}
     text = _html_to_text(part.get("body"))
@@ -169,6 +188,7 @@ def _turn_from_part(part: dict, seq: int) -> dict | None:
         "agent_user_id": None,
         "text": text,
         "sent_at": _sent_at(part.get("created_at")),
+        "internal_contribution": _is_internal_note(part_type),
     }
 
 
@@ -189,6 +209,7 @@ def normalize_conversation(conversation: dict) -> list[dict]:
             "agent_user_id": None,
             "text": source_text,
             "sent_at": _sent_at(conversation.get("created_at")),
+            "internal_contribution": False,
         })
         seq += 1
 
@@ -244,6 +265,7 @@ def normalize_ticket(ticket: dict) -> list[dict]:
             "agent_user_id": None,
             "text": description,
             "sent_at": _sent_at(ticket.get("created_at")),
+            "internal_contribution": False,
         })
         seq += 1
 

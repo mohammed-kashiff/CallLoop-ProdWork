@@ -68,6 +68,17 @@ def test_covers_the_six_prd_named_criteria():
     }
 
 
+def test_only_tone_is_customer_facing_only():
+    """IN-9: locks in the deliberate design choice — Tone is the one
+    dimension that's unambiguously about customer-visible communication.
+    The other five are left to include internal notes on purpose (the
+    epic's own motivating example was a decisive decision delivered
+    entirely through a note) — a silent drift here would quietly widen
+    or narrow which dimensions see internal contributions."""
+    flagged = {d["id"] for d in SCAFFOLD_TICKET_RUBRIC if d.get("customer_facing_only")}
+    assert flagged == {"tone"}
+
+
 def test_get_scaffold_rubric_returns_an_independent_copy():
     a = get_scaffold_rubric()
     a[0]["weight"] = 999

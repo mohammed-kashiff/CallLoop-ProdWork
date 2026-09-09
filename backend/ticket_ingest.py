@@ -127,6 +127,11 @@ def insert_ticket_messages(ticket_id: str, org_id: str, turns: list[dict]) -> No
     raw name off the PDF, regardless of whether agent_user_id resolved —
     so an org owner has something to map later. NULL for customer/bot
     turns, matching the column's own contract.
+
+    is_internal (IN-9) — a note-type Intercom part, captured but not
+    customer-facing (see intercom_ingest._is_internal_note). Defaults
+    False for any turn that doesn't carry the key at all, e.g. every
+    PDF-sourced turn, which has no such concept.
     """
     if not turns:
         return
@@ -137,12 +142,14 @@ def insert_ticket_messages(ticket_id: str, org_id: str, turns: list[dict]) -> No
                 conn.execute(
                     """
                     INSERT INTO ticket_messages
-                        (ticket_id, org_id, seq, agent_user_id, speaker, text, sent_at, agent_display_name)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        (ticket_id, org_id, seq, agent_user_id, speaker, text, sent_at,
+                         agent_display_name, is_internal)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         ticket_id, org_id, t["seq"], t["agent_user_id"],
                         t["speaker"], t["text"], t.get("sent_at"), display_name,
+                        bool(t.get("internal_contribution", False)),
                     ),
                 )
 
@@ -368,7 +375,7 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
                 return None
             messages = conn.execute(
                 """
-                SELECT seq, speaker, text, agent_user_id, sent_at
+                SELECT seq, speaker, text, agent_user_id, sent_at, is_internal
                 FROM ticket_messages
                 WHERE ticket_id = %s AND org_id = %s
                 ORDER BY seq
@@ -406,6 +413,7 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
                 "agent_user_id": str(m["agent_user_id"]) if m["agent_user_id"] else None,
                 "sent_at": _iso(m["sent_at"]),
                 "has_image": int(m["seq"]) in asset_seqs,
+                "is_internal": bool(m["is_internal"]),
             }
             for m in messages
         ],

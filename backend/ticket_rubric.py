@@ -60,6 +60,18 @@ SCAFFOLD_TICKET_RUBRIC: list[dict] = [
             "throughout the ticket, even if the customer was frustrated?"
         ),
         "scaffold": True,
+        # IN-9: the one dimension of the six that's unambiguously about
+        # customer-facing communication — tone toward a customer can't be
+        # judged from a note they never saw. The other five (Ownership,
+        # Diagnostic Reasoning, Investigation Rigor, Resolution
+        # Effectiveness, Escalation Quality) are deliberately left
+        # customer_facing_only=False (the default) — they're about the
+        # agent's internal work, which is exactly what IN-9's own
+        # motivating example showed can live entirely inside a note (a
+        # refund-policy determination delivered through note_and_unsnooze,
+        # never surfaced as a customer-facing comment). Excluding notes
+        # from those would recreate the same blind spot.
+        "customer_facing_only": True,
     },
     {
         "id": "ownership",
