@@ -44,6 +44,60 @@
 > something rendered on a screen. Jira epic: AC-24 (see §4/§6 for the exact
 > instrumentation points).
 >
+> **2026-09-09 — Intercom integration, two separate features (IN-1 through
+> IN-7, Jira space "Integrations"):**
+>
+> 1. **Data ingestion** — a customer's Intercom workspace (Conversations +
+>    Tickets) can be connected as a second ticket source alongside PDF
+>    upload, landing in the same `tickets`/`ticket_messages` tables so the
+>    scorer can't tell them apart. Multi-tenant OAuth (one CallLoop-owned
+>    Intercom app, many customer workspaces) — `backend/intercom_oauth.py`
+>    (connect/callback/token exchange/webhook signature verification),
+>    `backend/intercom_client.py` (REST client:
+>    get_conversation/get_ticket/search_closed_conversations/
+>    search_closed_tickets), `backend/intercom_ingest.py` (payload
+>    normalization + the idempotent write path). `org_vault.py` was
+>    generalized from JustCall-only (`put_justcall`/`load_justcall`) to a
+>    provider-parameterized `put_credential`/`load_credential`/
+>    `find_org_id_by_external_account` — JustCall's functions are now thin
+>    wrappers over the general ones. Webhook-primary/polling-backstop, same
+>    shape as JustCall's existing poller — **except in production, the
+>    webhook half has never once fired** (confirmed via Better Stack logs:
+>    zero real events for any subscribed topic, only Intercom's own `ping`
+>    test pings) despite every checkable config on Intercom's side being
+>    correct — endpoint URL, topic subscriptions, OAuth permission scopes,
+>    workspace installation. Root cause unconfirmed (best guess: a
+>    trial-plan limitation), not blocking since polling alone has proven
+>    reliable. A real bug was found and fixed here too: the ticket half of
+>    the poller (`search_closed_tickets`) filtered `state = "closed"`, a
+>    field/value that doesn't apply to Tickets the way it does
+>    Conversations (Tickets use a boolean `open` field instead) — ran
+>    silently wrong (empty results, no error) for hours against a real
+>    ticket before being caught via direct log inspection.
+> 2. **Support widget** — unrelated second feature: CallLoop's own
+>    Intercom Messenger embed for customer support, gated off the same
+>    Intercom app's Messenger Security (JWT-signed, not the legacy raw-HMAC
+>    scheme — Intercom's own dashboard only recognizes the JWT scheme as
+>    "securely installed"). `backend/intercom_widget.py` (`user_jwt()`),
+>    `GET /api/support/widget-identity`,
+>    `frontend/src/components/IntercomWidget.tsx` (hand-rolled script
+>    loader — the `@intercom/messenger-js-sdk` npm package's own loader
+>    silently fails inside this Vite SPA, confirmed via a HAR capture; the
+>    package was dropped entirely rather than worked around).
+>
+> New tables/columns: `tickets.external_id` (dedup),
+> `tickets.provider_stats` (raw Intercom `statistics`, Conversation-only
+> field, v1/unparsed), `org_credentials.external_account_id` (webhook
+> routing — Intercom sends every connected workspace's events to one
+> shared URL; the payload's `app_id` is the only way to resolve which org
+> it's for). `org_credentials.provider` CHECK constraint relaxed from
+> `IN ('justcall')` to a pattern, to admit `'intercom'` without blocking
+> future providers.
+>
+> **Known gap, not yet built:** no frontend "Integrations" tab UI for this
+> — Connect/Disconnect Intercom is backend-only (`curl`/`Postman` during
+> development). See §7.
+>
 > **2026-09-06 — observability follow-through (AC-42/AC-51):** the hosted
 > Better Stack log sink (`applog.attach_logtail_handler`) was shipping data
 > with no `service` dimension at all — nothing had ever set one, so every
@@ -121,6 +175,7 @@ of orgs/users now that real signups exist.
 | **PyAI — Recap** | Turns a speaker-labelled transcript into a summary | `backend/recap.py` |
 | **Anthropic Claude** | Runs the QA rubric against a transcript, produces the score | `backend/qa_engine.py` |
 | **JustCall** | Telephony source — pulls call recordings, receives webhooks for new calls | `backend/justcall.py` |
+| **Intercom** | Second ticket source (Conversations/Tickets, OAuth, multi-tenant) — data ingestion into `tickets`; separately, CallLoop's own support Messenger widget | `backend/intercom_oauth.py`, `intercom_client.py`, `intercom_ingest.py`, `intercom_widget.py` |
 | **Sentry** | Error tracking for 5xx failures | `backend/sentry_report.py` |
 
 ---
@@ -148,6 +203,7 @@ flowchart LR
         PYAI["PyAI\nHear + Recap"]
         CLAUDE["Anthropic Claude\nQA scoring"]
         JC["JustCall\ntelephony"]
+        IC["Intercom\nconversations/tickets +\nsupport widget"]
         SENTRY["Sentry"]
     end
 
@@ -160,6 +216,9 @@ flowchart LR
     API -- "score transcript" --> CLAUDE
     JC -- "webhook: new call recorded" --> API
     API -- "pull call list / recording" --> JC
+    IC -- "webhook: conversation/ticket closed (never fires in prod)" --> API
+    API -- "OAuth connect + poll for closed conversations/tickets" --> IC
+    FE -- "Messenger widget (support)" --> IC
     API -- "unhandled 5xx, scrubbed" --> SENTRY
 ```
 
@@ -209,9 +268,13 @@ request and scopes every downstream call to that org.
 | `rubric_builder.py` | Self-serve rubric builder (customer-facing, gated by `auth.require_owner`, not admin): a team's own mix of built-in dimensions (reused unchanged from `rubric.json` unless the team edits their criteria text, which converts that one to a custom dimension — a built-in's deterministic logic isn't rewritable by text) and free-text custom ones (`method: "custom_llm"`, Claude-judged). A **multi-rubric library**: teams save several independently-versioned named rubrics (`audit_store.save_named_rubric`/`list_rubric_lineages`/`activate_rubric_by_name`), at most one active org-wide at a time — same `rubrics` schema, no migration. Deliberately separate from `admin_console.py`. |
 | `audio_store.py` | Uploads/downloads call recordings to/from the private Supabase Storage bucket; issues signed URLs. |
 | `audio_backfill.py` | One-off CLI (`python -m backend.audio_backfill`) to push any leftover local recordings into Storage. |
-| `org_vault.py` | Per-org JustCall credentials in Supabase Vault — `put_justcall`/`load_justcall`/`delete_justcall`. Plaintext keys never touch a table; only a key suffix is indexed in `org_credentials`. |
+| `org_vault.py` | Per-org provider credentials in Supabase Vault (IN-3: generalized from JustCall-only). `put_credential`/`load_credential`/`delete_credential`/`credential_status` take a `provider` string; `find_org_id_by_external_account(provider, external_account_id)` resolves an org from a provider-side workspace id (Intercom's webhook routing — see `intercom_oauth.py`). `put_justcall`/`load_justcall`/`delete_justcall` are now thin wrappers over the general functions, unchanged externally. Plaintext secrets never touch a table; only a key suffix (and, for Intercom, the external account id) is indexed in `org_credentials`. Any caller must already be inside `org_scope(org_id)` — a public route (webhook/OAuth callback) that isn't will hit an uncaught RLS violation, not a clean error (caught live once, IN-4). |
 | `env_keys.py` | Validates allowlisted API-key formats. Never logs secret values. |
 | `justcall.py` | JustCall REST client — pagination (0-indexed), call list, recording download, webhook signature verification. |
+| `intercom_oauth.py` | IN-3/IN-4. Multi-tenant Intercom OAuth (one CallLoop-owned app, many customer workspaces — connecting per-customer means an OAuth flow, not a bare API key like JustCall). `client_id`/`client_secret`/`is_configured`, `make_state`/`verify_state` (HMAC-signed org_id+timestamp, no server-side session table), `build_authorize_url`, `exchange_code_for_token`, `fetch_workspace_id()` (`GET /me` → `app.id_code`, captured at connect time as `org_credentials.external_account_id`), `verify_webhook_signature()` (HMAC-SHA1 over the raw body, keyed by the OAuth client secret — a *different* secret from the Messenger Security "Unified Secret" `intercom_widget.py` uses), `poll_seconds()` (env `INTERCOM_POLL_SECONDS`, default 300, floor 30). |
+| `intercom_client.py` | IN-5/IN-6/IN-7. Thin REST wrapper, same role as `justcall.py`. `get_conversation`/`get_ticket` (single object fetch). `search_closed_conversations`/`search_closed_tickets` (`POST /conversations\|tickets/search` — the plain List endpoints support no state/date filtering at all, only pagination, so Search is the only usable endpoint for "what closed recently"). The ticket filter is `open = false` (a boolean) — **not** a `state = "closed"` string the way Conversations use; that was a real bug (IN-6), Tickets don't share Conversations' state vocabulary, confirmed live via a real ticket that sat unmatched across 12+ poll cycles with no error before being caught. |
+| `intercom_ingest.py` | IN-5/IN-6/IN-7. Normalizes a fetched Conversation or Ticket into the same canonical turn shape `ticket_pdf_parser.parse_turns()` produces, so `ticket_ingest.py`'s DB-writing functions and the scorer need zero changes to handle an Intercom-sourced ticket. Field-mapping gotchas found against Intercom's real schema (not guessed): a conversation's opening message lives in a separate `source` object, not in `conversation_parts` (which is only the replies/notes after); `conversation_parts.conversation_parts` is doubly-nested; a Ticket's opening content is `ticket_attributes._default_description_` (a plain string, attributed to `contacts[0]`); `ticket_parts` share `conversation_parts`' exact shape. `_external_id()` namespaces ids by kind (`"conversation:<id>"` / `"ticket:<id>"`) since a conversation and a ticket sharing a raw numeric id isn't a documented-impossible case — confirmed necessary live: a "conversational ticket" (Intercom's Convert-to-ticket flow) surfaces as a *distinct* Ticket-API resource (its own id) *linked to* the originating Conversation (a different id) — both got ingested independently, correctly, as two separate rows. `statistics` (IN-7, first-response/resolution timing) is wired into the conversation path only — confirmed against Intercom's own reference that this field exists on Conversation, not Ticket, stored as-is in `tickets.provider_stats` (v1, unparsed, not surfaced). |
+| `intercom_widget.py` | Unrelated to the OAuth data-ingestion integration above — CallLoop's own Intercom Messenger embed for customer support. `user_jwt(user_id, email)` — HS256, signed with `INTERCOM_MESSENGER_SECRET` ("Unified Secret," from Intercom's Messenger Security settings, not the OAuth app's client secret). Replaced an earlier raw-HMAC `user_hash()` implementation after finding Intercom's own dashboard only marks a Messenger install as "securely installed" under the newer JWT scheme — the old hash still works for backward compatibility but doesn't satisfy Intercom's own check. |
 | `transcribe.py` | Submits audio to PyAI Hear, polls until done, picks channel-split vs. diarize mode, persists the transcript. |
 | `recap.py` | PyAI Recap client — turns a speaker-labelled transcript into a summary. |
 | `qa_engine.py` | Runs the rubric against a transcript via Claude, produces a deterministic score. Shared with the ticket engine only via `build_prompt` / `call_claude` / `validate_evidence` — ticket scoring must not grow any other import from this file. |
@@ -220,7 +283,7 @@ request and scopes every downstream call to that org.
 | `ticket_rubric.py` | TA-7/TA-13. `SCAFFOLD_TICKET_RUBRIC` — six LLM-judged dimensions (still not the final design, PRD §4/§11). `ensure_ticket_rubric()`/`fetch_active_ticket_rubric()` store/read the org's "Ticket QA" rubric as a real `rubrics`-table row (PRD §10, no schema change — a `definition->>'kind' = 'ticket'` marker distinguishes it from call rubrics). `evaluate_response_timeliness()` is the seventh, deterministic dimension — real elapsed time between a customer message and the next agent reply, from `sent_at`; not folded into `score_ticket()`'s weighted score for v1, returned as its own finding instead. |
 | `ticket_image_extraction.py` | TA-5. `extract_images()` pulls embedded raster objects out of a PDF (pypdfium2); `describe_image()` is one Claude vision call per image. Standalone — no import from the call-scoring engine. Real JustCall exports currently yield no image XObjects (screenshots flatten to a literal `[Image]` text token on export), so this only fires for a source that actually embeds real image data; validated live against a synthetic PDF + the real Anthropic API. |
 | `ticket_image_store.py` | TA-5. Private per-org Storage for ticket screenshots (`ticket-images` bucket), same shape as `audio_store.py` for call audio — signed URLs only, never a public read policy. |
-| `ticket_ingest.py` | TA-4/TA-5/TA-15 write path. `ingest_ticket_pdf()`: parses text turns + embedded images, `interleave_images()` merges an image into the turn sequence right after the last text turn on the same PDF page (inheriting that turn's speaker — the closest signal available without exact on-page coordinates), resolves each agent turn's raw `speaker_name` against the org's `ticket_agent_aliases` mapping (TA-15, batched one query per ingest via `resolve_agent_user_ids()`) before writing to `ticket_messages`, stores each image via `ticket_image_store` + a `ticket_message_assets` row. `insert_ticket_messages()` also persists `agent_display_name` (TA-15) — the raw name for every agent turn, regardless of whether it resolved, so an org owner has something to map. Any failure anywhere in the pipeline marks the ticket `failed` and re-raises — nothing partial is left looking like a successful ingest. Scoring (TA-6) needs zero changes: an image-derived turn is just a normal turn in the sequence. Also the org-scoped reads behind `/api/tickets` (`list_tickets` / `get_ticket`). |
+| `ticket_ingest.py` | TA-4/TA-5/TA-15 write path. `ingest_ticket_pdf()`: parses text turns + embedded images, `interleave_images()` merges an image into the turn sequence right after the last text turn on the same PDF page (inheriting that turn's speaker — the closest signal available without exact on-page coordinates), resolves each agent turn's raw `speaker_name` against the org's `ticket_agent_aliases` mapping (TA-15, batched one query per ingest via `resolve_agent_user_ids()`) before writing to `ticket_messages`, stores each image via `ticket_image_store` + a `ticket_message_assets` row. `insert_ticket_messages()` also persists `agent_display_name` (TA-15) — the raw name for every agent turn, regardless of whether it resolved, so an org owner has something to map. Any failure anywhere in the pipeline marks the ticket `failed` and re-raises — nothing partial is left looking like a successful ingest. Scoring (TA-6) needs zero changes: an image-derived turn is just a normal turn in the sequence. Also the org-scoped reads behind `/api/tickets` (`list_tickets` / `get_ticket`). IN-5/IN-6/IN-7: `create_ticket()`/`find_ticket_by_external_id()` gained a provider-agnostic `external_id` (dedup — a retried Intercom webhook delivery must not create a duplicate ticket), and `set_ticket_provider_stats()` writes a provider's raw per-ticket statistics object (`tickets.provider_stats`) — `intercom_ingest.py` is the only caller today. |
 | `ticket_agent_aliases.py` | TA-15. Org owner-managed mapping from a ticket PDF's raw agent display name (e.g. "Kashif") to a real `org_members.user_id` — closes the gap where every PDF-sourced agent turn's `agent_user_id` was permanently `None`, collapsing TA-8's multi-agent attribution into one undifferentiated span. `resolve_agent_user_ids()` (batch, one query per ingest) is what `ticket_ingest.py` calls; `list_unresolved_agent_names()` reads back real agent turns with no resolved id, for an org owner's own mapping to-do list; `list_org_agents()` is the roster for a mapping-picker UI. Does not retroactively fix tickets ingested before a mapping existed — a known, accepted v1 boundary. |
 | `ticket_agent_aliases_api.py` | TA-15. `/api/tickets/agent-aliases` HTTP surface — GET (current mappings + unresolved names + org roster), POST (create/update one mapping), DELETE `/{display_name}`. Every mutation is `auth.require_owner`-gated, same tier as the rubric builder and `org_features` toggles. Separate file from `ticket_api.py` (Cursor's, TA-9) by design, to avoid touching it while both are worked on the same tree; registered *before* `ticket_api.register(app)` in `api.py` so its literal `/api/tickets/agent-aliases` path isn't swallowed by `ticket_api.py`'s `GET /api/tickets/{ticket_id}`. |
 | `ticket_api.py` | TA-9. `/api/tickets` HTTP surface. `POST /api/tickets/upload` accepts a PDF and hands it to `ingest_ticket_pdf` — not `/api/upload`. JWT org_id only. `GET /api/tickets/{id}` and `GET /api/tickets/mine` apply TA-12's permission filter (`ticket_permissions.py`) before returning. |
@@ -267,13 +330,16 @@ Schema changes only ever happen here — never as ad-hoc SQL in `backend/`.
 | `0027_platform_admins_revoke` | `platform_admins` inherited SELECT/INSERT/UPDATE/DELETE from 0005's `ALTER DEFAULT PRIVILEGES` (applies to every new public-schema table unless revoked — caught live, right after 0026 deployed, by a test asserting the grant was empty). RLS alone already blocked `callproof_app` (verified: SELECT returned zero rows, INSERT raised `InsufficientPrivilege`), but this explicitly `REVOKE`s the grant so it doesn't rely on RLS alone. |
 | `0028_product_events` | `product_events` (AC-43, observability PRD) — append-only usage telemetry, same convention as `call_pipeline_events`/`impersonation_log`: `id, org_id, user_id (nullable), event_name, properties JSONB, created_at`, GRANT SELECT+INSERT only, RLS org-scoped via `callproof_current_org_id()`. `user_id` has no FK — some future event source may have none. |
 | `0029_admin_search_orgs` | `admin_search_orgs(p_q text)` (AC-33, Command Center Redesign) — SECURITY DEFINER, same convention as `admin_search_directory`/`org_id_for_name`/`platform_admins`. Reads `orgs`/`org_members` directly (not through `org_directory`) since it needs the org's own `created_at`, not a membership row's. A second function alongside `admin_search_directory`, not a replacement. |
+| `0030_org_credentials_provider` | Relaxes `org_credentials.provider`'s CHECK from `IN ('justcall')` to a pattern (`^[a-z][a-z0-9_]*`) — admits `'intercom'` (IN-3) without hardcoding a second literal, and without blocking whatever provider comes after it. |
+| `0031_ticket_intercom_dedup` | `tickets.external_id` (IN-5, dedup — unique per `(org_id, source, external_id)` when set, same pattern as `calls.external_id`) + `org_credentials.external_account_id` (IN-4, unique per `(provider, external_account_id)` — Intercom sends every connected workspace's webhooks to one shared app-wide URL; the payload's `app_id` is the only way to resolve which org an event belongs to, so this is the lookup index). |
+| `0032_ticket_provider_stats` | `tickets.provider_stats JSONB` (IN-7) — a provider's raw per-ticket statistics object (Intercom's `statistics` field: first-response/resolution timing). v1: stored as-is, unparsed, not surfaced in the UI yet. NULL for PDF-sourced tickets. |
 
 ### `frontend/src/`
 
 | Folder | Purpose |
 |---|---|
 | `pages/` | One file per route/screen: `Login.tsx` (also handles "Forgot password?", CL-29), `ResetPassword.tsx` (the set-new-password landing page a reset email links to, CL-29 — gated on Supabase's `PASSWORD_RECOVERY` auth event, not just the URL having a token), `Home.tsx`, `FlaggedForReview.tsx`, `ChurnRisk.tsx`, `Training.tsx`, `Integrations.tsx`, `AgentsPulse.tsx`, `Feedbacks.tsx`, `Neighbourhood.tsx`, `Pyai.tsx`, `Admin.tsx` (platform-admin only; redirects everyone else to `/`, real enforcement is server-side). **AC-37/38/39/40 (2026-09-07): rebuilt as a master-detail directory + slide-over inspector**, replacing the old single-long-scroll layout. `.cc-shell` wrapper (AC-32's Electric Cyan tokens, `App.css`) → a directory table fed by `GET /api/admin/orgs` (AC-33, one row per org) → clicking a row opens a slide-over drawer (`selectedOrg` state, no route change — the table never unmounts, so its scroll position survives the drawer closing) with 4 tabs: **Overview** (org metadata + cost/usage stats + a plain inline-SVG `UsageSparkline` of AC-35's real `/api/admin/usage/daily` series — no chart library), **Flags** (AC-36's `GET /api/admin/feature-flags` metadata groups toggles into Low/Medium/Danger sections; a `danger`-tier toggle opens a confirmation `Modal` before the actual `POST /api/admin/features` call fires, gated generically off `risk` rather than hardcoded key names), **Rubric** (unchanged `GET/POST /api/admin/orgs/{org_id}/rubric` wiring), and **Members** (AC-34's per-member list — `GET /api/admin/directory?q=<org_id>` filtered client-side to that org — each row independently wired to Log in as / Send reset email / an expandable password-history row, all keyed by `user_id` so N members' state never collides). AC-39: the top-bar search is real (`GET /api/admin/orgs?q=`, org-level to match the new table — not the per-member endpoint), ⌘K/Ctrl+K focuses it from anywhere on the page. AC-40: "Provision user" moved from an always-open inline form into a modal triggered by a top-bar button — same fields, same `POST /api/admin/provision-user` body. The Activity date-range lookup section is unchanged and unrelocated — out of scope for this redesign, kept as-is above the new table. `frontend/src/lib/features.ts`'s `TRIAL_FLAGS`/`adminFlagOn`/`TrialFlag` were deleted as dead code once Flags moved to AC-36's backend-served metadata — `flagEnabled`/`FeatureMap` (used by several customer-facing components) are untouched. |
-| `components/` | Reusable UI pieces — call playback (`TranscriptPlayer`, `CallWaveform`), layout (`AppLayout`, `Sidebar`), status widgets (`UsageMeter`, `PyaiBadge`, `LiveTicker`), the JustCall keys form (`KeysPanel`). `Sidebar`/`UsageMeter`/`PyaiBadge` all read `AuthContext`'s `features` map to hide themselves per-org; `Sidebar` also renders the caller's own org name under the tagline (CL-31). |
+| `components/` | Reusable UI pieces — call playback (`TranscriptPlayer`, `CallWaveform`), layout (`AppLayout`, `Sidebar`), status widgets (`UsageMeter`, `PyaiBadge`, `LiveTicker`), the JustCall keys form (`KeysPanel`), `IntercomWidget` (support Messenger embed, mounted in `AppLayout` for non-admin-host only — unrelated to `pages/Integrations.tsx`'s JustCall connect flow, which has no Intercom equivalent yet; see §7). `Sidebar`/`UsageMeter`/`PyaiBadge` all read `AuthContext`'s `features` map to hide themselves per-org; `Sidebar` also renders the caller's own org name under the tagline (CL-31). |
 | `context/` | React context providers: `AuthContext` (Supabase session, plus `/api/me`'s `features`, `isPlatformAdmin`, and `orgName`), `AuditContext`, `PyaiStatus`, `ColorMode`, `UsageEnv`. |
 | `lib/` | `supabase.ts` (client init), `api.ts` (backend fetch wrapper), `mapAudit.ts`, `format.ts`, `zipAudio.ts`, `speakerText.ts`, `features.ts` (`flagEnabled()` — missing key defaults to shown; deliberately holds no admin-email list, that lives server-side only — its `TRIAL_FLAGS`/`adminFlagOn` were deleted 2026-09-07 once Command Center's Flags tab moved to AC-36's backend-served `/api/admin/feature-flags` metadata instead). |
 
@@ -374,6 +440,11 @@ sequenceDiagram
 | GET/POST/DELETE | `/api/integrations/justcall` | JustCall credential status / save / delete |
 | POST | `/api/integrations/justcall/sync` | Manually trigger a JustCall pull |
 | POST | `/api/integrations/justcall/webhook` | JustCall's inbound webhook (new call recorded) — public, signature-verified |
+| GET/DELETE | `/api/integrations/intercom` | Intercom connection status / disconnect. No frontend UI yet (§7) — dev-tested via curl. |
+| GET | `/api/integrations/intercom/connect` | Starts the OAuth flow — 302 to Intercom's authorize URL, `state` HMAC-signed with the caller's org_id |
+| GET | `/api/integrations/intercom/callback` | Public — OAuth redirect target. Exchanges the code, captures the workspace id (`app.id_code`) via `GET /me`, stores the credential. Currently returns raw JSON on success, not a friendly redirect (known gap, §7) |
+| POST | `/api/integrations/intercom/webhook` | Public, signature-verified (HMAC-SHA1). Resolves org via the payload's `app_id`; dispatches `conversation.admin.closed`/`ticket.resolved`/`ticket.closed`. **Never fires in production** (§7) — everything ingested so far came from the poller instead |
+| GET | `/api/support/widget-identity` | Unrelated to the routes above — CallLoop's own support Messenger. Returns `{configured, intercom_user_jwt}` for the logged-in user, signed by `intercom_widget.user_jwt()` |
 | GET | `/api/calls/{call_id}/audio` | Signed URL to play back a recording |
 | POST | `/api/calls/{call_id}/retranscribe` | Re-run Hear on a stored recording |
 | POST | `/api/upload` | Upload a single audio file for transcription + scoring |
@@ -399,6 +470,10 @@ Every route except the JustCall webhook requires a valid Supabase JWT; the webho
 - `admin_console.py`'s `search_directory()` swallows any lookup failure silently (`except Exception: return {"rows": []}`, no log line) — same class of gap `org_features.py`'s `features_for_org()` had before it got a `log.debug` line. Worth the same fix; low priority since it only affects the admin's own view, not tenant data.
 - A second platform admin is added by editing `PLATFORM_ADMIN_EMAILS` on Render — there's no self-service "add another admin" UI, and that's deliberate for now (see §5's note on why this isn't modeled as an "Admins" org).
 - The JustCall background poller (`_justcall_poll_loop`, `backend/api.py`) retries every `JUSTCALL_POLL_SECONDS` (default 45s) forever for any org whose credential row exists but doesn't actually resolve to a usable key/secret pair — generating continuous ERROR-level log noise for as long as that org stays misconfigured. Diagnosed, not yet fixed. Tracked as AC-50.
+- **Intercom webhooks never fire in production.** Every checkable config on Intercom's side is correct (endpoint URL, topic subscriptions, OAuth permission scopes, workspace installation) — confirmed directly via Better Stack logs (zero real events for any topic across hours, only Intercom's own `ping` test pings). Everything ingested so far has come entirely from the polling backstop. Root cause unconfirmed; best guess is a trial-plan limitation on real-time events, would need Intercom support to resolve. Not blocking (polling alone works), just means every ingest currently has up to a 5-minute delay instead of near-real-time.
+- **No frontend "Integrations" tab UI for Intercom** — `pages/Integrations.tsx` has a working JustCall connect/status flow with no Intercom equivalent; connecting/disconnecting Intercom today means hitting the backend routes directly (curl/Postman). Not started — see IN-xx (create on request).
+- The Intercom OAuth app has never been submitted for Intercom's own review, and its granted permission scope is broader than the PRD's stated minimum (every People/Conversation/Ticket/Workspace-data permission is checked, not just the handful this integration actually reads) — both flagged, neither addressed. Low urgency while the only connected workspace is CallLoop's own.
+- `POST /api/integrations/intercom/callback` returns raw JSON on a successful connect instead of redirecting somewhere useful — a real UX gap once there's a frontend flow to redirect back into.
 
 ---
 
