@@ -92,6 +92,11 @@ MAX_BATCH_ZIP_BYTES = MAX_UPLOAD_BYTES * MAX_BULK_FILES
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm", ".mpeg", ".mpga", ".aac"}
 _db_lock = threading.Lock()
 _justcall_poller_started = False
+# AC-54: consecutive JustCall poll failures per org. In-memory only — a
+# restart re-alerts once, which is the right trade (don't hide a still-
+# broken org behind a counter that outlived the process).
+_justcall_poll_failures: dict[str, int] = {}
+_JUSTCALL_POLL_ERROR_ESCALATE_EVERY = 20
 
 app = FastAPI(title="CallProof API")
 
@@ -2723,28 +2728,64 @@ def _sync_justcall_recent(hours: int = 24, *, org_id: str, host_fallback: bool =
     }
 
 
+def _justcall_poll_error_level(consecutive: int) -> int:
+    """ERROR on the first failure and every Nth repeat; WARNING otherwise.
+
+    Repeats must not look like a new outage in Better Stack (AC-54).
+    """
+    if consecutive <= 1 or consecutive % _JUSTCALL_POLL_ERROR_ESCALATE_EVERY == 0:
+        return logging.ERROR
+    return logging.WARNING
+
+
+def _record_justcall_poll_failure(org_id: str, exc: BaseException) -> None:
+    n = _justcall_poll_failures.get(org_id, 0) + 1
+    _justcall_poll_failures[org_id] = n
+    applog.event(
+        log, "justcall_poll_error",
+        level=_justcall_poll_error_level(n),
+        org_id=org_id,
+        consecutive=n,
+        error=applog.safe_exception_text(exc)[:300],
+    )
+
+
+def _record_justcall_poll_success(org_id: str) -> None:
+    prev = _justcall_poll_failures.pop(org_id, 0)
+    if prev:
+        applog.event(
+            log, "justcall_poll_recovered",
+            org_id=org_id,
+            previous_consecutive=prev,
+        )
+
+
+def _justcall_poll_once() -> None:
+    """One poll cycle over every org with JustCall credentials. Extracted
+    from the infinite loop so tests can drive it without sleeping."""
+    try:
+        ids = org_vault.list_org_ids()
+    except Exception:
+        ids = []
+    host_oid = integration_org_id()
+    if justcall.host_configured() and host_oid not in ids:
+        ids = list(ids) + [host_oid]
+    for oid in ids:
+        try:
+            with org_scope(oid):
+                _sync_justcall_recent(
+                    org_id=oid,
+                    host_fallback=(oid == host_oid),
+                )
+        except Exception as e:  # noqa: BLE001
+            _record_justcall_poll_failure(oid, e)
+        else:
+            _record_justcall_poll_success(oid)
+
+
 def _justcall_poll_loop():
     while True:
-        try:
-            ids = org_vault.list_org_ids()
-        except Exception:
-            ids = []
-        host_oid = integration_org_id()
-        if justcall.host_configured() and host_oid not in ids:
-            ids = list(ids) + [host_oid]
-        for oid in ids:
-            try:
-                with org_scope(oid):
-                    _sync_justcall_recent(
-                        org_id=oid,
-                        host_fallback=(oid == host_oid),
-                    )
-            except Exception as e:  # noqa: BLE001
-                applog.event(
-                    log, "justcall_poll_error",
-                    level=logging.ERROR,
-                    error=str(e)[:300],
-                )
+        _justcall_poll_once()
         time.sleep(justcall.poll_seconds())
 
 

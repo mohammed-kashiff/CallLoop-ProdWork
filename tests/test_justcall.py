@@ -289,3 +289,126 @@ def test_bound_credentials_do_not_mutate_host_env(monkeypatch):
         assert not (os.getenv("JUSTCALL_API_SECRET") or "").strip()
     assert justcall.api_key() == ""
     assert not justcall.host_configured()
+
+
+def _stub_poll_orgs(monkeypatch, api_module, org_ids, *, sync_fn):
+    class _Scope:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(api_module.org_vault, "list_org_ids", lambda: list(org_ids))
+    monkeypatch.setattr(api_module.justcall, "host_configured", lambda: False)
+    monkeypatch.setattr(api_module, "integration_org_id", lambda: DEFAULT_ORG_ID)
+    monkeypatch.setattr(api_module, "org_scope", lambda oid: _Scope())
+    monkeypatch.setattr(api_module, "_sync_justcall_recent", sync_fn)
+    api_module._justcall_poll_failures.clear()
+
+
+def test_justcall_poll_error_is_error_once_then_warning(monkeypatch, caplog):
+    """AC-54: a stuck org must not ERROR every 45s forever."""
+    import logging
+
+    import backend.api as api_module
+
+    def boom(**_k):
+        raise RuntimeError("credentials_unresolved")
+
+    _stub_poll_orgs(monkeypatch, api_module, [DEFAULT_ORG_ID], sync_fn=boom)
+
+    with caplog.at_level(logging.WARNING, logger="callproof.api"):
+        api_module._justcall_poll_once()
+        api_module._justcall_poll_once()
+        api_module._justcall_poll_once()
+
+    rows = [r for r in caplog.records if "justcall_poll_error" in r.getMessage()]
+    assert [r.levelno for r in rows] == [logging.ERROR, logging.WARNING, logging.WARNING]
+    assert f"org_id={DEFAULT_ORG_ID}" in rows[0].getMessage()
+    assert "consecutive=1" in rows[0].getMessage()
+    assert "consecutive=2" in rows[1].getMessage()
+    assert "consecutive=3" in rows[2].getMessage()
+
+
+def test_justcall_poll_error_re_escalates_every_20th_repeat(monkeypatch):
+    import logging
+
+    import backend.api as api_module
+
+    api_module._justcall_poll_failures.clear()
+    levels = [
+        api_module._justcall_poll_error_level(n)
+        for n in range(1, 41)
+    ]
+    assert levels[0] == logging.ERROR
+    assert levels[19] == logging.ERROR  # 20th
+    assert levels[39] == logging.ERROR  # 40th
+    assert all(lv == logging.WARNING for lv in levels[1:19])
+    assert all(lv == logging.WARNING for lv in levels[20:39])
+
+
+def test_justcall_poll_success_resets_so_the_next_failure_is_error_again(
+    monkeypatch, caplog,
+):
+    import logging
+
+    import backend.api as api_module
+
+    calls = {"n": 0}
+
+    def flaky(**_k):
+        calls["n"] += 1
+        if calls["n"] != 3:
+            raise RuntimeError("credentials_unresolved")
+
+    _stub_poll_orgs(monkeypatch, api_module, [DEFAULT_ORG_ID], sync_fn=flaky)
+
+    with caplog.at_level(logging.INFO, logger="callproof.api"):
+        api_module._justcall_poll_once()  # fail 1 — ERROR
+        api_module._justcall_poll_once()  # fail 2 — WARNING
+        api_module._justcall_poll_once()  # success — recover
+        api_module._justcall_poll_once()  # fail 1 again — ERROR
+
+    errors = [
+        r for r in caplog.records
+        if r.levelno == logging.ERROR and "justcall_poll_error" in r.getMessage()
+    ]
+    warnings = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and "justcall_poll_error" in r.getMessage()
+    ]
+    recovered = [r for r in caplog.records if "justcall_poll_recovered" in r.getMessage()]
+    assert len(errors) == 2
+    assert len(warnings) == 1
+    assert len(recovered) == 1
+    assert "previous_consecutive=2" in recovered[0].getMessage()
+    assert api_module._justcall_poll_failures[DEFAULT_ORG_ID] == 1
+
+
+def test_justcall_poll_failures_are_tracked_per_org(monkeypatch, caplog):
+    import logging
+
+    import backend.api as api_module
+
+    def boom(**_k):
+        raise RuntimeError("credentials_unresolved")
+
+    _stub_poll_orgs(monkeypatch, api_module, [DEFAULT_ORG_ID, ORG_B], sync_fn=boom)
+
+    with caplog.at_level(logging.WARNING, logger="callproof.api"):
+        api_module._justcall_poll_once()
+        api_module._justcall_poll_once()
+
+    rows = [r for r in caplog.records if "justcall_poll_error" in r.getMessage()]
+    # Two orgs × two cycles: each org's first line is ERROR, second is WARNING.
+    by_org_level = [
+        (r.getMessage(), r.levelno) for r in rows
+    ]
+    org_a = [lv for msg, lv in by_org_level if DEFAULT_ORG_ID in msg]
+    org_b = [lv for msg, lv in by_org_level if ORG_B in msg]
+    assert org_a == [logging.ERROR, logging.WARNING]
+    assert org_b == [logging.ERROR, logging.WARNING]
