@@ -36,6 +36,12 @@ services:
         sync: false
       - key: JUSTCALL_WEBHOOK_SECRET
         sync: false
+      - key: INTERCOM_CLIENT_ID
+        sync: false
+      - key: INTERCOM_CLIENT_SECRET
+        sync: false
+      - key: INTERCOM_MESSENGER_SECRET
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_JWT_SECRET
