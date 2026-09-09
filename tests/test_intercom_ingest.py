@@ -230,6 +230,147 @@ def test_normalize_conversation_handles_missing_source_and_parts():
     assert intercom_ingest.normalize_conversation({}) == []
 
 
+# ── _attachment_image_turns / attachment pipeline (IN-11) ───────────────────
+
+_IMAGE_ATTACHMENT = {
+    "type": "upload", "name": "error.png",
+    "url": "https://downloads.intercomcdn.com/i/o/1/error.png",
+    "content_type": "image/png", "filesize": 1024, "width": 400, "height": 300,
+}
+
+
+def _fake_png_bytes() -> bytes:
+    import io as _io
+
+    from PIL import Image as _Image
+
+    buf = _io.BytesIO()
+    _Image.new("RGB", (10, 10), color="white").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_attachment_image_turns_produces_a_turn_for_an_image_attachment(monkeypatch):
+    monkeypatch.setattr(intercom_ingest.intercom_client, "fetch_attachment", lambda url: _fake_png_bytes())
+    monkeypatch.setattr(
+        intercom_ingest.ticket_image_extraction, "describe_image", lambda png: "A screenshot of an error.",
+    )
+    obj = {
+        "author": {"type": "admin", "email": "kashif@intercom.example"},
+        "created_at": 1788900100,
+        "attachments": [_IMAGE_ATTACHMENT],
+    }
+    turns = intercom_ingest._attachment_image_turns(obj, 0, internal_contribution=False)
+    assert len(turns) == 1
+    t = turns[0]
+    assert t["is_image"] is True
+    assert t["text"] == "A screenshot of an error."
+    assert t["speaker"] == "agent"
+    assert t["speaker_name"] == "kashif@intercom.example"
+    assert t["seq"] == 0
+    assert t["width"] == 10 and t["height"] == 10
+    assert isinstance(t["png_bytes"], bytes)
+
+
+def test_attachment_image_turns_skips_non_image_attachments(monkeypatch):
+    def _boom(*a, **k):
+        raise AssertionError("must not fetch a non-image attachment")
+
+    monkeypatch.setattr(intercom_ingest.intercom_client, "fetch_attachment", _boom)
+    obj = {
+        "author": {"type": "admin", "email": "a@b.com"},
+        "attachments": [{"url": "https://downloads.intercomcdn.com/x.pdf", "content_type": "application/pdf"}],
+    }
+    assert intercom_ingest._attachment_image_turns(obj, 0, internal_contribution=False) == []
+
+
+def test_attachment_image_turns_skips_attachments_with_no_url(monkeypatch):
+    def _boom(*a, **k):
+        raise AssertionError("must not fetch an attachment with no url")
+
+    monkeypatch.setattr(intercom_ingest.intercom_client, "fetch_attachment", _boom)
+    obj = {
+        "author": {"type": "admin", "email": "a@b.com"},
+        "attachments": [{"content_type": "image/png"}],
+    }
+    assert intercom_ingest._attachment_image_turns(obj, 0, internal_contribution=False) == []
+
+
+def test_attachment_image_turns_empty_when_no_author():
+    obj = {"attachments": [_IMAGE_ATTACHMENT]}
+    assert intercom_ingest._attachment_image_turns(obj, 0, internal_contribution=False) == []
+
+
+def test_attachment_image_turns_empty_when_no_attachments():
+    obj = {"author": {"type": "admin", "email": "a@b.com"}}
+    assert intercom_ingest._attachment_image_turns(obj, 0, internal_contribution=False) == []
+
+
+def test_attachment_image_turns_propagates_a_disallowed_host(monkeypatch):
+    """A disallowed host is a real failure to surface, not silently skip
+    — same 'no partial success' contract as everything else here."""
+    from backend import intercom_client
+
+    def _boom(url):
+        raise intercom_client.DisallowedAttachmentHost("nope")
+
+    monkeypatch.setattr(intercom_ingest.intercom_client, "fetch_attachment", _boom)
+    obj = {"author": {"type": "admin", "email": "a@b.com"}, "attachments": [_IMAGE_ATTACHMENT]}
+    with pytest.raises(intercom_client.DisallowedAttachmentHost):
+        intercom_ingest._attachment_image_turns(obj, 0, internal_contribution=False)
+
+
+def test_attachment_image_turns_seq_continues_from_seq_start(monkeypatch):
+    monkeypatch.setattr(intercom_ingest.intercom_client, "fetch_attachment", lambda url: _fake_png_bytes())
+    monkeypatch.setattr(intercom_ingest.ticket_image_extraction, "describe_image", lambda png: "desc")
+    obj = {
+        "author": {"type": "admin", "email": "a@b.com"},
+        "attachments": [_IMAGE_ATTACHMENT, {**_IMAGE_ATTACHMENT, "url": "https://downloads.intercomcdn.com/2.png"}],
+    }
+    turns = intercom_ingest._attachment_image_turns(obj, 5, internal_contribution=True)
+    assert [t["seq"] for t in turns] == [5, 6]
+    assert all(t["internal_contribution"] is True for t in turns)
+
+
+def test_normalize_conversation_places_an_attachment_turn_right_after_its_source(monkeypatch):
+    monkeypatch.setattr(intercom_ingest.intercom_client, "fetch_attachment", lambda url: _fake_png_bytes())
+    monkeypatch.setattr(
+        intercom_ingest.ticket_image_extraction, "describe_image", lambda png: "Error dialog screenshot.",
+    )
+    convo = {
+        "created_at": 1788900000,
+        "source": {
+            "body": "<p>See attached</p>",
+            "author": {"type": "user", "email": "a@b.com"},
+            "attachments": [_IMAGE_ATTACHMENT],
+        },
+    }
+    turns = intercom_ingest.normalize_conversation(convo)
+    assert len(turns) == 2
+    assert turns[0]["text"] == "See attached"
+    assert turns[1]["is_image"] is True
+    assert turns[1]["text"] == "Error dialog screenshot."
+    assert turns[1]["seq"] == 1
+    assert turns[1]["speaker"] == "customer"  # inherits source's own speaker
+
+
+def test_normalize_ticket_places_an_attachment_turn_after_its_part(monkeypatch):
+    monkeypatch.setattr(intercom_ingest.intercom_client, "fetch_attachment", lambda url: _fake_png_bytes())
+    monkeypatch.setattr(intercom_ingest.ticket_image_extraction, "describe_image", lambda png: "A screenshot.")
+    ticket = {
+        "ticket_attributes": {"_default_description_": "<p>hi</p>"},
+        "ticket_parts": [{
+            "part_type": "comment",
+            "body": "<p>Here's what I see</p>",
+            "author": {"type": "admin", "email": "kashif@intercom.example"},
+            "attachments": [_IMAGE_ATTACHMENT],
+        }],
+    }
+    turns = intercom_ingest.normalize_ticket(ticket)
+    assert len(turns) == 3  # description, comment, image
+    assert turns[2]["is_image"] is True
+    assert turns[2]["speaker"] == "agent"
+
+
 # ── _resolve_agent_identities (IN-10) ────────────────────────────────────────
 
 
@@ -438,6 +579,55 @@ def test_ingest_intercom_conversation_happy_path_writes_turns_and_marks_ready(mo
     assert statuses == ["processing", "ready"]
     assert inserted["ticket_id"] == "new-ticket-id"
     assert len(inserted["turns"]) == 3
+
+
+def test_ingest_intercom_conversation_stores_an_attachment_as_a_viewable_asset(monkeypatch):
+    """IN-11 end-to-end: an image turn gets uploaded via ticket_image_store
+    and recorded in ticket_message_assets, same as a PDF's embedded
+    screenshot — just reached via a different pipeline."""
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: "new-ticket-id",
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_status", lambda *a, **k: None)
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "insert_ticket_messages", lambda *a, **k: None)
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_provider_stats", lambda *a, **k: None)
+    monkeypatch.setattr(intercom_ingest.intercom_client, "fetch_attachment", lambda url: _fake_png_bytes())
+    monkeypatch.setattr(
+        intercom_ingest.ticket_image_extraction, "describe_image", lambda png: "A screenshot.",
+    )
+    convo = {
+        "created_at": 1788900000,
+        "source": {
+            "body": "<p>See attached</p>",
+            "author": {"type": "user", "email": "a@b.com"},
+            "attachments": [_IMAGE_ATTACHMENT],
+        },
+    }
+    monkeypatch.setattr(intercom_ingest.intercom_client, "get_conversation", lambda *a, **k: convo)
+    put_calls = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_image_store, "put_bytes",
+        lambda org_id, ticket_id, seq, png_bytes: put_calls.append((ticket_id, seq)) or f"key-{seq}",
+    )
+    inserted_assets = {}
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "insert_ticket_message_assets",
+        lambda ticket_id, org_id, assets: inserted_assets.update(ticket_id=ticket_id, assets=assets),
+    )
+
+    intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
+    assert put_calls == [("new-ticket-id", 1)]
+    assert inserted_assets["assets"] == [
+        {"seq": 1, "width": 10, "height": 10, "storage_key": "key-1"},
+    ]
 
 
 def test_ingest_intercom_conversation_stores_statistics_when_present(monkeypatch):

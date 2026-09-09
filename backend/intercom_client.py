@@ -1,21 +1,82 @@
 """
-CallProof - Intercom REST client (IN-5/IN-7).
+CallProof - Intercom REST client (IN-5/IN-7/IN-11).
 
 Thin wrapper over the endpoints this integration actually calls, same role
 justcall.py plays for JustCall. Uses the per-org access token from the
 vault (org_vault.load_credential(org_id, "intercom")) — never a host-level
 key, since this is multi-tenant.
+
+IN-11: fetch_attachment() is the ticket engine's first-ever outbound fetch
+of a client-controlled URL (an Intercom attachment's `url` field) — a real
+SSRF boundary, not a formality. JustCall's own "no arbitrary URL fetch"
+discipline (justcall.py) is a single hardcoded BASE_URL constant, not a
+reusable allowlist utility, so this is new, Intercom-specific machinery,
+not shared with that module. The allowed host list is confirmed against
+Intercom's own published CSP documentation (intercom.com/help, "Using
+Intercom with Content Security Policy", 2026-09-09) rather than guessed —
+attachments are served from a family of domains, not one: intercomcdn.com/
+.eu, intercomusercontent.com, intercomassets.com/.eu, and the numbered
+intercom-attachments-1.com through -9.com plus their .eu/au variants.
+Restricted to exactly that family, not a wildcard.
 """
 
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlparse
 
 import httpx
 
 log = logging.getLogger("callproof.intercom")
 
 BASE_URL = "https://api.intercom.io"
+
+_ALLOWED_ATTACHMENT_HOST_SUFFIXES = (
+    "intercomcdn.com",
+    "intercomcdn.eu",
+    "intercomusercontent.com",
+    "intercomassets.com",
+    "intercomassets.eu",
+    "intercom-attachments.com",
+    "intercom-attachments.eu",
+    "intercom-attachments-1.com",
+    "intercom-attachments-2.com",
+    "intercom-attachments-3.com",
+    "intercom-attachments-4.com",
+    "intercom-attachments-5.com",
+    "intercom-attachments-6.com",
+    "intercom-attachments-7.com",
+    "intercom-attachments-8.com",
+    "intercom-attachments-9.com",
+)
+
+
+class DisallowedAttachmentHost(ValueError):
+    """The attachment URL's host isn't on Intercom's own documented CDN
+    domain family — refuse the fetch rather than trust an arbitrary URL
+    a webhook/API payload happened to hand us."""
+
+
+def _attachment_host_allowed(hostname: str | None) -> bool:
+    h = (hostname or "").strip().lower()
+    if not h:
+        return False
+    return any(h == suffix or h.endswith("." + suffix) for suffix in _ALLOWED_ATTACHMENT_HOST_SUFFIXES)
+
+
+def fetch_attachment(url: str) -> bytes:
+    """Fetches attachment bytes from an Intercom-hosted URL only. Raises
+    DisallowedAttachmentHost (not silently skipped) for anything else —
+    a disallowed host here is either a real bug in the allowlist (a
+    region/domain we haven't seen yet) or something worth knowing about
+    loudly, not hiding. No Bearer token — these are Intercom's own
+    time-limited signed URLs, not an authenticated API endpoint."""
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme != "https" or not _attachment_host_allowed(parsed.hostname):
+        raise DisallowedAttachmentHost(f"disallowed attachment host: {parsed.hostname!r}")
+    r = httpx.get(url, timeout=30.0)
+    r.raise_for_status()
+    return r.content
 
 
 def _headers(access_token: str) -> dict:

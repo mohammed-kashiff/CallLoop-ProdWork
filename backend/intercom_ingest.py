@@ -1,5 +1,5 @@
 """
-CallProof - Intercom conversation + ticket ingest (IN-5/IN-6/IN-7/IN-8/IN-9/IN-10).
+CallProof - Intercom conversation + ticket ingest (IN-5/IN-6/IN-7/IN-8/IN-9/IN-10/IN-11).
 
 Normalizes a fetched Intercom Conversation or Ticket object into the same
 canonical turn shape ticket_pdf_parser.parse_turns() produces — {seq,
@@ -67,6 +67,19 @@ acceptance criterion (merge a ticket's own linked_objects, not a
 transitive closure over the whole graph) — undocumented and unbuilt if
 Intercom's linking graph ever isn't a fully-connected single hop.
 
+attachments (IN-11): a conversation_part, ticket_part, or a conversation's
+`source` object can carry an `attachments` array (Intercom's own schema —
+same `part_attachment` shape on all three: {type, name, url, content_type,
+filesize, width, height}). A ticket's own opening description
+(ticket_attributes._default_description_) has no such structured object
+and can't carry one. Each image-type attachment becomes its own turn,
+placed right after the turn that attached it and inheriting that turn's
+speaker — reusing the existing TA-5 pipeline (ticket_image_extraction.
+describe_image, ticket_image_store.put_bytes) unchanged, per the epic's
+own framing. Fetching the attachment bytes is the ticket engine's first-
+ever outbound fetch of a client-controlled URL — see intercom_client.
+fetch_attachment()'s host allowlist for why that isn't a formality.
+
 agent_user_id (IN-10): resolved at the end of _ingest_intercom_object,
 batched (one query per ingest, mirroring ticket_ingest.ingest_ticket_pdf's
 exact pattern for the PDF path) via ticket_agent_identity_aliases —
@@ -82,15 +95,20 @@ existing turn shape already carries the lookup key.
 
 from __future__ import annotations
 
+import io
 import logging
 import re
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 
+from PIL import Image
+
 from . import applog
 from . import intercom_client
 from . import org_vault
 from . import ticket_agent_identity_aliases
+from . import ticket_image_extraction
+from . import ticket_image_store
 from . import ticket_ingest
 from .intercom_oauth import PROVIDER
 
@@ -200,18 +218,78 @@ def _turn_from_part(part: dict, seq: int) -> dict | None:
     }
 
 
+def _attachment_image_turns(
+    obj: dict, seq_start: int, *, internal_contribution: bool,
+) -> list[dict]:
+    """IN-11: one turn per image-type attachment on a conversation_part,
+    ticket_part, or a conversation's `source` object — all three carry
+    the same `attachments: [part_attachment]` shape per Intercom's
+    schema. Placed right after the turn that attached them, inheriting
+    that turn's speaker/role/timestamp (the same "screenshot belongs to
+    whoever attached it" rule ticket_ingest.interleave_images() already
+    uses for the PDF path — no page-based inference needed here since an
+    Intercom attachment is already anchored to a specific part).
+
+    No author, no turn to inherit from — same rule _turn_from_part
+    already applies to text. A non-image attachment (a PDF, a video) is
+    skipped; TA-5's own pipeline only ever described images.
+
+    Any failure (disallowed host, fetch error, vision-call error)
+    propagates rather than being silently skipped — the same "no partial
+    success" contract every other failure in this pipeline already
+    holds, so a failing attachment marks the whole ticket 'failed', not
+    a quietly incomplete one.
+    """
+    author = obj.get("author") or {}
+    if not author:
+        return []
+    attachments = obj.get("attachments") or []
+    speaker = _speaker_role(author.get("type"))
+    speaker_name = _speaker_name(author)
+    sent_at = _sent_at(obj.get("created_at"))
+    turns: list[dict] = []
+    seq = seq_start
+    for att in attachments:
+        if not isinstance(att, dict):
+            continue
+        content_type = str(att.get("content_type") or "")
+        url = str(att.get("url") or "").strip()
+        if not content_type.startswith("image/") or not url:
+            continue
+        raw = intercom_client.fetch_attachment(url)
+        pil_image = Image.open(io.BytesIO(raw)).convert("RGB")
+        buf = io.BytesIO()
+        pil_image.save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+        description = ticket_image_extraction.describe_image(png_bytes)
+        turns.append({
+            "seq": seq,
+            "speaker": speaker,
+            "speaker_name": speaker_name,
+            "agent_user_id": None,
+            "text": description,
+            "sent_at": sent_at,
+            "internal_contribution": internal_contribution,
+            "is_image": True,
+            "png_bytes": png_bytes,
+            "width": pil_image.width,
+            "height": pil_image.height,
+        })
+        seq += 1
+    return turns
+
+
 def normalize_conversation(conversation: dict) -> list[dict]:
     """Conversation object (from GET /conversations/{id}) -> canonical
     turn list."""
     turns: list[dict] = []
-    seq = 0
 
     source = conversation.get("source") or {}
     source_author = source.get("author") or {}
     source_text = _html_to_text(source.get("body"))
     if source_text and source_author:
         turns.append({
-            "seq": seq,
+            "seq": len(turns),
             "speaker": _speaker_role(source_author.get("type")),
             "speaker_name": _speaker_name(source_author),
             "agent_user_id": None,
@@ -219,15 +297,19 @@ def normalize_conversation(conversation: dict) -> list[dict]:
             "sent_at": _sent_at(conversation.get("created_at")),
             "internal_contribution": False,
         })
-        seq += 1
+    turns.extend(_attachment_image_turns(source, len(turns), internal_contribution=False))
 
     parts_container = conversation.get("conversation_parts") or {}
     parts = parts_container.get("conversation_parts") or []
     for part in parts:
-        turn = _turn_from_part(part, seq)
+        turn = _turn_from_part(part, len(turns))
         if turn is not None:
             turns.append(turn)
-            seq += 1
+        if isinstance(part, dict):
+            part_type = str(part.get("part_type") or "")
+            turns.extend(_attachment_image_turns(
+                part, len(turns), internal_contribution=_is_internal_note(part_type),
+            ))
 
     return turns
 
@@ -256,9 +338,11 @@ def normalize_ticket(ticket: dict) -> list[dict]:
     plain string with no author of its own. Attributed to the ticket's
     requester (contacts[0]) as a customer turn, since a ticket's
     description is what the requester submitted, not agent-authored.
+    No attachments possible on that opening turn either (IN-11) — a
+    plain string has no structured object to carry an attachments array
+    the way a conversation's `source` does.
     """
     turns: list[dict] = []
-    seq = 0
 
     attrs = ticket.get("ticket_attributes") or {}
     description = _html_to_text(attrs.get("_default_description_"))
@@ -267,7 +351,7 @@ def normalize_ticket(ticket: dict) -> list[dict]:
         contact_list = contacts.get("contacts") if isinstance(contacts, dict) else contacts
         first_contact = (contact_list or [{}])[0] if contact_list else {}
         turns.append({
-            "seq": seq,
+            "seq": len(turns),
             "speaker": "customer",
             "speaker_name": _speaker_name(first_contact if isinstance(first_contact, dict) else {}),
             "agent_user_id": None,
@@ -275,13 +359,16 @@ def normalize_ticket(ticket: dict) -> list[dict]:
             "sent_at": _sent_at(ticket.get("created_at")),
             "internal_contribution": False,
         })
-        seq += 1
 
     for part in _ticket_parts_list(ticket):
-        turn = _turn_from_part(part, seq)
+        turn = _turn_from_part(part, len(turns))
         if turn is not None:
             turns.append(turn)
-            seq += 1
+        if isinstance(part, dict):
+            part_type = str(part.get("part_type") or "")
+            turns.extend(_attachment_image_turns(
+                part, len(turns), internal_contribution=_is_internal_note(part_type),
+            ))
 
     return turns
 
@@ -456,6 +543,20 @@ def _ingest_intercom_object(org_id: str, kind: str, obj_id: str) -> str:
         turns = _merge_turns([_normalize_member(k, o) for k, _, o in members])
         _resolve_agent_identities(org_id, turns)
         ticket_ingest.insert_ticket_messages(ticket_id, org_id, turns)
+        # IN-11: store each attachment-derived image turn as a viewable
+        # asset — same shape ingest_ticket_pdf() already writes for a
+        # PDF's embedded screenshots (ticket_message_assets keyed on
+        # (ticket_id, seq), not on where the image actually came from).
+        assets = [
+            {
+                "seq": t["seq"], "width": t["width"], "height": t["height"],
+                "storage_key": ticket_image_store.put_bytes(
+                    org_id, ticket_id, t["seq"], t["png_bytes"],
+                ),
+            }
+            for t in turns if t.get("is_image")
+        ]
+        ticket_ingest.insert_ticket_message_assets(ticket_id, org_id, assets)
         # statistics (IN-7) only exists on Conversation, and only means
         # something unambiguous for a lone conversation — a grouped case
         # has no single obvious "the" statistics object, so it's skipped
