@@ -50,6 +50,7 @@ from . import impersonation
 from . import intercom_client
 from . import intercom_ingest
 from . import intercom_oauth
+from . import intercom_widget
 from . import justcall
 from . import org_features
 from . import org_vault
@@ -258,6 +259,26 @@ def patch_me(request: Request, body: ProfileNameBody):
 def me_usage(request: Request):
     """Same payload as /api/admin/usage, always the caller's JWT org."""
     return admin_console.usage_for_org(_org(request))
+
+
+@app.get("/api/support/widget-identity")
+def support_widget_identity(request: Request):
+    """Messenger Security hash for CallLoop's own Intercom support widget
+    — unrelated to the OAuth data-ingestion integration (that pulls
+    customers' Intercom data in; this embeds Intercom's own chat widget
+    in CallLoop's UI as CallLoop's support channel). The frontend passes
+    this hash alongside the plain user_id/email/name so Intercom can
+    verify nobody's spoofing another user's identity in the widget.
+    configured=False (no INTERCOM_MESSENGER_SECRET set) is not an error —
+    the frontend just mounts the widget without a hash in that case,
+    same as Messenger Security being toggled off in Intercom's settings.
+    """
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+    if not intercom_widget.is_configured():
+        return {"configured": False, "user_hash": None}
+    return {"configured": True, "user_hash": intercom_widget.user_hash(str(user_id))}
 
 
 @app.get("/api/rubric")

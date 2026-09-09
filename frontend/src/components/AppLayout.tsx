@@ -5,6 +5,7 @@ import { AccountMenu } from './AccountMenu'
 import { BrandLogo } from './BrandLogo'
 import { ColorModeToggle } from './ColorModeToggle'
 import { ImpersonationBanner } from './ImpersonationBanner'
+import { IntercomWidget } from './IntercomWidget'
 import { KeysPanel } from './KeysPanel'
 import { LiveTicker } from './LiveTicker'
 import { Sidebar } from './Sidebar'
@@ -65,6 +66,7 @@ export function AppLayout() {
         </main>
       </div>
       {adminHost ? null : <KeysPanel />}
+      {adminHost ? null : <IntercomWidget />}
     </div>
   )
 }
