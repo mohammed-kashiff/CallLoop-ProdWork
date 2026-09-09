@@ -20,6 +20,14 @@ _DEFAULT_CORS = (
 # ADMIN_ORIGIN in frontend/src/lib/adminHost.ts.
 ADMIN_ORIGIN = "https://commandcenter.call-loop.com"
 
+# The customer-facing app's fixed origin — API and frontend are separate
+# Render services on separate hosts (see ARCHITECTURE.md §2), so any
+# server-side redirect meant for the browser-driven customer app (e.g. an
+# OAuth callback landing page) must target this explicitly, never a
+# relative path or anything derived from the current request. Keep in
+# sync with frontend CUSTOMER_ORIGIN in frontend/src/lib/adminHost.ts.
+CUSTOMER_ORIGIN = "https://call-loop.com"
+
 
 def load_env() -> str:
     """Load a gitignored local host env file if present. Safe to call more than once."""
