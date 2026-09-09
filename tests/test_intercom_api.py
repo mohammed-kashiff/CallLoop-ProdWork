@@ -541,6 +541,14 @@ def test_sync_intercom_recent_requires_a_stored_token(monkeypatch):
         api_module._sync_intercom_recent(DEFAULT_ORG_ID)
 
 
+def _stub_no_tickets_found(monkeypatch, api_module):
+    """Most conversation-focused tests below don't care about the ticket
+    half — stub it to an empty result so it never makes a real HTTP call."""
+    monkeypatch.setattr(
+        api_module.intercom_client, "search_closed_tickets", lambda token, since: [],
+    )
+
+
 def test_sync_intercom_recent_ingests_every_found_conversation(monkeypatch):
     import backend.api as api_module
 
@@ -552,6 +560,7 @@ def test_sync_intercom_recent_ingests_every_found_conversation(monkeypatch):
         api_module.intercom_client, "search_closed_conversations",
         lambda token, since: [{"id": "c1"}, {"id": "c2"}],
     )
+    _stub_no_tickets_found(monkeypatch, api_module)
     ingested = []
     monkeypatch.setattr(
         api_module.intercom_ingest, "ingest_intercom_conversation",
@@ -575,6 +584,7 @@ def test_sync_intercom_recent_continues_past_a_single_ingest_failure(monkeypatch
         api_module.intercom_client, "search_closed_conversations",
         lambda token, since: [{"id": "bad"}, {"id": "good"}],
     )
+    _stub_no_tickets_found(monkeypatch, api_module)
 
     def _ingest(org_id, cid):
         if cid == "bad":
@@ -597,6 +607,7 @@ def test_sync_intercom_recent_skips_entries_with_no_id(monkeypatch):
         api_module.intercom_client, "search_closed_conversations",
         lambda token, since: [{"no_id": "here"}],
     )
+    _stub_no_tickets_found(monkeypatch, api_module)
     called = []
     monkeypatch.setattr(
         api_module.intercom_ingest, "ingest_intercom_conversation",
@@ -605,3 +616,82 @@ def test_sync_intercom_recent_skips_entries_with_no_id(monkeypatch):
     result = api_module._sync_intercom_recent(DEFAULT_ORG_ID)
     assert called == []
     assert result == {"found": 1, "processed": 0, "errors": 0}
+
+
+def test_sync_intercom_recent_also_ingests_closed_tickets(monkeypatch):
+    """The gap that motivated this: webhooks weren't subscribed yet, so a
+    real closed ticket had no path in at all — the poller originally only
+    covered conversations."""
+    import backend.api as api_module
+
+    monkeypatch.setattr(
+        api_module.org_vault, "load_credential",
+        lambda org_id, provider: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        api_module.intercom_client, "search_closed_conversations", lambda token, since: [],
+    )
+    monkeypatch.setattr(
+        api_module.intercom_client, "search_closed_tickets",
+        lambda token, since: [{"id": "t1"}, {"id": "t2"}],
+    )
+    ingested = []
+    monkeypatch.setattr(
+        api_module.intercom_ingest, "ingest_intercom_ticket",
+        lambda org_id, tid: ingested.append(tid) or "ticket-row-id",
+    )
+    result = api_module._sync_intercom_recent(DEFAULT_ORG_ID)
+    assert ingested == ["t1", "t2"]
+    assert result == {"found": 2, "processed": 2, "errors": 0}
+
+
+def test_sync_intercom_recent_covers_conversations_and_tickets_together(monkeypatch):
+    import backend.api as api_module
+
+    monkeypatch.setattr(
+        api_module.org_vault, "load_credential",
+        lambda org_id, provider: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        api_module.intercom_client, "search_closed_conversations",
+        lambda token, since: [{"id": "c1"}],
+    )
+    monkeypatch.setattr(
+        api_module.intercom_client, "search_closed_tickets",
+        lambda token, since: [{"id": "t1"}],
+    )
+    monkeypatch.setattr(
+        api_module.intercom_ingest, "ingest_intercom_conversation", lambda org_id, cid: "row-c",
+    )
+    monkeypatch.setattr(
+        api_module.intercom_ingest, "ingest_intercom_ticket", lambda org_id, tid: "row-t",
+    )
+    result = api_module._sync_intercom_recent(DEFAULT_ORG_ID)
+    assert result == {"found": 2, "processed": 2, "errors": 0}
+
+
+def test_sync_intercom_recent_a_bad_ticket_does_not_block_conversations(monkeypatch):
+    import backend.api as api_module
+
+    monkeypatch.setattr(
+        api_module.org_vault, "load_credential",
+        lambda org_id, provider: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        api_module.intercom_client, "search_closed_conversations",
+        lambda token, since: [{"id": "c1"}],
+    )
+    monkeypatch.setattr(
+        api_module.intercom_client, "search_closed_tickets",
+        lambda token, since: [{"id": "t1"}],
+    )
+    monkeypatch.setattr(
+        api_module.intercom_ingest, "ingest_intercom_conversation", lambda org_id, cid: "row-c",
+    )
+
+    def _boom(org_id, tid):
+        raise RuntimeError("ticket ingest boom")
+
+    monkeypatch.setattr(api_module.intercom_ingest, "ingest_intercom_ticket", _boom)
+    result = api_module._sync_intercom_recent(DEFAULT_ORG_ID)
+    assert result == {"found": 2, "processed": 1, "errors": 1}

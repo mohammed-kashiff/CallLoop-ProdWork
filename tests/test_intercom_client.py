@@ -85,3 +85,38 @@ def test_search_closed_conversations_filters_out_non_dict_entries(monkeypatch):
 def test_search_closed_conversations_handles_missing_conversations_key(monkeypatch):
     monkeypatch.setattr(intercom_client.httpx, "post", lambda *a, **k: _FakeResponse(200, {}))
     assert intercom_client.search_closed_conversations("tok", 1700000000) == []
+
+
+def test_search_closed_tickets_sends_the_right_query_shape(monkeypatch):
+    captured = {}
+
+    def fake_post(url, *, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        return _FakeResponse(200, {"tickets": [{"id": "t1"}, {"id": "t2"}]})
+
+    monkeypatch.setattr(intercom_client.httpx, "post", fake_post)
+    result = intercom_client.search_closed_tickets("tok", 1700000000)
+
+    assert captured["url"] == f"{intercom_client.BASE_URL}/tickets/search"
+    query = captured["json"]["query"]
+    assert query["operator"] == "AND"
+    fields = {f["field"]: f for f in query["value"]}
+    assert fields["state"]["value"] == "closed"
+    assert fields["updated_at"]["operator"] == ">"
+    assert fields["updated_at"]["value"] == "1700000000"
+    assert result == [{"id": "t1"}, {"id": "t2"}]
+
+
+def test_search_closed_tickets_filters_out_non_dict_entries(monkeypatch):
+    monkeypatch.setattr(
+        intercom_client.httpx, "post",
+        lambda *a, **k: _FakeResponse(200, {"tickets": [{"id": "t1"}, None, "garbage"]}),
+    )
+    result = intercom_client.search_closed_tickets("tok", 1700000000)
+    assert result == [{"id": "t1"}]
+
+
+def test_search_closed_tickets_handles_missing_tickets_key(monkeypatch):
+    monkeypatch.setattr(intercom_client.httpx, "post", lambda *a, **k: _FakeResponse(200, {}))
+    assert intercom_client.search_closed_tickets("tok", 1700000000) == []

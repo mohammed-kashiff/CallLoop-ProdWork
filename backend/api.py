@@ -3156,23 +3156,33 @@ _intercom_poller_started = False
 
 
 def _sync_intercom_recent(org_id: str, *, hours: int = 24) -> dict:
-    """Pull recently-closed Intercom conversations for one org and ingest
-    any not already ingested (find_ticket_by_external_id/create_ticket's
-    unique index makes this idempotent). Mirrors _sync_justcall_recent's
-    exact role — backfill on connect, backstop for a missed/delayed
-    webhook — just against Intercom's Search API instead of JustCall's
-    plain list, since that's the endpoint that can actually filter by
-    state and date (see intercom_client.search_closed_conversations).
+    """Pull recently-closed Intercom conversations AND tickets for one org
+    and ingest any not already ingested (find_ticket_by_external_id/
+    create_ticket's unique index makes this idempotent). Mirrors
+    _sync_justcall_recent's exact role — backfill on connect, backstop for
+    a missed/delayed webhook — against Intercom's Search API for each
+    object type, since that's what can actually filter by state and date
+    (see intercom_client.search_closed_conversations/search_closed_tickets).
+
+    Originally conversations-only — tickets were added after testing
+    surfaced the gap directly: webhooks weren't subscribed yet in
+    Intercom's Developer Hub, so a real closed ticket had no path in at
+    all (the conversation half would have eventually caught the
+    conversation via this same backstop; tickets had no backstop
+    whatsoever until this).
     """
     creds = org_vault.load_credential(org_id, intercom_oauth.PROVIDER)
     if not creds or not creds.get("access_token"):
         raise RuntimeError("Intercom is not connected for this org.")
     since_unix = int(time.time()) - hours * 3600
-    conversations = intercom_client.search_closed_conversations(
-        creds["access_token"], since_unix,
-    )
+    token = creds["access_token"]
+
     processed = 0
     errors = 0
+    found = 0
+
+    conversations = intercom_client.search_closed_conversations(token, since_unix)
+    found += len(conversations)
     for conv in conversations:
         cid = str(conv.get("id") or "").strip()
         if not cid:
@@ -3184,13 +3194,32 @@ def _sync_intercom_recent(org_id: str, *, hours: int = 24) -> dict:
             errors += 1
             applog.event(
                 log, "intercom_sync_failed", level=logging.ERROR,
-                org_id=org_id, conversation_id=cid, error=applog.safe_exception_text(e),
+                org_id=org_id, kind="conversation", conversation_id=cid,
+                error=applog.safe_exception_text(e),
             )
+
+    tickets = intercom_client.search_closed_tickets(token, since_unix)
+    found += len(tickets)
+    for tkt in tickets:
+        tid = str(tkt.get("id") or "").strip()
+        if not tid:
+            continue
+        try:
+            intercom_ingest.ingest_intercom_ticket(org_id, tid)
+            processed += 1
+        except Exception as e:  # noqa: BLE001
+            errors += 1
+            applog.event(
+                log, "intercom_sync_failed", level=logging.ERROR,
+                org_id=org_id, kind="ticket", intercom_ticket_id=tid,
+                error=applog.safe_exception_text(e),
+            )
+
     applog.event(
         log, "intercom_sync",
-        org_id=org_id, found=len(conversations), processed=processed, errors=errors,
+        org_id=org_id, found=found, processed=processed, errors=errors,
     )
-    return {"found": len(conversations), "processed": processed, "errors": errors}
+    return {"found": found, "processed": processed, "errors": errors}
 
 
 def _intercom_poll_loop():

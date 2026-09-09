@@ -97,3 +97,38 @@ def search_closed_conversations(
     data = r.json() if r.content else {}
     conversations = data.get("conversations") or []
     return [c for c in conversations if isinstance(c, dict)]
+
+
+def search_closed_tickets(
+    access_token: str, since_unix: int, *, per_page: int = 50,
+) -> list[dict]:
+    """POST /tickets/search — tickets closed since `since_unix` (Unix
+    seconds). Same shape and same reasoning as search_closed_conversations
+    (confirmed against Intercom's own reference before use).
+
+    Filters state = "closed" only, not "resolved" — a resolved ticket can
+    still be reopened, closed is Intercom's more final state. A resolved-
+    but-not-yet-closed ticket is only caught by the ticket.resolved
+    webhook, not this backstop; tightening that (an OR across both states)
+    is possible later if it turns out to matter, not assumed here.
+    """
+    body = {
+        "query": {
+            "operator": "AND",
+            "value": [
+                {"field": "state", "operator": "=", "value": "closed"},
+                {"field": "updated_at", "operator": ">", "value": str(int(since_unix))},
+            ],
+        },
+        "pagination": {"per_page": per_page},
+    }
+    r = httpx.post(
+        f"{BASE_URL}/tickets/search",
+        headers=_headers(access_token),
+        json=body,
+        timeout=30.0,
+    )
+    r.raise_for_status()
+    data = r.json() if r.content else {}
+    tickets = data.get("tickets") or []
+    return [t for t in tickets if isinstance(t, dict)]
