@@ -187,6 +187,85 @@ def test_score_success_shape_and_scaffold_flag(auth_client, monkeypatch):
     assert seen_org["org_id"] == DEFAULT_ORG_ID
 
 
+def test_score_success_includes_audit_summary_and_top_strength_and_gap(auth_client, monkeypatch):
+    """IN-12: computed from the scoring output, present in the response
+    without a schema change elsewhere — _payload() adds them as plain
+    top-level keys."""
+    tid = str(uuid.uuid4())
+    monkeypatch.setattr(
+        "backend.ticket_score_api.ticket_ingest.get_ticket",
+        lambda *a, **k: _fake_ticket(),
+    )
+    _no_prior_audit(monkeypatch)
+
+    def fake_score(turns, dimensions, **kwargs):
+        return {
+            "score": 60.0,
+            "primary_owner": None,
+            "spans": [],
+            "findings": [
+                {"id": "tone", "name": "Tone", "weight": 15, "verdict": "pass",
+                 "reasoning": "Stayed professional.", "evidence_text": "Thanks!",
+                 "evidence_seq": 1, "evidence_verified": True, "attributed_to": None},
+                {"id": "investigation_rigor", "name": "Investigation Rigor", "weight": 20,
+                 "verdict": "fail", "reasoning": "Guessed instead of checking logs.",
+                 "evidence_text": "Try restarting.", "evidence_seq": 0,
+                 "evidence_verified": True, "attributed_to": None},
+            ],
+        }
+
+    monkeypatch.setattr("backend.ticket_score_api.ticket_scoring.score_ticket", fake_score)
+    r = auth_client.post(f"/api/tickets/{tid}/score")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["top_strength"]["id"] == "tone"
+    assert body["top_gap"]["id"] == "investigation_rigor"
+    assert "Tone" in body["audit_summary"]
+    assert "Investigation Rigor" in body["audit_summary"]
+
+
+def test_audit_summary_respects_ta12_own_view_filtering(auth_client, monkeypatch):
+    """A non-manager viewer must get audit_summary/top_strength/top_gap
+    computed from only their OWN attributed findings — never a finding
+    attributed to a different agent, same boundary already enforced for
+    findings/spans."""
+    tid = str(uuid.uuid4())
+    other_agent = str(uuid.uuid4())
+    monkeypatch.setattr(
+        "backend.ticket_score_api.ticket_ingest.get_ticket",
+        lambda *a, **k: _fake_ticket(),
+    )
+    monkeypatch.setattr("backend.ticket_score_api.auth.is_org_owner", lambda request: False)
+    _no_prior_audit(monkeypatch)
+
+    def fake_score(turns, dimensions, **kwargs):
+        return {
+            "score": 60.0,
+            "primary_owner": None,
+            "spans": [
+                {"agent_user_id": other_agent, "start_seq": 0, "end_seq": 1, "turn_count": 2},
+            ],
+            "findings": [
+                {"id": "tone", "name": "Tone", "weight": 15, "verdict": "pass",
+                 "reasoning": "Great tone.", "evidence_text": "Thanks!",
+                 "evidence_seq": 1, "evidence_verified": True, "attributed_to": other_agent},
+            ],
+        }
+
+    monkeypatch.setattr("backend.ticket_score_api.ticket_scoring.score_ticket", fake_score)
+    r = auth_client.post(f"/api/tickets/{tid}/score")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["view_scope"] == "own"
+    # Response Timeliness is always appended after TA-12 filtering (it's a
+    # whole-thread metric, never own-scoped) — the real per-dimension
+    # finding attributed to the other agent is correctly absent.
+    assert [f["id"] for f in body["findings"]] == ["response_timeliness"]
+    assert body["top_strength"] is None  # so there's nothing to compute a strength from
+    assert body["top_gap"] is None
+    assert body["audit_summary"] == "Not enough scored dimensions to summarize."
+
+
 def test_score_route_is_registered_on_the_app():
     from backend.api import app
 

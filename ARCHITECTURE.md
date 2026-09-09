@@ -98,6 +98,26 @@
 > — Connect/Disconnect Intercom is backend-only (`curl`/`Postman` during
 > development). See §7.
 >
+> **2026-09-09 — IN-12, `audit_summary`/Top Strength/Top Gap for tickets:**
+> new, for both engines — a repo-wide search turned up no existing
+> call-side implementation to mirror, despite the epic's text implying
+> one exists ("Top Strength/Top Gap remain fully deterministic, matching
+> the existing design"). Also confirmed: recap.py (PyAI Recap, already
+> used for calls) is architecturally the same category of tool the epic
+> explicitly warns against reusing here — a neutral transcript summary,
+> not an evaluative one — so it isn't used, same as Intercom's own
+> `conversation_summary` isn't. New module `ticket_audit_summary.py`:
+> `top_strength()`/`top_gap()` pick the highest-weighted pass/fail
+> dimension respectively (deterministic, no Claude call); `generate_
+> audit_summary()` stitches a short sentence from those two, degrading
+> gracefully when either is missing. Computed fresh on every read inside
+> `ticket_score_api._payload()`, from the already-TA-12-filtered
+> findings — never persisted (same reasoning Response Timeliness already
+> uses), and never computed from the unfiltered ticket, so a non-manager
+> viewer's summary reflects only their own attributed findings, same
+> boundary already enforced for `findings`/`spans`. No frontend consumes
+> these new fields yet.
+>
 > **2026-09-09 — IN-11, Intercom attachment pipeline + first SSRF host
 > allowlist:** a screenshot attached to a conversation, ticket, or any
 > reply now appears, described, in the correct position in the scored
@@ -372,7 +392,8 @@ request and scopes every downstream call to that org.
 | `ticket_api.py` | TA-9. `/api/tickets` HTTP surface. `POST /api/tickets/upload` accepts a PDF and hands it to `ingest_ticket_pdf` — not `/api/upload`. JWT org_id only. `GET /api/tickets/{id}` and `GET /api/tickets/mine` apply TA-12's permission filter (`ticket_permissions.py`) before returning. |
 | `ticket_permissions.py` | TA-12. Manager (org `owner`, standing in for "manager" — no team-admin tier yet) sees the full thread and every finding. Anyone else sees only turns inside their own agent span and only findings attributed to them, via pure functions reusing `ticket_scoring.agent_spans()` — no new mechanism (PRD §7), same narrow-then-broad shape as `auth.require_owner`/`require_platform_admin`. |
 | `ticket_scoring.py` | TA-6. Ticket engine's own evaluation loop (`run_ticket_wave` / `score_ticket`). Imports only `build_prompt`, `call_claude`, `validate_evidence` from `qa_engine.py`. v1 scores the whole thread once; `agent_spans` / `primary_owner` / evidence-seq attribution are the TA-8 multi-agent data, not per-span re-scoring. IN-9: `_scoreable_turns()` filters out `internal_contribution` turns before both prompting and evidence validation for a `customer_facing_only` dimension — filters, never renumbers, so `evidence_seq` still indexes the real thread for `attributed_agent()`, which always sees the full turns list regardless. |
-| `ticket_score_api.py` | TA-10/TA-11/TA-13. `POST /api/tickets/{ticket_id}/score` scores against the org's real "Ticket QA" rubric (`ensure_ticket_rubric()`), then appends the deterministic Response Timeliness finding fresh on every response (never persisted, never TA-12-filtered — it's a whole-thread metric, not one agent's score). First score persists the six LLM-judged findings to `ticket_audits`; a later POST returns the stored scorecard. `?refresh=true` is 403 unless `enable_ticket_rescoring` is on (off by default). |
+| `ticket_score_api.py` | TA-10/TA-11/TA-13/IN-12. `POST /api/tickets/{ticket_id}/score` scores against the org's real "Ticket QA" rubric (`ensure_ticket_rubric()`), then appends the deterministic Response Timeliness finding fresh on every response (never persisted, never TA-12-filtered — it's a whole-thread metric, not one agent's score). First score persists the six LLM-judged findings to `ticket_audits`; a later POST returns the stored scorecard. `?refresh=true` is 403 unless `enable_ticket_rescoring` is on (off by default). IN-12: `_payload()` also computes `top_strength`/`top_gap`/`audit_summary` (`ticket_audit_summary.py`) from the already-TA-12-filtered findings, before Response Timeliness gets appended — never persisted, never computed from the unfiltered ticket. |
+| `ticket_audit_summary.py` | IN-12. `top_strength()`/`top_gap()` (deterministic, no Claude call — highest-weighted pass/fail dimension respectively) and `generate_audit_summary()` (a short sentence stitched from those two). Built fresh from CallLoop's own per-dimension scoring output only — never Intercom's `conversation_summary`, never PyAI's Recap (`recap.py`, already used for calls) — both are the same category of neutral transcript summary the epic explicitly says isn't a substitute for an evaluative one. Callers must pass already-viewer-filtered findings (TA-12); this module has no permissions awareness of its own. |
 | `ticket_audit_store.py` | TA-11. Org-scoped read/upsert for `ticket_audits`. Not `audit_store.py` (that is calls). |
 | `pyai_usage.py` | Local counters for outbound PyAI/Claude API calls (PyAI has no "requests used today" endpoint of its own), writing to `api_usage`. `record_http_response()` also emits an `applog.event(..., "api_consumption", provider=...)` line — this was silently broken from the day it was written (a bare `import applog` inside a package module, `ModuleNotFoundError` swallowed by the surrounding `except Exception`, fixed 2026-09-06) so it had never actually logged once in production. Now logs under a provider-scoped logger (`callproof.usage.pyai` / `callproof.usage.anthropic`) so Better Stack's `service` field can separate the two. AC-35: `usage_daily()` — real per-day counts (hits/actions/polls/units) for the org overview chart, replacing the design mock's `Math.random()`. Same action/poll classification as `usage_summary()` (POST = action, GET on a poll path = poll), grouped by day with every day in the range zero-filled via a `generate_series` CTE so the frontend gets a continuous series. Has no `DEFAULT_ORG_ID` bootstrapping special-case of its own — like `usage_summary()`, it depends on the caller's `org_scope()` for RLS. Live-verified: its per-day sum matches `usage_summary()`'s total for the identical window exactly. |
 | `cost_estimate.py` | Estimates spend from usage counters, using cost-per-unit knobs from `.env`. |
@@ -561,6 +582,7 @@ Every route except the JustCall webhook requires a valid Supabase JWT; the webho
 - **Intercom webhooks never fire in production.** Every checkable config on Intercom's side is correct (endpoint URL, topic subscriptions, OAuth permission scopes, workspace installation) — confirmed directly via Better Stack logs (zero real events for any topic across hours, only Intercom's own `ping` test pings). Everything ingested so far has come entirely from the polling backstop. Root cause unconfirmed; best guess is a trial-plan limitation on real-time events, would need Intercom support to resolve. Not blocking (polling alone works), just means every ingest currently has up to a 5-minute delay instead of near-real-time.
 - **Frontend Intercom connect/disconnect UI (IN-18) is shipped** — `pages/Integrations.tsx` now has an Intercom card alongside the JustCall one (this bullet previously said "not started"; stale, corrected 2026-09-09).
 - **No frontend UI yet for managing IN-10's email→agent mappings** — `ticket_agent_identity_aliases_api.py`'s routes are real and owner-gated, but nothing in the frontend calls them; setting a mapping today means hitting the API directly. Same shape IN-18 was before it shipped a UI for the OAuth connect flow.
+- **`TicketAudit.tsx` doesn't render IN-12's `audit_summary`/`top_strength`/`top_gap` yet** — `POST /api/tickets/{ticket_id}/score` returns all three today, but the frontend's `TicketAuditResult` type doesn't declare them and nothing displays them. Backend-complete, UI not started.
 - The Intercom OAuth app has never been submitted for Intercom's own review, and its granted permission scope is broader than the PRD's stated minimum (every People/Conversation/Ticket/Workspace-data permission is checked, not just the handful this integration actually reads) — both flagged, neither addressed. Low urgency while the only connected workspace is CallLoop's own.
 - `POST /api/integrations/intercom/callback` returns raw JSON on a successful connect instead of redirecting somewhere useful — a real UX gap once there's a frontend flow to redirect back into.
 

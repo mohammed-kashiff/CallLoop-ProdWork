@@ -40,6 +40,7 @@ from . import auth
 from . import org_features
 from . import sentry_report
 from . import ticket_audit_store
+from . import ticket_audit_summary
 from . import ticket_ingest
 from . import ticket_permissions
 from . import ticket_rubric
@@ -76,15 +77,27 @@ def _payload(
 ) -> dict:
     """TA-12: a manager (org owner) gets every finding/span. Anyone else
     gets only the ones attributed to their own agent_user_id — never
-    another agent's individual scores, even on a ticket they share."""
+    another agent's individual scores, even on a ticket they share.
+
+    IN-12: audit_summary/top_strength/top_gap are computed here, after
+    TA-12's own filtering, from the already-filtered findings — never
+    persisted (see ticket_audit_summary.py's own docstring), and never
+    computed from the unfiltered ticket, so a non-manager's summary
+    reflects only what they personally contributed, same as their
+    findings/spans already do.
+    """
+    filtered_findings = ticket_permissions.filter_findings_for_viewer(
+        result.get("findings") or [], viewer_user_id=viewer_user_id, is_manager=is_manager,
+    )
     filtered = {
         **result,
-        "findings": ticket_permissions.filter_findings_for_viewer(
-            result.get("findings") or [], viewer_user_id=viewer_user_id, is_manager=is_manager,
-        ),
+        "findings": filtered_findings,
         "spans": ticket_permissions.filter_spans_for_viewer(
             result.get("spans") or [], viewer_user_id=viewer_user_id, is_manager=is_manager,
         ),
+        "top_strength": ticket_audit_summary.top_strength(filtered_findings),
+        "top_gap": ticket_audit_summary.top_gap(filtered_findings),
+        "audit_summary": ticket_audit_summary.generate_audit_summary(filtered_findings),
     }
     return {
         "ticket_id": tid,
