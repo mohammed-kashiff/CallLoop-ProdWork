@@ -174,7 +174,46 @@ def test_ingest_intercom_conversation_requires_a_stored_token(monkeypatch):
         intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
 
 
-def test_ingest_intercom_conversation_marks_failed_on_fetch_error(monkeypatch):
+def test_ingest_intercom_conversation_creates_no_row_when_seed_fetch_fails(monkeypatch):
+    """IN-8: the seed object's fetch happens before create_ticket now (its
+    linked_objects has to be known before the real dedup key can be
+    computed) — a failure fetching it therefore creates no row at all.
+    Still fully visible via the api.py call site's intercom_ingest_failed
+    log line on any exception from this function."""
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    create_calls = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: create_calls.append(external_id) or "new-ticket-id",
+    )
+    statuses = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "set_ticket_status",
+        lambda ticket_id, org_id, status: statuses.append(status),
+    )
+
+    def _boom(token, cid):
+        raise RuntimeError("intercom is down")
+
+    monkeypatch.setattr(intercom_ingest.intercom_client, "get_conversation", _boom)
+    with pytest.raises(RuntimeError, match="intercom is down"):
+        intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
+    assert create_calls == []
+    assert statuses == []
+
+
+def test_ingest_intercom_conversation_marks_failed_when_a_linked_member_fetch_fails(monkeypatch):
+    """Once the row exists (the seed's own fetch succeeded, and grouping
+    was resolved), a failure fetching a *linked* member still marks the
+    row failed and re-raises — the pre-IN-8 contract, preserved for
+    everything after the row is created."""
     monkeypatch.setattr(
         intercom_ingest.ticket_ingest, "find_ticket_by_external_id",
         lambda *a, **k: None,
@@ -192,11 +231,18 @@ def test_ingest_intercom_conversation_marks_failed_on_fetch_error(monkeypatch):
         intercom_ingest.ticket_ingest, "set_ticket_status",
         lambda ticket_id, org_id, status: statuses.append(status),
     )
+    convo_with_link = {
+        **REAL_SHAPED_CONVERSATION,
+        "linked_objects": {"data": [{"type": "ticket", "id": "t-999"}]},
+    }
+    monkeypatch.setattr(
+        intercom_ingest.intercom_client, "get_conversation", lambda *a, **k: convo_with_link,
+    )
 
-    def _boom(token, cid):
+    def _boom(token, tid):
         raise RuntimeError("intercom is down")
 
-    monkeypatch.setattr(intercom_ingest.intercom_client, "get_conversation", _boom)
+    monkeypatch.setattr(intercom_ingest.intercom_client, "get_ticket", _boom)
     with pytest.raises(RuntimeError, match="intercom is down"):
         intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
     assert statuses == ["processing", "failed"]
@@ -368,6 +414,191 @@ def test_ingest_intercom_ticket_uses_the_namespaced_external_id(monkeypatch):
     assert seen["create"] == "ticket:ticket-456"
 
 
+# ── IN-8: linked_objects grouping ───────────────────────────────────────────────
+
+
+def test_linked_members_extracts_type_and_id():
+    obj = {"linked_objects": {"data": [
+        {"type": "ticket", "id": "t1", "category": "Customer"},
+        {"type": "conversation", "id": "c2"},
+    ]}}
+    assert intercom_ingest._linked_members(obj) == [("ticket", "t1"), ("conversation", "c2")]
+
+
+def test_linked_members_handles_missing_or_empty_linked_objects():
+    assert intercom_ingest._linked_members({}) == []
+    assert intercom_ingest._linked_members({"linked_objects": {}}) == []
+    assert intercom_ingest._linked_members({"linked_objects": {"data": []}}) == []
+
+
+def test_linked_members_skips_malformed_and_unknown_type_entries():
+    obj = {"linked_objects": {"data": [
+        "not-a-dict",
+        {"type": "ticket"},  # no id
+        {"id": "x1"},  # no type
+        {"type": "contact", "id": "c1"},  # not ticket/conversation
+        {"type": "ticket", "id": "t1"},
+    ]}}
+    assert intercom_ingest._linked_members(obj) == [("ticket", "t1")]
+
+
+def test_linked_members_dedupes_repeated_ids():
+    obj = {"linked_objects": {"data": [
+        {"type": "ticket", "id": "t1"},
+        {"type": "ticket", "id": "t1"},
+    ]}}
+    assert intercom_ingest._linked_members(obj) == [("ticket", "t1")]
+
+
+def test_numeric_sort_key_compares_numerically_not_lexicographically():
+    ids = ["215475853780573", "9", "100"]
+    assert min(ids, key=intercom_ingest._numeric_sort_key) == "9"
+
+
+def test_numeric_sort_key_falls_back_to_string_for_non_numeric():
+    # A non-numeric id sorts after every numeric one, never crashes.
+    ids = ["215475853780573", "not-a-number"]
+    assert min(ids, key=intercom_ingest._numeric_sort_key) == "215475853780573"
+
+
+def test_group_key_picks_the_lowest_numeric_id_regardless_of_order():
+    assert intercom_ingest._group_key(["215475853780573", "8"]) == "group:8"
+    assert intercom_ingest._group_key(["8", "215475853780573"]) == "group:8"
+
+
+def test_merge_turns_sorts_by_sent_at_and_resequences():
+    from datetime import datetime, timezone
+
+    later = {"seq": 0, "speaker": "agent", "speaker_name": "a", "agent_user_id": None,
+              "text": "second", "sent_at": datetime(2026, 1, 1, tzinfo=timezone.utc)}
+    earlier = {"seq": 0, "speaker": "customer", "speaker_name": "c", "agent_user_id": None,
+               "text": "first", "sent_at": datetime(2025, 1, 1, tzinfo=timezone.utc)}
+    merged = intercom_ingest._merge_turns([[later], [earlier]])
+    assert [t["text"] for t in merged] == ["first", "second"]
+    assert [t["seq"] for t in merged] == [0, 1]
+
+
+def test_merge_turns_keeps_original_order_for_missing_sent_at():
+    a = {"seq": 0, "speaker": "customer", "speaker_name": "a", "agent_user_id": None,
+         "text": "from seed", "sent_at": None}
+    b = {"seq": 0, "speaker": "agent", "speaker_name": "b", "agent_user_id": None,
+         "text": "from linked", "sent_at": None}
+    merged = intercom_ingest._merge_turns([[a], [b]])
+    assert [t["text"] for t in merged] == ["from seed", "from linked"]
+
+
+def test_ingest_intercom_conversation_merges_a_linked_ticket_into_one_case(monkeypatch):
+    """IN-8 end-to-end: a conversation with a non-empty linked_objects
+    merges with the linked ticket's turns into a single ticket row, keyed
+    by the lower of the two real ids — not two separate rows."""
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    create_calls = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: create_calls.append(external_id) or "merged-ticket-id",
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_status", lambda *a, **k: None)
+    inserted = {}
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "insert_ticket_messages",
+        lambda ticket_id, org_id, turns: inserted.update(ticket_id=ticket_id, turns=turns),
+    )
+    stats_calls = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "set_ticket_provider_stats",
+        lambda *a, **k: stats_calls.append((a, k)),
+    )
+
+    convo = {
+        **REAL_SHAPED_CONVERSATION,
+        "linked_objects": {"data": [{"type": "ticket", "id": "9"}]},  # lower id than conv-123
+    }
+    monkeypatch.setattr(intercom_ingest.intercom_client, "get_conversation", lambda *a, **k: convo)
+    monkeypatch.setattr(
+        intercom_ingest.intercom_client, "get_ticket", lambda *a, **k: REAL_SHAPED_TICKET,
+    )
+
+    result = intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
+    assert result == "merged-ticket-id"
+    assert create_calls == ["group:9"]
+    # 3 conversation turns (source + 2 comments) + 2 ticket turns (description + 1 comment)
+    assert len(inserted["turns"]) == 5
+    assert [t["seq"] for t in inserted["turns"]] == [0, 1, 2, 3, 4]
+    # Ambiguous which member's statistics "the" case should carry — skipped for a group.
+    assert stats_calls == []
+
+
+def test_ingest_intercom_conversation_dedupes_against_an_existing_group(monkeypatch):
+    """A conversation already known to belong to an ingested group (via
+    the group's own key) is deduped without creating a second row —
+    even though its own kind-prefixed key was never used."""
+    lookups = []
+
+    def _find(org_id, *, source, external_id):
+        lookups.append(external_id)
+        return "existing-group-ticket-id" if external_id == "group:9" else None
+
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "find_ticket_by_external_id", _find)
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    convo = {
+        **REAL_SHAPED_CONVERSATION,
+        "linked_objects": {"data": [{"type": "ticket", "id": "9"}]},
+    }
+    monkeypatch.setattr(intercom_ingest.intercom_client, "get_conversation", lambda *a, **k: convo)
+
+    def _boom_if_called(*a, **k):
+        raise AssertionError("must not fetch a linked member once the group is already known")
+
+    monkeypatch.setattr(intercom_ingest.intercom_client, "get_ticket", _boom_if_called)
+    create_calls = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda *a, **k: create_calls.append(1) or "new-ticket-id",
+    )
+
+    result = intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
+    assert result == "existing-group-ticket-id"
+    assert lookups == ["conversation:conv-123", "group:9"]
+    assert create_calls == []
+
+
+def test_ingest_intercom_conversation_standalone_when_linked_objects_empty(monkeypatch):
+    """No linked_objects — unchanged pre-IN-8 behavior, keyed by the
+    conversation's own id, not a group key."""
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    create_calls = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: create_calls.append(external_id) or "t1",
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_status", lambda *a, **k: None)
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "insert_ticket_messages", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_provider_stats", lambda *a, **k: None)
+    monkeypatch.setattr(
+        intercom_ingest.intercom_client, "get_conversation",
+        lambda *a, **k: REAL_SHAPED_CONVERSATION,
+    )
+    intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
+    assert create_calls == ["conversation:conv-123"]
+
+
 # ── normalize_ticket ──────────────────────────────────────────────────────────
 
 REAL_SHAPED_TICKET = {
@@ -516,6 +747,43 @@ def test_ingest_intercom_ticket_happy_path(monkeypatch):
     assert len(inserted["turns"]) == 2
 
 
+def test_ingest_intercom_ticket_merges_a_linked_conversation_too(monkeypatch):
+    """IN-8 symmetry: grouping works the same starting from a ticket as
+    from a conversation, since both entry points share
+    _ingest_intercom_object."""
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    create_calls = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: create_calls.append(external_id) or "merged-id",
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_status", lambda *a, **k: None)
+    inserted = {}
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "insert_ticket_messages",
+        lambda ticket_id, org_id, turns: inserted.update(turns=turns),
+    )
+    ticket = {
+        **REAL_SHAPED_TICKET,
+        "linked_objects": {"data": [{"type": "conversation", "id": "8"}]},  # lower than ticket-99
+    }
+    monkeypatch.setattr(intercom_ingest.intercom_client, "get_ticket", lambda *a, **k: ticket)
+    monkeypatch.setattr(
+        intercom_ingest.intercom_client, "get_conversation",
+        lambda *a, **k: REAL_SHAPED_CONVERSATION,
+    )
+    result = intercom_ingest.ingest_intercom_ticket("org-1", "ticket-99")
+    assert result == "merged-id"
+    assert create_calls == ["group:8"]
+    assert len(inserted["turns"]) == 5  # 2 ticket turns + 3 conversation turns
+
+
 def test_ingest_intercom_ticket_never_touches_provider_stats(monkeypatch):
     """Tickets don't carry a `statistics` field at all (confirmed against
     Intercom's own reference — Conversation-only) — the ticket ingest path
@@ -546,7 +814,10 @@ def test_ingest_intercom_ticket_never_touches_provider_stats(monkeypatch):
     intercom_ingest.ingest_intercom_ticket("org-1", "ticket-1")
 
 
-def test_ingest_intercom_ticket_marks_failed_on_fetch_error(monkeypatch):
+def test_ingest_intercom_ticket_creates_no_row_when_seed_fetch_fails(monkeypatch):
+    """IN-8: same ordering change as the conversation side — the seed
+    fetch happens before create_ticket, so a failure there creates no
+    row (still logged at the api.py call site regardless)."""
     monkeypatch.setattr(
         intercom_ingest.ticket_ingest, "find_ticket_by_external_id", lambda *a, **k: None,
     )
@@ -554,9 +825,10 @@ def test_ingest_intercom_ticket_marks_failed_on_fetch_error(monkeypatch):
         intercom_ingest.org_vault, "load_credential",
         lambda *a, **k: {"access_token": "tok"},
     )
+    create_calls = []
     monkeypatch.setattr(
         intercom_ingest.ticket_ingest, "create_ticket",
-        lambda org_id, *, source, external_id: "new-ticket-id",
+        lambda org_id, *, source, external_id: create_calls.append(external_id) or "new-ticket-id",
     )
     statuses = []
     monkeypatch.setattr(
@@ -570,4 +842,5 @@ def test_ingest_intercom_ticket_marks_failed_on_fetch_error(monkeypatch):
     monkeypatch.setattr(intercom_ingest.intercom_client, "get_ticket", _boom)
     with pytest.raises(RuntimeError, match="intercom is down"):
         intercom_ingest.ingest_intercom_ticket("org-1", "ticket-1")
-    assert statuses == ["processing", "failed"]
+    assert create_calls == []
+    assert statuses == []
