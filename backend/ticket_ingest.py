@@ -115,6 +115,24 @@ def set_ticket_provider_stats(ticket_id: str, org_id: str, stats: dict | None) -
             )
 
 
+def set_ticket_provider_extra(ticket_id: str, org_id: str, extra: dict | None) -> None:
+    """Store a provider's other raw pre-computed fields (IN-13) — e.g.
+    Intercom's conversation_rating/custom_attributes/sla_applied/
+    ai_agent. v1: captured "if cheap to do so," unparsed, no UI or
+    scoring built around it yet. Separate column from provider_stats
+    (IN-7) — that one already has an established, documented meaning;
+    folding these in would blur it rather than extend it. No-op for
+    None, same convention as set_ticket_provider_stats."""
+    if extra is None:
+        return
+    with org_scope(org_id):
+        with db.connection() as conn:
+            conn.execute(
+                "UPDATE tickets SET provider_extra = %s WHERE id = %s AND org_id = %s",
+                (Json(extra), ticket_id, org_id),
+            )
+
+
 def insert_ticket_messages(ticket_id: str, org_id: str, turns: list[dict]) -> None:
     """Bulk-insert parsed turns (ticket_pdf_parser's output shape) into
     ticket_messages, in seq order. No-op for an empty list.

@@ -382,6 +382,24 @@ def _external_id(kind: str, raw_id: str) -> str:
     return f"{kind}:{raw_id}"
 
 
+_PROVIDER_EXTRA_FIELDS = ("conversation_rating", "custom_attributes", "sla_applied", "ai_agent")
+
+
+def _provider_extra(obj: dict) -> dict | None:
+    """IN-13: Intercom's other pre-computed fields, captured raw and
+    unused — no UI, no scoring, "if cheap to do so" per the story's own
+    v1 discipline. The story names one of these "sentiment"; Intercom
+    has no such field — checked its real OpenAPI spec directly (same
+    discipline as every other correction in this epic) and the real
+    field is `conversation_rating` (a 1-5 CSAT-style rating), stored
+    here instead. Same asymmetry as `statistics` (IN-7): all four exist
+    only on Conversation, not Ticket, confirmed against the schema, not
+    assumed symmetric. Returns None (a no-op write) when every one of
+    them is absent, rather than storing an empty object."""
+    extra = {k: obj.get(k) for k in _PROVIDER_EXTRA_FIELDS if obj.get(k) is not None}
+    return extra or None
+
+
 def _linked_members(obj: dict) -> list[tuple[str, str]]:
     """(kind, id) pairs from an object's own linked_objects.data (IN-8),
     excluding any malformed entry, a duplicate id, and a self-reference.
@@ -563,6 +581,7 @@ def _ingest_intercom_object(org_id: str, kind: str, obj_id: str) -> str:
         # rather than guessed at (v1, unsurfaced field either way).
         if len(members) == 1 and kind == "conversation":
             ticket_ingest.set_ticket_provider_stats(ticket_id, org_id, seed_obj.get("statistics"))
+            ticket_ingest.set_ticket_provider_extra(ticket_id, org_id, _provider_extra(seed_obj))
     except Exception:
         ticket_ingest.set_ticket_status(ticket_id, org_id, "failed")
         raise

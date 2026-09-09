@@ -663,6 +663,65 @@ def test_ingest_intercom_conversation_stores_statistics_when_present(monkeypatch
     assert captured == {"ticket_id": "new-ticket-id", "stats": stats}
 
 
+def test_ingest_intercom_conversation_stores_provider_extra_when_present(monkeypatch):
+    """IN-13: conversation_rating/custom_attributes/sla_applied/ai_agent,
+    passed through to tickets.provider_extra as-is."""
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: "new-ticket-id",
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_status", lambda *a, **k: None)
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "insert_ticket_messages", lambda *a, **k: None)
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_provider_stats", lambda *a, **k: None)
+    rating = {"rating": 5, "remark": "Great!"}
+    convo = {**REAL_SHAPED_CONVERSATION, "conversation_rating": rating}
+    monkeypatch.setattr(intercom_ingest.intercom_client, "get_conversation", lambda *a, **k: convo)
+
+    captured = {}
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "set_ticket_provider_extra",
+        lambda ticket_id, org_id, extra: captured.update(ticket_id=ticket_id, extra=extra),
+    )
+    intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
+    assert captured == {"ticket_id": "new-ticket-id", "extra": {"conversation_rating": rating}}
+
+
+def test_ingest_intercom_ticket_never_touches_provider_extra(monkeypatch):
+    """Same asymmetry as provider_stats (IN-7) — none of these fields
+    exist on a Ticket, confirmed against Intercom's schema, so the
+    ticket path must not reference set_ticket_provider_extra at all."""
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: "new-ticket-id",
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_status", lambda *a, **k: None)
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "insert_ticket_messages", lambda *a, **k: None)
+    monkeypatch.setattr(
+        intercom_ingest.intercom_client, "get_ticket", lambda token, tid: REAL_SHAPED_TICKET,
+    )
+
+    def _boom(*a, **k):
+        raise AssertionError("ingest_intercom_ticket must not call set_ticket_provider_extra")
+
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_provider_extra", _boom)
+    intercom_ingest.ingest_intercom_ticket("org-1", "ticket-1")
+
+
 def test_ingest_intercom_conversation_skips_statistics_write_when_absent(monkeypatch):
     """No `statistics` key on the payload — set_ticket_provider_stats is
     never even called, not called-with-None."""
@@ -693,6 +752,40 @@ def test_ingest_intercom_conversation_skips_statistics_write_when_absent(monkeyp
     )
     intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
     assert calls == [(("new-ticket-id", "org-1", None), {})]
+
+
+# ── _provider_extra (IN-13) ─────────────────────────────────────────────────
+
+
+def test_provider_extra_captures_the_four_real_fields():
+    obj = {
+        "conversation_rating": {"rating": 5, "remark": "Great!"},
+        "custom_attributes": {"plan": "enterprise"},
+        "sla_applied": {"sla_name": "Priority"},
+        "ai_agent": {"resolution_state": "resolved"},
+    }
+    assert intercom_ingest._provider_extra(obj) == obj
+
+
+def test_provider_extra_returns_none_when_everything_absent():
+    assert intercom_ingest._provider_extra({}) is None
+    assert intercom_ingest._provider_extra({"other_field": "x"}) is None
+
+
+def test_provider_extra_includes_only_the_fields_actually_present():
+    obj = {"conversation_rating": {"rating": 5}, "some_unrelated_field": "x"}
+    assert intercom_ingest._provider_extra(obj) == {"conversation_rating": {"rating": 5}}
+
+
+def test_provider_extra_never_reads_a_field_called_sentiment():
+    """The epic's own text names 'sentiment' — Intercom's real schema has
+    no such field (verified against its OpenAPI spec). A stray
+    'sentiment' key on the payload must be ignored, not silently stored
+    under a name Intercom doesn't actually use."""
+    obj = {"sentiment": "positive", "conversation_rating": {"rating": 4}}
+    result = intercom_ingest._provider_extra(obj)
+    assert "sentiment" not in result
+    assert result == {"conversation_rating": {"rating": 4}}
 
 
 # ── _external_id namespacing ──────────────────────────────────────────────────

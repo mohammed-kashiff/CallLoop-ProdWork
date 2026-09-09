@@ -38,6 +38,7 @@ class _FakeConn:
         self.assets: list[tuple] = []
         self.status_updates: list[tuple] = []
         self.provider_stats_updates: list[tuple] = []
+        self.provider_extra_updates: list[tuple] = []
 
     def execute(self, sql, params=None):
         norm = " ".join(str(sql).split()).upper()
@@ -66,6 +67,10 @@ class _FakeConn:
         if norm.startswith("UPDATE TICKETS SET PROVIDER_STATS"):
             stats, ticket_id, org_id = params
             self.provider_stats_updates.append((ticket_id, stats.obj if hasattr(stats, "obj") else stats))
+            return _Result([])
+        if norm.startswith("UPDATE TICKETS SET PROVIDER_EXTRA"):
+            extra, ticket_id, org_id = params
+            self.provider_extra_updates.append((ticket_id, extra.obj if hasattr(extra, "obj") else extra))
             return _Result([])
         if norm.startswith("INSERT INTO TICKET_MESSAGE_ASSETS"):
             self.assets.append(params)
@@ -180,6 +185,27 @@ def test_set_ticket_provider_stats_is_a_noop_for_none(monkeypatch):
 
     # No _fake_db patching — if this hit the DB layer, it would raise.
     ticket_ingest.set_ticket_provider_stats("t1", ORG_A, None)
+
+
+def test_set_ticket_provider_extra_writes_the_raw_object(monkeypatch):
+    """IN-13: Intercom's conversation_rating/custom_attributes/
+    sla_applied/ai_agent fields, stored as-is."""
+    from backend import ticket_ingest
+
+    extra = {"conversation_rating": {"rating": 5}, "custom_attributes": {"plan": "enterprise"}}
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ticket_ingest.set_ticket_provider_extra("t1", ORG_A, extra)
+    assert conn.provider_extra_updates == [("t1", extra)]
+
+
+def test_set_ticket_provider_extra_is_a_noop_for_none(monkeypatch):
+    """No such fields on the payload (always the case for a Ticket, which
+    doesn't carry any of them) — no query."""
+    from backend import ticket_ingest
+
+    # No _fake_db patching — if this hit the DB layer, it would raise.
+    ticket_ingest.set_ticket_provider_extra("t1", ORG_A, None)
 
 
 def test_insert_ticket_messages_writes_one_row_per_turn_in_order(monkeypatch):
