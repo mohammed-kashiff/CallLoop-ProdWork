@@ -237,6 +237,71 @@ def test_ingest_intercom_conversation_happy_path_writes_turns_and_marks_ready(mo
     assert len(inserted["turns"]) == 3
 
 
+def test_ingest_intercom_conversation_stores_statistics_when_present(monkeypatch):
+    """IN-7: conversation.statistics (first-response/resolution timing,
+    Conversation-only field per Intercom's reference) is passed through
+    to tickets.provider_stats as-is."""
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: "new-ticket-id",
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_status", lambda *a, **k: None)
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "insert_ticket_messages", lambda *a, **k: None,
+    )
+    stats = {"time_to_first_close": 3600, "count_reopens": 0}
+    convo = {**REAL_SHAPED_CONVERSATION, "statistics": stats}
+    monkeypatch.setattr(intercom_ingest.intercom_client, "get_conversation", lambda *a, **k: convo)
+
+    captured = {}
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "set_ticket_provider_stats",
+        lambda ticket_id, org_id, s: captured.update(ticket_id=ticket_id, stats=s),
+    )
+    intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
+    assert captured == {"ticket_id": "new-ticket-id", "stats": stats}
+
+
+def test_ingest_intercom_conversation_skips_statistics_write_when_absent(monkeypatch):
+    """No `statistics` key on the payload — set_ticket_provider_stats is
+    never even called, not called-with-None."""
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: "new-ticket-id",
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_status", lambda *a, **k: None)
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "insert_ticket_messages", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.intercom_client, "get_conversation",
+        lambda *a, **k: REAL_SHAPED_CONVERSATION,
+    )
+    calls = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "set_ticket_provider_stats",
+        lambda *a, **k: calls.append((a, k)),
+    )
+    intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
+    assert calls == [(("new-ticket-id", "org-1", None), {})]
+
+
 # ── _external_id namespacing ──────────────────────────────────────────────────
 
 
@@ -449,6 +514,36 @@ def test_ingest_intercom_ticket_happy_path(monkeypatch):
     assert result == "new-ticket-id"
     assert statuses == ["processing", "ready"]
     assert len(inserted["turns"]) == 2
+
+
+def test_ingest_intercom_ticket_never_touches_provider_stats(monkeypatch):
+    """Tickets don't carry a `statistics` field at all (confirmed against
+    Intercom's own reference — Conversation-only) — the ticket ingest path
+    must not reference set_ticket_provider_stats, even to no-op it."""
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: "new-ticket-id",
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_status", lambda *a, **k: None)
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "insert_ticket_messages", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.intercom_client, "get_ticket", lambda token, tid: REAL_SHAPED_TICKET,
+    )
+
+    def _boom(*a, **k):
+        raise AssertionError("ingest_intercom_ticket must not call set_ticket_provider_stats")
+
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_provider_stats", _boom)
+    intercom_ingest.ingest_intercom_ticket("org-1", "ticket-1")
 
 
 def test_ingest_intercom_ticket_marks_failed_on_fetch_error(monkeypatch):

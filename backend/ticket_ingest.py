@@ -40,6 +40,8 @@ reviewer at the real picture instead of a re-typed quote.
 
 from __future__ import annotations
 
+from psycopg.types.json import Json
+
 from . import db
 from . import ticket_agent_aliases
 from . import ticket_image_extraction
@@ -95,6 +97,21 @@ def set_ticket_status(ticket_id: str, org_id: str, status: str) -> None:
             conn.execute(
                 "UPDATE tickets SET status = %s WHERE id = %s AND org_id = %s",
                 (status, ticket_id, org_id),
+            )
+
+
+def set_ticket_provider_stats(ticket_id: str, org_id: str, stats: dict | None) -> None:
+    """Store a provider's raw per-ticket statistics object (IN-7) — e.g.
+    Intercom's `statistics` field (first-response time, resolution time).
+    v1: stored as-is, unparsed, not surfaced anywhere yet. No-op for None
+    (PDF-sourced tickets, or a provider payload that omitted the field)."""
+    if stats is None:
+        return
+    with org_scope(org_id):
+        with db.connection() as conn:
+            conn.execute(
+                "UPDATE tickets SET provider_stats = %s WHERE id = %s AND org_id = %s",
+                (Json(stats), ticket_id, org_id),
             )
 
 

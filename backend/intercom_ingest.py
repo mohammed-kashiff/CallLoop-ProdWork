@@ -31,6 +31,11 @@ two real payloads, apparently not exhaustive) didn't cover:
   - `ticket.resolved` and `ticket.closed` webhooks put the ticket object
     in different places (top-level `data.item` vs. nested
     `data.item.ticket`) — handled at the call site (api.py), not here.
+  - `statistics` (IN-7: first-response/resolution timing) exists only on
+    the Conversation object, not Ticket — confirmed against Intercom's
+    own reference before assuming otherwise, the same discipline that
+    caught the state-vs-open ticket-search bug (IN-6). Stored as-is,
+    unparsed, in tickets.provider_stats (0032) — v1, not surfaced yet.
 
 external_id is namespaced by object kind ("conversation:<id>" /
 "ticket:<id>") — Intercom's conversation and ticket ids aren't documented
@@ -266,6 +271,7 @@ def ingest_intercom_conversation(org_id: str, conversation_id: str) -> str:
         conversation = intercom_client.get_conversation(creds["access_token"], conversation_id)
         turns = normalize_conversation(conversation)
         ticket_ingest.insert_ticket_messages(ticket_id, org_id, turns)
+        ticket_ingest.set_ticket_provider_stats(ticket_id, org_id, conversation.get("statistics"))
     except Exception:
         ticket_ingest.set_ticket_status(ticket_id, org_id, "failed")
         raise
