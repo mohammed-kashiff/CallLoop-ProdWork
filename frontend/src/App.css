@@ -2154,9 +2154,18 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
 
 .evidence.is-image figcaption {
   margin-top: 0.5rem;
-  font-style: italic;
+  font-style: normal;
   font-size: 0.95rem;
   line-height: 1.5;
+  color: var(--muted-fg);
+}
+
+.evidence-image-label {
+  font-style: normal;
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--muted-fg);
 }
 

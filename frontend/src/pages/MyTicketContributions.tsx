@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch, readError } from '../lib/api'
+import { TicketEvidence } from '../components/TicketEvidence'
 import { capFirst } from '../lib/format'
 
 // TA-12 (PRD §7): an agent's own contribution rolled up across every
@@ -20,6 +21,7 @@ type OwnFinding = {
   name?: string
   verdict: string
   evidence_text: string | null
+  evidence_seq: number | null
 }
 
 type OwnTicketContribution = {
@@ -119,11 +121,13 @@ export function MyTicketContributions() {
                       {f.verdict === 'not_applicable' ? 'N/A' : f.verdict.toUpperCase()}
                     </span>
                   </div>
-                  {f.evidence_text && (
-                    <blockquote className="evidence">
-                      <p>&ldquo;{f.evidence_text}&rdquo;</p>
-                    </blockquote>
-                  )}
+                  <TicketEvidence
+                    text={f.evidence_text}
+                    isImage={
+                      f.evidence_seq != null &&
+                      t.turns.some((turn) => turn.seq === f.evidence_seq && turn.has_image)
+                    }
+                  />
                 </li>
               ))}
             </ul>

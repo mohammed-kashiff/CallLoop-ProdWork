@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, readError, trackEvent } from '../lib/api'
+import { TicketEvidence } from '../components/TicketEvidence'
 import { capFirst } from '../lib/format'
 import { useAuth } from '../context/AuthContext'
 
@@ -515,21 +516,12 @@ export function TicketAudit() {
                             </span>
                           </div>
                           {f.reasoning && <p className="criterion-rationale">{f.reasoning}</p>}
-                          {assetUrl ? (
-                            <figure className="evidence is-image">
-                              <img src={assetUrl} alt="Evidence screenshot" />
-                              {f.evidence_text && <figcaption>{f.evidence_text}</figcaption>}
-                            </figure>
-                          ) : f.evidence_text ? (
-                            <blockquote className="evidence">
-                              <p>&ldquo;{f.evidence_text}&rdquo;</p>
-                              {!f.evidence_verified && (
-                                <span className="evidence-unverified">
-                                  Quote not verified verbatim
-                                </span>
-                              )}
-                            </blockquote>
-                          ) : null}
+                          <TicketEvidence
+                            text={f.evidence_text}
+                            isImage={Boolean(turn?.has_image)}
+                            assetUrl={assetUrl}
+                            verified={f.evidence_verified}
+                          />
                         </li>
                       )
                     })}
