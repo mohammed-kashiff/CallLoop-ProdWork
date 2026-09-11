@@ -55,17 +55,17 @@ class _FakeConn:
                 for k, v in self.aliases.items() if k[0] == org_id
             ]
             return _Result(sorted(rows, key=lambda r: r["display_name"]))
-        if norm.startswith("SELECT AGENT_DISPLAY_NAME, COUNT(*) AS TURN_COUNT"):
+        if norm.startswith("SELECT SPEAKER_DISPLAY_NAME, COUNT(*) AS TURN_COUNT"):
             (org_id,) = params
             counts: dict[str, int] = {}
             for m in self.messages:
                 if m["org_id"] != org_id or m["speaker"] != "agent":
                     continue
-                if m["agent_user_id"] is not None or not m["agent_display_name"]:
+                if m["agent_user_id"] is not None or not m["speaker_display_name"]:
                     continue
-                counts[m["agent_display_name"]] = counts.get(m["agent_display_name"], 0) + 1
-            rows = [{"agent_display_name": k, "turn_count": v} for k, v in counts.items()]
-            return _Result(sorted(rows, key=lambda r: (-r["turn_count"], r["agent_display_name"])))
+                counts[m["speaker_display_name"]] = counts.get(m["speaker_display_name"], 0) + 1
+            rows = [{"speaker_display_name": k, "turn_count": v} for k, v in counts.items()]
+            return _Result(sorted(rows, key=lambda r: (-r["turn_count"], r["speaker_display_name"])))
         if norm.startswith("INSERT INTO TICKET_AGENT_ALIASES"):
             org_id, name, uid = params
             self.aliases[(org_id, name)] = {"user_id": uid}
@@ -249,10 +249,13 @@ def test_list_unresolved_agent_names_counts_agent_turns_with_no_resolved_id(monk
 
     conn = _FakeConn()
     conn.messages = [
-        {"org_id": ORG_A, "speaker": "agent", "agent_user_id": None, "agent_display_name": "Kashif"},
-        {"org_id": ORG_A, "speaker": "agent", "agent_user_id": None, "agent_display_name": "Kashif"},
-        {"org_id": ORG_A, "speaker": "agent", "agent_user_id": "u1", "agent_display_name": "Tanu"},
-        {"org_id": ORG_A, "speaker": "customer", "agent_user_id": None, "agent_display_name": None},
+        {"org_id": ORG_A, "speaker": "agent", "agent_user_id": None, "speaker_display_name": "Kashif"},
+        {"org_id": ORG_A, "speaker": "agent", "agent_user_id": None, "speaker_display_name": "Kashif"},
+        {"org_id": ORG_A, "speaker": "agent", "agent_user_id": "u1", "speaker_display_name": "Tanu"},
+        # A customer turn now carries a real name too (speaker_display_name
+        # is no longer agent-only) — must still be excluded by speaker != 'agent',
+        # not by this column being empty.
+        {"org_id": ORG_A, "speaker": "customer", "agent_user_id": None, "speaker_display_name": "Kevin"},
     ]
     with _fake_db(monkeypatch, conn):
         result = ticket_agent_aliases.list_unresolved_agent_names(ORG_A)
@@ -515,14 +518,17 @@ def test_alias_resolution_live_end_to_end():
         with org_scope(org_id):
             with connection() as conn:
                 rows = conn.execute(
-                    "SELECT seq, agent_user_id, agent_display_name FROM ticket_messages "
+                    "SELECT seq, agent_user_id, speaker_display_name FROM ticket_messages "
                     "WHERE ticket_id = %s ORDER BY seq",
                     (ticket_id,),
                 ).fetchall()
         assert rows[1]["agent_user_id"] == uuid.UUID(agent_kashif)
-        assert rows[1]["agent_display_name"] == "Kashif"
+        assert rows[1]["speaker_display_name"] == "Kashif"
         assert rows[3]["agent_user_id"] == uuid.UUID(agent_tanu)
-        assert rows[3]["agent_display_name"] == "Tanu"
+        assert rows[3]["speaker_display_name"] == "Tanu"
+        # Customer turns now carry their own name too, not just agents.
+        assert rows[0]["speaker_display_name"] == "Kevin"
+        assert rows[2]["speaker_display_name"] == "Kevin"
 
         # TA-8's own attribution mechanism now has two real spans, not one
         # undifferentiated span across both agents — the actual gap TA-15

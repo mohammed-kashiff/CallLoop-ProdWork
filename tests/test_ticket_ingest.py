@@ -220,9 +220,9 @@ def test_insert_ticket_messages_writes_one_row_per_turn_in_order(monkeypatch):
     with _fake_db(monkeypatch, conn):
         ticket_ingest.insert_ticket_messages("t1", ORG_A, turns)
     assert conn.messages == [
-        ("t1", ORG_A, 0, None, "customer", "hi", None, None, False),
+        ("t1", ORG_A, 0, None, "customer", "hi", None, "Kevin", False),
         ("t1", ORG_A, 1, "u1", "agent", "hello", None, "Kashif", False),
-        ("t1", ORG_A, 2, None, "bot", "beep", None, None, False),
+        ("t1", ORG_A, 2, None, "bot", "beep", None, "Welma Bot", False),
     ]
 
 
@@ -247,21 +247,24 @@ def test_insert_ticket_messages_writes_is_internal_from_internal_contribution(mo
     assert [row[-1] for row in conn.messages] == [False, True, False]
 
 
-def test_insert_ticket_messages_agent_display_name_is_null_for_non_agent_turns(monkeypatch):
-    """agent_display_name (TA-15) is the raw PDF name for agent turns only —
-    a customer or bot turn's speaker_name (e.g. "Welma Bot") must never
-    land in this column, since it exists specifically to give an org owner
-    a to-do list of *agent* names to map."""
+def test_insert_ticket_messages_persists_speaker_display_name_for_every_role(monkeypatch):
+    """speaker_display_name (TA-15, generalized) is the raw name/identifier
+    off the source for *any* speaker — a customer's or bot's speaker_name
+    ("Kevin", "Welma Bot") is persisted the same as an agent's, so the
+    ticket's own transcript can show who was actually talking, not just
+    the generic role. Only a turn with no speaker_name at all falls back
+    to NULL."""
     from backend import ticket_ingest
 
     turns = [
         {"seq": 0, "speaker": "customer", "speaker_name": "Kevin", "agent_user_id": None, "text": "hi"},
         {"seq": 1, "speaker": "bot", "speaker_name": "Welma Bot", "agent_user_id": None, "text": "beep"},
+        {"seq": 2, "speaker": "agent", "speaker_name": "", "agent_user_id": None, "text": "no name given"},
     ]
     conn = _FakeConn()
     with _fake_db(monkeypatch, conn):
         ticket_ingest.insert_ticket_messages("t1", ORG_A, turns)
-    assert [row[-2] for row in conn.messages] == [None, None]  # agent_display_name; is_internal is last
+    assert [row[-2] for row in conn.messages] == ["Kevin", "Welma Bot", None]  # speaker_display_name
 
 
 def test_insert_ticket_messages_is_a_noop_for_no_turns(monkeypatch):

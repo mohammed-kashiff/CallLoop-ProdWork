@@ -18,11 +18,14 @@ best-effort shape as before, just no longer permanently blank for every
 org regardless of whether they've mapped their team. Does not
 retroactively fix tickets ingested before a mapping existed.
 
-agent_display_name (TA-15) persists the raw name for every agent turn
-regardless of resolution — previously this was parsed and then
-discarded, which meant there was no way to even know what names existed
-to map. ticket_agent_aliases.list_unresolved_agent_names() reads it back
-to give an org owner their own to-do list.
+speaker_display_name (TA-15, generalized) persists the raw name/identifier
+for every turn regardless of role or resolution — previously this was
+parsed and then discarded for agent turns, which meant there was no way
+to even know what names existed to map, and discarded unconditionally for
+customer/bot turns, which meant a ticket's own transcript could never show
+who the customer actually was. ticket_agent_aliases.list_unresolved_agent_names()
+reads it back (scoped to speaker='agent') to give an org owner their own
+to-do list.
 
 TA-5 design (PRD §8.1): an embedded screenshot is extracted at ingest
 time, described with one Claude vision call, and injected into the same
@@ -141,10 +144,12 @@ def insert_ticket_messages(ticket_id: str, org_id: str, turns: list[dict]) -> No
     don't have it (older test fixtures, hand-built turns) still work; the
     column itself is nullable.
 
-    agent_display_name (TA-15) is persisted for every agent turn — the
-    raw name off the PDF, regardless of whether agent_user_id resolved —
-    so an org owner has something to map later. NULL for customer/bot
-    turns, matching the column's own contract.
+    speaker_display_name is persisted for every turn regardless of role —
+    the raw name/identifier off the source, whether or not agent_user_id
+    resolved — so an org owner has something to map later (agent turns),
+    and so the ticket's own transcript can show who the customer was
+    (customer turns). Previously agent-only (agent_display_name, TA-15);
+    NULL only when the source genuinely carried no name (rare bot turns).
 
     is_internal (IN-9) — a note-type Intercom part, captured but not
     customer-facing (see intercom_ingest._is_internal_note). Defaults
@@ -156,12 +161,12 @@ def insert_ticket_messages(ticket_id: str, org_id: str, turns: list[dict]) -> No
     with org_scope(org_id):
         with db.connection() as conn:
             for t in turns:
-                display_name = t.get("speaker_name") if t["speaker"] == "agent" else None
+                display_name = t.get("speaker_name") or None
                 conn.execute(
                     """
                     INSERT INTO ticket_messages
                         (ticket_id, org_id, seq, agent_user_id, speaker, text, sent_at,
-                         agent_display_name, is_internal)
+                         speaker_display_name, is_internal)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
@@ -393,7 +398,8 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
                 return None
             messages = conn.execute(
                 """
-                SELECT seq, speaker, text, agent_user_id, sent_at, is_internal
+                SELECT seq, speaker, text, agent_user_id, sent_at, is_internal,
+                       speaker_display_name
                 FROM ticket_messages
                 WHERE ticket_id = %s AND org_id = %s
                 ORDER BY seq
@@ -429,6 +435,7 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
                 "speaker": m["speaker"],
                 "text": m["text"],
                 "agent_user_id": str(m["agent_user_id"]) if m["agent_user_id"] else None,
+                "speaker_display_name": m["speaker_display_name"],
                 "sent_at": _iso(m["sent_at"]),
                 "has_image": int(m["seq"]) in asset_seqs,
                 "is_internal": bool(m["is_internal"]),

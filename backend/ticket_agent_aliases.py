@@ -60,18 +60,18 @@ def list_unresolved_agent_names(org_id: str) -> list[dict]:
         with db.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT agent_display_name, COUNT(*) AS turn_count
+                SELECT speaker_display_name, COUNT(*) AS turn_count
                 FROM ticket_messages
                 WHERE org_id = %s AND speaker = 'agent'
                   AND agent_user_id IS NULL
-                  AND agent_display_name IS NOT NULL
-                GROUP BY agent_display_name
-                ORDER BY turn_count DESC, agent_display_name
+                  AND speaker_display_name IS NOT NULL
+                GROUP BY speaker_display_name
+                ORDER BY turn_count DESC, speaker_display_name
                 """,
                 (org_id,),
             ).fetchall()
     return [
-        {"display_name": r["agent_display_name"], "turn_count": int(r["turn_count"])}
+        {"display_name": r["speaker_display_name"], "turn_count": int(r["turn_count"])}
         for r in rows or []
     ]
 
