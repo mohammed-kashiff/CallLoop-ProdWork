@@ -712,4 +712,80 @@ def test_identity_alias_resolution_live_end_to_end():
         admin.execute("DELETE FROM org_members WHERE org_id = %s", (org_id,))
         admin.execute("DELETE FROM orgs WHERE id = %s", (org_id,))
         admin.commit()
+
+
+def test_set_alias_backfill_actually_updates_a_row_through_real_rls_live():
+    """The exact bug found live, reproduced against real Postgres:
+    set_alias()'s backfill UPDATE silently matched zero rows in
+    production despite matching data existing, because ticket_messages
+    (0022_tickets.py) was designed insert-once/immutable-after-creation
+    — GRANT SELECT, INSERT only, no UPDATE policy at all. Every fake-
+    connection unit test for the backfill logic passed regardless, since
+    a fake bypasses real RLS entirely; the one existing live test here
+    only ever exercised the zero-match case (aliasing an identifier with
+    no prior turns), which also can't catch this — a policy denying
+    every row and a WHERE clause matching zero rows look identical from
+    rowcount alone unless a matching row exists first. This test inserts
+    a real unresolved turn before aliasing, so a regression here fails
+    loudly (backfilled_turns == 0, agent_user_id still NULL) instead of
+    silently, the way it did in production. Needs 0037's grant + policy;
+    skips before that revision is applied."""
+    from dotenv import load_dotenv
+
+    from backend.db_url import database_url, psycopg_url
+    from backend.paths import ENV_FILE
+
+    load_dotenv(ENV_FILE)
+    raw = database_url()
+    if not raw:
+        pytest.skip("DATABASE_URL not set")
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from backend import ticket_agent_identity_aliases as m
+    from backend import ticket_ingest
+
+    admin = psycopg.connect(psycopg_url(raw), row_factory=dict_row, prepare_threshold=0)
+    priv = admin.execute(
+        """
+        SELECT has_column_privilege('callproof_app', 'ticket_messages', 'agent_user_id', 'UPDATE') AS ok
+        """
+    ).fetchone()
+    if not priv or not priv["ok"]:
+        admin.close()
+        pytest.skip("0037_ticket_msgs_agent_update not applied")
+
+    org_id = str(uuid.uuid4())
+    agent_id = str(uuid.uuid4())
+    try:
+        admin.execute("INSERT INTO orgs (id, name) VALUES (%s, %s)", (org_id, "ta19-rls-live-test"))
+        admin.execute(
+            "INSERT INTO org_members (org_id, user_id, role) VALUES (%s, %s, 'owner')",
+            (org_id, agent_id),
+        )
+        admin.commit()
+
+        turns = [
+            {"seq": 0, "speaker": "agent", "speaker_name": "sushil@call-loop.example",
+             "agent_user_id": None, "text": "hello"},
+        ]
+        ticket_id = ticket_ingest.create_ticket(org_id, source="intercom_api")
+        ticket_ingest.insert_ticket_messages(ticket_id, org_id, turns)
+
+        result = m.set_alias(org_id, "intercom", "sushil@call-loop.example", agent_id)
+        assert result["backfilled_turns"] == 1
+
+        row = admin.execute(
+            "SELECT agent_user_id FROM ticket_messages WHERE ticket_id = %s", (ticket_id,),
+        ).fetchone()
+        assert str(row["agent_user_id"]) == agent_id
+    finally:
+        admin.execute("DELETE FROM ticket_messages WHERE org_id = %s", (org_id,))
+        admin.execute("DELETE FROM tickets WHERE org_id = %s", (org_id,))
+        admin.execute("DELETE FROM ticket_agent_identity_aliases WHERE org_id = %s", (org_id,))
+        admin.execute("DELETE FROM org_members WHERE org_id = %s", (org_id,))
+        admin.execute("DELETE FROM orgs WHERE id = %s", (org_id,))
+        admin.commit()
+        admin.close()
         admin.close()
