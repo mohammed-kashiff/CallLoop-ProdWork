@@ -106,6 +106,7 @@ def set_alias(org_id: str, provider: str, identifier: str, user_id: str) -> dict
         raise HTTPException(status_code=400, detail="identifier is required.")
     if not uid:
         raise HTTPException(status_code=400, detail="A valid user_id is required.")
+    backfilled = 0
     with org_scope(org_id):
         with db.connection() as conn:
             conn.execute(
@@ -118,11 +119,34 @@ def set_alias(org_id: str, provider: str, identifier: str, user_id: str) -> dict
                 """,
                 (org_id, prov, ident, uid),
             )
+            # Found live: a teammate opening a ticket they were literally
+            # the agent on saw a blank thread, because resolution only
+            # ever applied at original ingest time — mapping an alias
+            # never touched turns already sitting there. TA-12's viewer
+            # filter (a non-owner sees only their own agent_user_id) then
+            # correctly showed nothing, which is the wrong correct answer:
+            # an agent must be able to see their own past work the moment
+            # they're mapped, not only their future turns. Backfill every
+            # already-ingested, still-unresolved turn for this exact
+            # identifier now, in the same transaction as the alias itself.
+            cur = conn.execute(
+                """
+                UPDATE ticket_messages m
+                SET agent_user_id = %s
+                FROM tickets t
+                WHERE t.id = m.ticket_id AND t.org_id = m.org_id
+                  AND m.org_id = %s AND t.source = %s
+                  AND m.speaker = 'agent' AND m.agent_user_id IS NULL
+                  AND lower(m.speaker_display_name) = %s
+                """,
+                (uid, org_id, f"{prov}_api", ident),
+            )
+            backfilled = cur.rowcount
     applog.event(
         log, "ticket_agent_identity_alias_set",
-        org_id=org_id, provider=prov, identifier=ident,
+        org_id=org_id, provider=prov, identifier=ident, backfilled_turns=backfilled,
     )
-    return {"provider": prov, "identifier": ident, "user_id": uid}
+    return {"provider": prov, "identifier": ident, "user_id": uid, "backfilled_turns": backfilled}
 
 
 def delete_alias(org_id: str, provider: str, identifier: str) -> None:

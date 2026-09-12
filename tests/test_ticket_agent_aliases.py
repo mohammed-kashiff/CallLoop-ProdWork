@@ -27,8 +27,9 @@ NEW_USER = str(uuid.uuid4())
 
 
 class _Result:
-    def __init__(self, rows):
+    def __init__(self, rows, rowcount=None):
         self._rows = rows
+        self.rowcount = len(rows) if rowcount is None else rowcount
 
     def fetchall(self):
         return self._rows
@@ -70,6 +71,18 @@ class _FakeConn:
             org_id, name, uid = params
             self.aliases[(org_id, name)] = {"user_id": uid}
             return _Result([])
+        if norm.startswith("UPDATE TICKET_MESSAGES M SET AGENT_USER_ID"):
+            uid, org_id, name = params
+            updated = 0
+            for m_ in self.messages:
+                if (
+                    m_["org_id"] == org_id and m_.get("source") == "pdf_upload"
+                    and m_["speaker"] == "agent" and m_["agent_user_id"] is None
+                    and m_["speaker_display_name"] == name
+                ):
+                    m_["agent_user_id"] = uid
+                    updated += 1
+            return _Result([], rowcount=updated)
         if norm.startswith("DELETE FROM TICKET_AGENT_ALIASES"):
             org_id, name = params
             self.aliases.pop((org_id, name), None)
@@ -112,8 +125,35 @@ def test_set_alias_creates_a_new_mapping(monkeypatch):
     conn = _FakeConn()
     with _fake_db(monkeypatch, conn):
         result = ticket_agent_aliases.set_alias(ORG_A, "Kashif", U1)
-    assert result == {"display_name": "Kashif", "user_id": U1}
+    assert result == {"display_name": "Kashif", "user_id": U1, "backfilled_turns": 0}
     assert conn.aliases[(ORG_A, "Kashif")] == {"user_id": U1}
+
+
+def test_set_alias_backfills_already_ingested_unresolved_turns(monkeypatch):
+    """Same fix as ticket_agent_identity_aliases.set_alias, same root
+    cause: a teammate opening a ticket they were literally the agent on
+    saw a blank thread, because mapping a name only ever affected future
+    ingestions. Backfill every already-ingested, still-unresolved turn
+    for this exact name the moment the alias is created."""
+    from backend import ticket_agent_aliases
+
+    conn = _FakeConn()
+    conn.messages = [
+        {"org_id": ORG_A, "source": "pdf_upload", "speaker": "agent",
+         "agent_user_id": None, "speaker_display_name": "Kashif"},
+        {"org_id": ORG_A, "source": "pdf_upload", "speaker": "agent",
+         "agent_user_id": None, "speaker_display_name": "Kashif"},
+        # Already resolved to someone else — must not be clobbered.
+        {"org_id": ORG_A, "source": "pdf_upload", "speaker": "agent",
+         "agent_user_id": "someone-else", "speaker_display_name": "Kashif"},
+        # Different org — must not leak across tenants.
+        {"org_id": "other-org", "source": "pdf_upload", "speaker": "agent",
+         "agent_user_id": None, "speaker_display_name": "Kashif"},
+    ]
+    with _fake_db(monkeypatch, conn):
+        result = ticket_agent_aliases.set_alias(ORG_A, "Kashif", U1)
+    assert result["backfilled_turns"] == 2
+    assert [m["agent_user_id"] for m in conn.messages] == [U1, U1, "someone-else", None]
 
 
 def test_set_alias_strips_the_display_name(monkeypatch):

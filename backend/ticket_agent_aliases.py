@@ -86,6 +86,7 @@ def set_alias(org_id: str, display_name: str, user_id: str) -> dict:
         raise HTTPException(status_code=400, detail="display_name is required.")
     if not uid:
         raise HTTPException(status_code=400, detail="A valid user_id is required.")
+    backfilled = 0
     with org_scope(org_id):
         with db.connection() as conn:
             conn.execute(
@@ -97,8 +98,32 @@ def set_alias(org_id: str, display_name: str, user_id: str) -> dict:
                 """,
                 (org_id, name, uid),
             )
-    applog.event(log, "ticket_agent_alias_set", org_id=org_id, display_name=name)
-    return {"display_name": name, "user_id": uid}
+            # Same fix as ticket_agent_identity_aliases.set_alias, same
+            # root cause: resolution only ever applied at original ingest
+            # time, so mapping a name never touched turns already sitting
+            # there — an agent opening a ticket they were literally on
+            # saw a blank thread (TA-12's own-turns-only filter correctly
+            # found nothing, because nothing was ever theirs on record).
+            # Backfill every already-ingested, still-unresolved turn for
+            # this exact name now, same transaction as the alias itself.
+            cur = conn.execute(
+                """
+                UPDATE ticket_messages m
+                SET agent_user_id = %s
+                FROM tickets t
+                WHERE t.id = m.ticket_id AND t.org_id = m.org_id
+                  AND m.org_id = %s AND t.source = 'pdf_upload'
+                  AND m.speaker = 'agent' AND m.agent_user_id IS NULL
+                  AND m.speaker_display_name = %s
+                """,
+                (uid, org_id, name),
+            )
+            backfilled = cur.rowcount
+    applog.event(
+        log, "ticket_agent_alias_set",
+        org_id=org_id, display_name=name, backfilled_turns=backfilled,
+    )
+    return {"display_name": name, "user_id": uid, "backfilled_turns": backfilled}
 
 
 def delete_alias(org_id: str, display_name: str) -> None:

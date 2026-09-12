@@ -27,8 +27,9 @@ NEW_USER = str(uuid.uuid4())
 
 
 class _Result:
-    def __init__(self, rows):
+    def __init__(self, rows, rowcount=None):
         self._rows = rows
+        self.rowcount = len(rows) if rowcount is None else rowcount
 
     def fetchall(self):
         return self._rows
@@ -69,6 +70,18 @@ class _FakeConn:
             org_id, provider, identifier, uid = params
             self.aliases[(org_id, provider, identifier)] = {"user_id": uid}
             return _Result([])
+        if norm.startswith("UPDATE TICKET_MESSAGES M SET AGENT_USER_ID"):
+            uid, org_id, source, ident = params
+            updated = 0
+            for m_ in self.messages:
+                if (
+                    m_["org_id"] == org_id and m_["source"] == source
+                    and m_["speaker"] == "agent" and m_["agent_user_id"] is None
+                    and (m_["speaker_display_name"] or "").lower() == ident
+                ):
+                    m_["agent_user_id"] = uid
+                    updated += 1
+            return _Result([], rowcount=updated)
         if norm.startswith("DELETE FROM TICKET_AGENT_IDENTITY_ALIASES"):
             org_id, provider, identifier = params
             self.aliases.pop((org_id, provider, identifier), None)
@@ -128,7 +141,10 @@ def test_set_alias_creates_a_new_mapping(monkeypatch):
     conn = _FakeConn()
     with _fake_db(monkeypatch, conn):
         result = m.set_alias(ORG_A, "intercom", "Kashif@Intercom.example", OLD_USER)
-    assert result == {"provider": "intercom", "identifier": "kashif@intercom.example", "user_id": OLD_USER}
+    assert result == {
+        "provider": "intercom", "identifier": "kashif@intercom.example",
+        "user_id": OLD_USER, "backfilled_turns": 0,
+    }
     assert conn.aliases[(ORG_A, "intercom", "kashif@intercom.example")] == {"user_id": OLD_USER}
 
 
@@ -182,6 +198,39 @@ def test_set_alias_updates_an_existing_mapping(monkeypatch):
     with _fake_db(monkeypatch, conn):
         m.set_alias(ORG_A, "intercom", "kashif@intercom.example", NEW_USER)
     assert conn.aliases[(ORG_A, "intercom", "kashif@intercom.example")] == {"user_id": NEW_USER}
+
+
+def test_set_alias_backfills_already_ingested_unresolved_turns(monkeypatch):
+    """Found live: a teammate opening a ticket they were literally the
+    agent on saw a blank thread, because mapping an alias only ever
+    affected future ingestions — turns already sitting there with
+    agent_user_id NULL never got touched. set_alias must retroactively
+    resolve every matching, still-unresolved turn for this exact
+    identifier the moment the alias is created."""
+    from backend import ticket_agent_identity_aliases as m
+
+    conn = _FakeConn()
+    conn.messages = [
+        {"org_id": ORG_A, "source": "intercom_api", "speaker": "agent",
+         "agent_user_id": None, "speaker_display_name": "kashif@intercom.example"},
+        {"org_id": ORG_A, "source": "intercom_api", "speaker": "agent",
+         "agent_user_id": None, "speaker_display_name": "kashif@intercom.example"},
+        # Already resolved to someone else — must not be clobbered.
+        {"org_id": ORG_A, "source": "intercom_api", "speaker": "agent",
+         "agent_user_id": "someone-else", "speaker_display_name": "kashif@intercom.example"},
+        # Wrong source (PDF) — same identifier text must not cross providers.
+        {"org_id": ORG_A, "source": "pdf_upload", "speaker": "agent",
+         "agent_user_id": None, "speaker_display_name": "kashif@intercom.example"},
+        # Different org — must not leak across tenants.
+        {"org_id": "other-org", "source": "intercom_api", "speaker": "agent",
+         "agent_user_id": None, "speaker_display_name": "kashif@intercom.example"},
+    ]
+    with _fake_db(monkeypatch, conn):
+        result = m.set_alias(ORG_A, "intercom", "Kashif@Intercom.example", NEW_USER)
+    assert result["backfilled_turns"] == 2
+    assert [msg["agent_user_id"] for msg in conn.messages] == [
+        NEW_USER, NEW_USER, "someone-else", None, None,
+    ]
 
 
 def test_list_aliases_returns_only_this_orgs_mappings(monkeypatch):
