@@ -14,6 +14,7 @@ type TicketMessage = {
   text: string
   agent_user_id: string | null
   speaker_display_name: string | null
+  display_name: string | null
   sent_at: string | null
   has_image: boolean
 }
@@ -733,7 +734,7 @@ export function TicketAudit() {
                 <li key={m.seq} className={`ticket-turn is-${m.speaker}`}>
                   <span className="ticket-turn-speaker">
                     {capFirst(m.speaker)}
-                    {m.speaker_display_name ? ` (${m.speaker_display_name})` : ''}
+                    {m.display_name ? ` (${m.display_name})` : ''}
                   </span>
                   {m.has_image && assetUrls[m.seq] ? (
                     <img className="ticket-turn-image" src={assetUrls[m.seq]} alt="Screenshot" />

@@ -660,6 +660,77 @@ def test_ingest_ticket_pdf_live_end_to_end():
         admin.close()
 
 
+def test_get_ticket_display_name_prefers_a_resolved_agents_real_name_live():
+    """Found live via a real pilot ticket: get_ticket() used to always
+    show a turn's raw speaker_display_name (an Intercom agent's email,
+    or a PDF's raw name), even for an agent whose agent_user_id had
+    already resolved to a real org_members account — showing
+    "sushil.lulla@call-loop.com" instead of "Sushil Lulla". display_name
+    now prefers the real org_members name when agent_user_id resolves,
+    falling back to the raw identifier only when it doesn't (or the
+    member has no name on file) — never for a customer/bot turn, which
+    never carries an agent_user_id at all."""
+    from dotenv import load_dotenv
+
+    from backend.db_url import database_url, psycopg_url
+    from backend.paths import ENV_FILE
+
+    load_dotenv(ENV_FILE)
+    raw = database_url()
+    if not raw:
+        pytest.skip("DATABASE_URL not set")
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from backend import ticket_ingest
+
+    admin = psycopg.connect(psycopg_url(raw), row_factory=dict_row, prepare_threshold=0)
+    org_id = str(uuid.uuid4())
+    resolved_agent = str(uuid.uuid4())
+    nameless_agent = str(uuid.uuid4())
+    try:
+        admin.execute("INSERT INTO orgs (id, name) VALUES (%s, %s)", (org_id, "ta17-display-name-live"))
+        admin.execute(
+            "INSERT INTO org_members (org_id, user_id, role, first_name, last_name) "
+            "VALUES (%s, %s, 'owner', %s, %s)",
+            (org_id, resolved_agent, "Sushil", "Lulla"),
+        )
+        admin.execute(
+            "INSERT INTO org_members (org_id, user_id, role) VALUES (%s, %s, 'member')",
+            (org_id, nameless_agent),
+        )
+        admin.commit()
+
+        turns = [
+            {"seq": 0, "speaker": "customer", "speaker_name": "kevin@customer.example",
+             "agent_user_id": None, "text": "Is there someone I can talk to?"},
+            {"seq": 1, "speaker": "agent", "speaker_name": "sushil.lulla@call-loop.com",
+             "agent_user_id": resolved_agent, "text": "This is Sushil, how can I help?"},
+            {"seq": 2, "speaker": "agent", "speaker_name": "unmapped@call-loop.com",
+             "agent_user_id": None, "text": "Jumping in too"},
+            {"seq": 3, "speaker": "agent", "speaker_name": "noname@call-loop.com",
+             "agent_user_id": nameless_agent, "text": "Resolved but no name on file"},
+        ]
+        ticket_id = ticket_ingest.create_ticket(org_id, source="intercom_api")
+        ticket_ingest.insert_ticket_messages(ticket_id, org_id, turns)
+        ticket_ingest.set_ticket_status(ticket_id, org_id, "ready")
+
+        result = ticket_ingest.get_ticket(ticket_id, org_id)
+        by_seq = {m["seq"]: m for m in result["messages"]}
+        assert by_seq[0]["display_name"] == "kevin@customer.example"
+        assert by_seq[1]["display_name"] == "Sushil Lulla"
+        assert by_seq[2]["display_name"] == "unmapped@call-loop.com"
+        assert by_seq[3]["display_name"] == "noname@call-loop.com"
+    finally:
+        admin.execute("DELETE FROM ticket_messages WHERE org_id = %s", (org_id,))
+        admin.execute("DELETE FROM tickets WHERE org_id = %s", (org_id,))
+        admin.execute("DELETE FROM org_members WHERE org_id = %s", (org_id,))
+        admin.execute("DELETE FROM orgs WHERE id = %s", (org_id,))
+        admin.commit()
+        admin.close()
+
+
 def _build_justcall_pdf_with_image(text: str, img: Image.Image) -> bytes:
     """Real one-page PDF with both a text content stream (the confirmed
     JustCall template) and one embedded raw RGB image XObject — hand-built

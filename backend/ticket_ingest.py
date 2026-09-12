@@ -423,6 +423,21 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
                 """,
                 (ticket_id, org_id),
             ).fetchone()
+            agent_ids = {m["agent_user_id"] for m in messages if m["agent_user_id"]}
+            member_names: dict[str, str] = {}
+            if agent_ids:
+                member_rows = conn.execute(
+                    """
+                    SELECT user_id, first_name, last_name
+                    FROM org_members
+                    WHERE org_id = %s AND user_id = ANY(%s)
+                    """,
+                    (org_id, list(agent_ids)),
+                ).fetchall()
+                for r in member_rows or []:
+                    name = " ".join(filter(None, [r["first_name"], r["last_name"]])).strip()
+                    if name:
+                        member_names[str(r["user_id"])] = name
     asset_seqs = {int(a["seq"]) for a in assets}
     return {
         "id": str(ticket["id"]),
@@ -436,6 +451,13 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
                 "text": m["text"],
                 "agent_user_id": str(m["agent_user_id"]) if m["agent_user_id"] else None,
                 "speaker_display_name": m["speaker_display_name"],
+                # A mapped agent's real CallLoop name when we have one;
+                # falls back to the raw identifier (an email, a PDF name)
+                # for anyone unresolved — never the bare role label alone.
+                "display_name": (
+                    member_names.get(str(m["agent_user_id"]))
+                    if m["agent_user_id"] else None
+                ) or m["speaker_display_name"],
                 "sent_at": _iso(m["sent_at"]),
                 "has_image": int(m["seq"]) in asset_seqs,
                 "is_internal": bool(m["is_internal"]),
