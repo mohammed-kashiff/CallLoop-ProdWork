@@ -16,6 +16,27 @@ guaranteed consistent turn to turn.
 Does not retroactively fix agent_user_id on tickets ingested before a
 mapping existed — only future ingestions benefit, same accepted v1
 boundary TA-15 already documents for the PDF path.
+
+list_unresolved_identifiers()/suggest_identity_matches() (competitive
+gap found against MaestroQA's own Intercom integration, which syncs
+Intercom's Admins object directly and so can likely auto-attribute from
+day one): speaker_display_name (TA-17) now carries an agent turn's raw
+identifier for every ticket, Intercom included, so an unresolved
+Intercom email can be listed the same way TA-15 already lists unresolved
+PDF names. suggest_identity_matches() goes one step further — an
+Intercom agent's email often *is* their real CallLoop login too, so a
+case-insensitive match against this org's own member emails gives an
+owner a one-click confirmation instead of hunting for the right
+user_id. org_members itself has no email column (0011 put email on
+org_directory instead, joined from auth.users) and org_directory is
+deliberately REVOKEd from callproof_app (that migration's own comment:
+"Do not expose via an API without per-org filtering") — reading it here
+needs bypass_rls, the same narrowly-scoped-escape-hatch category as
+org_vault.py's poller listing, made safe the same way: an explicit
+org_id filter in the query itself, so no cross-tenant email can ever
+leave this org's own scope. Never auto-applies a match — an owner still
+confirms it, same "no guessing" principle IN-10's whole design already
+rests on.
 """
 
 from __future__ import annotations
@@ -164,3 +185,71 @@ def resolve_agent_user_ids(org_id: str, provider: str, identifiers: set[str]) ->
                 (org_id, provider, idents),
             ).fetchall()
     return {r["identifier"]: str(r["user_id"]) for r in rows or []}
+
+
+def list_unresolved_identifiers(org_id: str, provider: str) -> list[dict]:
+    """Raw identifiers seen on real agent turns for this provider that
+    never resolved to a user_id, with how many turns carry each — an org
+    owner's own to-do list, mirroring ticket_agent_aliases.py's
+    list_unresolved_agent_names() for the PDF path. Scoped to tickets
+    whose source is this provider's (e.g. "intercom_api" for "intercom")
+    since speaker_display_name is populated for every ticket source
+    (TA-17) but only a provider like Intercom's is a structured,
+    matchable identifier (an email), not a freeform PDF name."""
+    source = f"{provider}_api"
+    with org_scope(org_id):
+        with db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT m.speaker_display_name, COUNT(*) AS turn_count
+                FROM ticket_messages m
+                JOIN tickets t ON t.id = m.ticket_id AND t.org_id = m.org_id
+                WHERE m.org_id = %s AND t.source = %s
+                  AND m.speaker = 'agent'
+                  AND m.agent_user_id IS NULL
+                  AND m.speaker_display_name IS NOT NULL
+                GROUP BY m.speaker_display_name
+                ORDER BY turn_count DESC, m.speaker_display_name
+                """,
+                (org_id, source),
+            ).fetchall()
+    return [
+        {"identifier": r["speaker_display_name"], "turn_count": int(r["turn_count"])}
+        for r in rows or []
+    ]
+
+
+def suggest_identity_matches(org_id: str, provider: str) -> list[dict]:
+    """list_unresolved_identifiers(), each with a suggested_user_id/
+    suggested_name when this org has a real member whose email matches
+    the identifier exactly (case-insensitive) — an Intercom agent's
+    email often is their real CallLoop login too. None when there's no
+    match; never a fuzzy/partial guess, only an exact email match, so a
+    wrong suggestion is never worse than no suggestion. The owner still
+    clicks to confirm — see set_alias(); this only pre-fills the pick."""
+    unresolved = list_unresolved_identifiers(org_id, provider)
+    if not unresolved:
+        return []
+    idents = [u["identifier"].lower() for u in unresolved]
+    with db.connection(bypass_rls=True) as conn:
+        rows = conn.execute(
+            """
+            SELECT user_id, email, first_name, last_name
+            FROM org_directory
+            WHERE org_id = %s AND lower(email) = ANY(%s)
+            """,
+            (org_id, idents),
+        ).fetchall()
+    by_email = {r["email"].lower(): r for r in rows or []}
+    out = []
+    for u in unresolved:
+        match = by_email.get(u["identifier"].lower())
+        name = None
+        if match:
+            name = " ".join(filter(None, [match["first_name"], match["last_name"]])).strip() or None
+        out.append({
+            **u,
+            "suggested_user_id": str(match["user_id"]) if match else None,
+            "suggested_name": name,
+        })
+    return out

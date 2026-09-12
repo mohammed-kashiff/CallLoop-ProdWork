@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from . import applog
 from . import auth
+from . import ticket_agent_aliases
 from . import ticket_agent_identity_aliases
 from .intercom_oauth import PROVIDER as INTERCOM_PROVIDER
 
@@ -35,14 +36,21 @@ class SetIdentityAliasBody(BaseModel):
 
 
 def list_agent_identity_aliases(request: Request):
-    """Owner-only: current mappings for this org. No unresolved-identifier
-    listing yet (unlike TA-15's ticket_messages.agent_display_name, there
-    is no equivalent raw-identifier column persisted per turn today) —
-    an org owner maps ahead of time from a known team roster, or from
-    seeing which turns render unattributed."""
+    """Owner-only: current mappings, unresolved identifiers (each with a
+    suggested_user_id/suggested_name when this org has a member whose
+    email matches exactly — see ticket_agent_identity_aliases.
+    suggest_identity_matches for why this is possible now, unlike TA-15's
+    PDF names), and this org's roster for a manual pick when there's no
+    suggestion or it's wrong."""
     auth.require_owner(request)
     org_id = auth.org_id_from_request(request)
-    return {"aliases": ticket_agent_identity_aliases.list_aliases(org_id)}
+    return {
+        "aliases": ticket_agent_identity_aliases.list_aliases(org_id),
+        "unresolved": ticket_agent_identity_aliases.suggest_identity_matches(
+            org_id, INTERCOM_PROVIDER,
+        ),
+        "members": ticket_agent_aliases.list_org_agents(org_id),
+    }
 
 
 def set_agent_identity_alias(request: Request, body: SetIdentityAliasBody):

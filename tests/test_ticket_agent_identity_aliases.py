@@ -41,6 +41,10 @@ class _FakeConn:
     def __init__(self):
         self.aliases: dict[tuple, dict] = {}
         self.executed: list[tuple] = []
+        # Flat rows, joins already done — same simplification style
+        # test_ticket_agent_aliases.py's own fake uses for ticket_messages.
+        self.messages: list[dict] = []
+        self.org_directory: list[dict] = []
 
     def execute(self, sql, params=None):
         norm = " ".join(str(sql).split()).upper()
@@ -79,6 +83,26 @@ class _FakeConn:
                 {"identifier": k[2], "user_id": v["user_id"]}
                 for k, v in self.aliases.items()
                 if k[0] == org_id and k[1] == provider and k[2] in idents
+            ]
+            return _Result(rows)
+        if norm.startswith("SELECT M.SPEAKER_DISPLAY_NAME, COUNT(*) AS TURN_COUNT"):
+            org_id, source = params
+            counts: dict[str, int] = {}
+            for m_ in self.messages:
+                if (
+                    m_["org_id"] != org_id or m_["source"] != source
+                    or m_["speaker"] != "agent" or m_["agent_user_id"] is not None
+                    or not m_["speaker_display_name"]
+                ):
+                    continue
+                counts[m_["speaker_display_name"]] = counts.get(m_["speaker_display_name"], 0) + 1
+            rows = [{"speaker_display_name": k, "turn_count": v} for k, v in counts.items()]
+            return _Result(sorted(rows, key=lambda r: (-r["turn_count"], r["speaker_display_name"])))
+        if norm.startswith("SELECT USER_ID, EMAIL, FIRST_NAME, LAST_NAME FROM ORG_DIRECTORY"):
+            org_id, idents = params
+            rows = [
+                r for r in self.org_directory
+                if r["org_id"] == org_id and r["email"].lower() in idents
             ]
             return _Result(rows)
         raise AssertionError(f"unexpected query: {norm}")
@@ -255,9 +279,77 @@ def test_resolve_agent_user_ids_empty_input_short_circuits(monkeypatch):
     assert conn.executed == []
 
 
-def test_module_never_bypasses_rls():
+# ---------- list_unresolved_identifiers / suggest_identity_matches ----------
+
+
+def test_list_unresolved_identifiers_counts_agent_turns_with_no_resolved_id(monkeypatch):
+    from backend import ticket_agent_identity_aliases as m
+
+    conn = _FakeConn()
+    conn.messages = [
+        {"org_id": ORG_A, "source": "intercom_api", "speaker": "agent",
+         "agent_user_id": None, "speaker_display_name": "kashif@cloop.example"},
+        {"org_id": ORG_A, "source": "intercom_api", "speaker": "agent",
+         "agent_user_id": None, "speaker_display_name": "kashif@cloop.example"},
+        {"org_id": ORG_A, "source": "intercom_api", "speaker": "agent",
+         "agent_user_id": "u1", "speaker_display_name": "tanu@cloop.example"},
+        {"org_id": ORG_A, "source": "intercom_api", "speaker": "customer",
+         "agent_user_id": None, "speaker_display_name": "kevin@customer.example"},
+        {"org_id": ORG_A, "source": "pdf_upload", "speaker": "agent",
+         "agent_user_id": None, "speaker_display_name": "Kashif"},
+    ]
+    with _fake_db(monkeypatch, conn):
+        result = m.list_unresolved_identifiers(ORG_A, "intercom")
+    assert result == [{"identifier": "kashif@cloop.example", "turn_count": 2}]
+
+
+def test_suggest_identity_matches_pairs_by_exact_email(monkeypatch):
+    from backend import ticket_agent_identity_aliases as m
+
+    conn = _FakeConn()
+    conn.messages = [
+        {"org_id": ORG_A, "source": "intercom_api", "speaker": "agent",
+         "agent_user_id": None, "speaker_display_name": "kashif@cloop.example"},
+        {"org_id": ORG_A, "source": "intercom_api", "speaker": "agent",
+         "agent_user_id": None, "speaker_display_name": "stranger@nowhere.example"},
+    ]
+    conn.org_directory = [
+        {"org_id": ORG_A, "user_id": "u1", "email": "Kashif@Cloop.example",
+         "first_name": "Kashif", "last_name": "K"},
+    ]
+    with _fake_db(monkeypatch, conn):
+        result = m.suggest_identity_matches(ORG_A, "intercom")
+    by_ident = {r["identifier"]: r for r in result}
+    assert by_ident["kashif@cloop.example"]["suggested_user_id"] == "u1"
+    assert by_ident["kashif@cloop.example"]["suggested_name"] == "Kashif K"
+    assert by_ident["stranger@nowhere.example"]["suggested_user_id"] is None
+    assert by_ident["stranger@nowhere.example"]["suggested_name"] is None
+
+
+def test_suggest_identity_matches_empty_when_nothing_unresolved(monkeypatch):
+    from backend import ticket_agent_identity_aliases as m
+
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        assert m.suggest_identity_matches(ORG_A, "intercom") == []
+    # Never queries org_directory at all when there's nothing to match.
+    assert not any("ORG_DIRECTORY" in norm for norm, _ in conn.executed)
+
+
+def test_module_only_bypasses_rls_for_the_org_directory_suggestion_lookup():
+    """org_directory is deliberately REVOKEd from callproof_app (see
+    0011_org_members_names_and_directory_view.py's own comment) — reading
+    it for suggest_identity_matches() needs bypass_rls, the one narrow,
+    justified exception in this file. Every other function here must
+    stay on the normal, RLS-respecting connection. Isolate the one
+    function's own source rather than a whole-file substring check, so
+    a bypass_rls creeping into any OTHER function still fails this."""
     src = (ROOT / "backend" / "ticket_agent_identity_aliases.py").read_text(encoding="utf-8")
-    assert "bypass_rls" not in src
+    before, _, rest = src.partition("def suggest_identity_matches")
+    fn_src = "def suggest_identity_matches" + rest.split("\ndef ")[0]
+    assert "bypass_rls=True" not in before
+    assert "bypass_rls=True" in fn_src
+    assert "WHERE org_id = %s" in fn_src
 
 
 # ---------- HTTP layer: /api/tickets/agent-identity-aliases ----------
@@ -304,9 +396,48 @@ def test_list_agent_identity_aliases_returns_aliases(monkeypatch):
         lambda org_id: [{"provider": "intercom", "identifier": "a@b.com", "user_id": "u1",
                           "created_at": None, "updated_at": None}],
     )
+    monkeypatch.setattr(
+        "backend.ticket_agent_identity_aliases_api.ticket_agent_identity_aliases"
+        ".suggest_identity_matches",
+        lambda org_id, provider: [],
+    )
+    monkeypatch.setattr(
+        "backend.ticket_agent_identity_aliases_api.ticket_agent_aliases.list_org_agents",
+        lambda org_id: [],
+    )
     r = client.get("/api/tickets/agent-identity-aliases")
     assert r.status_code == 200
     assert r.json()["aliases"][0]["identifier"] == "a@b.com"
+
+
+def test_list_agent_identity_aliases_returns_suggested_matches_and_roster(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    monkeypatch.setattr(
+        "backend.ticket_agent_identity_aliases_api.ticket_agent_identity_aliases.list_aliases",
+        lambda org_id: [],
+    )
+    monkeypatch.setattr(
+        "backend.ticket_agent_identity_aliases_api.ticket_agent_identity_aliases"
+        ".suggest_identity_matches",
+        lambda org_id, provider: [
+            {"identifier": "kashif@cloop.example", "turn_count": 3,
+             "suggested_user_id": "u1", "suggested_name": "Kashif K"},
+        ],
+    )
+    monkeypatch.setattr(
+        "backend.ticket_agent_identity_aliases_api.ticket_agent_aliases.list_org_agents",
+        lambda org_id: [{"user_id": "u1", "first_name": "Kashif", "last_name": "K", "role": "owner"}],
+    )
+    r = client.get("/api/tickets/agent-identity-aliases")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["unresolved"][0]["suggested_user_id"] == "u1"
+    assert body["members"][0]["user_id"] == "u1"
 
 
 def test_set_agent_identity_alias_requires_owner(monkeypatch):
@@ -426,9 +557,18 @@ def test_agent_identity_aliases_route_is_not_swallowed_by_ticket_id_route(monkey
         "backend.ticket_agent_identity_aliases_api.ticket_agent_identity_aliases.list_aliases",
         lambda org_id: [],
     )
+    monkeypatch.setattr(
+        "backend.ticket_agent_identity_aliases_api.ticket_agent_identity_aliases"
+        ".suggest_identity_matches",
+        lambda org_id, provider: [],
+    )
+    monkeypatch.setattr(
+        "backend.ticket_agent_identity_aliases_api.ticket_agent_aliases.list_org_agents",
+        lambda org_id: [],
+    )
     r = client.get("/api/tickets/agent-identity-aliases")
     assert r.status_code == 200
-    assert r.json() == {"aliases": []}
+    assert r.json() == {"aliases": [], "unresolved": [], "members": []}
 
 
 # ---------- live Postgres: real end-to-end ----------
