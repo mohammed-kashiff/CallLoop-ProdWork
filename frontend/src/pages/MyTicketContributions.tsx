@@ -13,6 +13,7 @@ type OwnTurn = {
   seq: number
   speaker: string
   text: string
+  display_name: string | null
   has_image: boolean
 }
 
@@ -106,7 +107,10 @@ export function MyTicketContributions() {
           <ul className="ticket-thread">
             {t.turns.map((m) => (
               <li key={m.seq} className={`ticket-turn is-${m.speaker}`}>
-                <span className="ticket-turn-speaker">{capFirst(m.speaker)}</span>
+                <span className="ticket-turn-speaker">
+                  {capFirst(m.speaker)}
+                  {m.display_name ? ` (${m.display_name})` : ''}
+                </span>
                 <p>{m.text}</p>
               </li>
             ))}
