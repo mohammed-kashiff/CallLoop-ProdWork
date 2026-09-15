@@ -7,6 +7,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.org_ids import DEFAULT_ORG_ID
@@ -244,3 +245,70 @@ def test_save_rubric_route_allows_the_owner_and_forwards_dimensions(monkeypatch)
     assert r.status_code == 200
     assert seen[0][0] == ORG_A
     assert seen[0][2] == "tester@example.com"
+
+
+# ---------- live Postgres: the two rubric engines must not step on each other ----------
+
+
+def test_saving_a_call_rubric_does_not_deactivate_the_orgs_ticket_rubric_live():
+    """Found live: rubric_builder/audit_store's shared 'deactivate whatever
+    else is active for this org' step had no kind exclusion, unlike every
+    read path — saving/activating a call rubric through the self-serve
+    builder silently deactivated an org's active Ticket QA rubric too,
+    since they share this table's org-wide is_active column (PRD §10, no
+    schema change). The next ticket scored would fall back to a fresh
+    default, quietly losing any ticket customization. This reproduces the
+    exact sequence and confirms both engines' active rows now survive
+    each other's writes."""
+    from dotenv import load_dotenv
+
+    from backend.db_url import database_url, psycopg_url
+    from backend.paths import ENV_FILE
+
+    load_dotenv(ENV_FILE)
+    raw = database_url()
+    if not raw:
+        pytest.skip("DATABASE_URL not set")
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from backend import audit_store, rubric_builder, ticket_rubric
+
+    admin = psycopg.connect(psycopg_url(raw), row_factory=dict_row, prepare_threshold=0)
+    org_id = str(uuid.uuid4())
+    try:
+        admin.execute("INSERT INTO orgs (id, name) VALUES (%s, %s)", (org_id, "rubric-kind-live-test"))
+        admin.commit()
+
+        # Seed the org's ticket rubric first (ensure_ticket_rubric() is what
+        # every real ticket score triggers on first use).
+        ticket_rubric.ensure_ticket_rubric(org_id)
+        ticket_before = ticket_rubric.fetch_active_ticket_rubric(org_id)
+        assert ticket_before is not None
+
+        # Now save+activate a call rubric through the self-serve builder —
+        # the exact path that used to wipe out the ticket rubric's active flag.
+        rubric_builder.save_rubric(
+            org_id,
+            [{"kind": "custom", "name": "My check", "question": "Did the agent do the thing?",
+              "weight": 100}],
+            changed_by="owner@example.com", name="My Call Rubric",
+        )
+
+        ticket_after = ticket_rubric.fetch_active_ticket_rubric(org_id)
+        assert ticket_after is not None, "ticket rubric was deactivated by a call rubric save"
+        assert ticket_after["id"] == ticket_before["id"]
+
+        # current_rubric() must show the call rubric, not the ticket one.
+        current = rubric_builder.current_rubric(org_id)
+        assert current["name"] == "My Call Rubric"
+
+        # The ticket rubric must never appear in the call-rubric library listing.
+        listing = rubric_builder.list_rubrics(org_id)
+        assert "Ticket QA" not in {r["name"] for r in listing["rubrics"]}
+    finally:
+        admin.execute("DELETE FROM rubrics WHERE org_id = %s", (org_id,))
+        admin.execute("DELETE FROM orgs WHERE id = %s", (org_id,))
+        admin.commit()
+        admin.close()

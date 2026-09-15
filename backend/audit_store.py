@@ -250,13 +250,19 @@ def list_rubric_lineages(conn, *, org_id: str) -> list[dict[str, Any]]:
     """One row per distinct rubric NAME for this org — its latest version and
     whether that name is the one currently active. A "lineage" is a named,
     independently-versioned rubric a team saved; multiple can coexist, only
-    one is ever active org-wide."""
+    one is ever active org-wide (within this kind — see save_named_rubric).
+
+    Excludes definition->>'kind' = 'ticket' rows, same exclusion as
+    fetch_active_rubric() — a call rubric library listing must never show
+    an org's Ticket QA rubric as if it were one of the team's own saved
+    call rubrics."""
     rows = conn.execute(
         """
         SELECT DISTINCT ON (name)
             id, name, version, is_active, updated_at
         FROM rubrics
         WHERE org_id = %s
+          AND COALESCE(definition->>'kind', 'call') <> 'ticket'
         ORDER BY name, version DESC
         """,
         (org_id,),
@@ -274,12 +280,18 @@ def list_rubric_lineages(conn, *, org_id: str) -> list[dict[str, Any]]:
 
 
 def fetch_rubric_by_name(conn, *, org_id: str, name: str) -> dict[str, Any] | None:
-    """Latest version of one named lineage, regardless of active status."""
+    """Latest version of one named lineage, regardless of active status.
+
+    Excludes definition->>'kind' = 'ticket' rows, same exclusion as the
+    rest of this module's call-rubric reads — belt-and-suspenders against
+    a call rubric named the same as the Ticket QA rubric ("Ticket QA")
+    ever resolving to the wrong engine's row."""
     row = conn.execute(
         """
         SELECT id, name, version, definition, is_active, updated_at
         FROM rubrics
         WHERE org_id = %s AND name = %s
+          AND COALESCE(definition->>'kind', 'call') <> 'ticket'
         ORDER BY version DESC
         LIMIT 1
         """,
@@ -308,8 +320,17 @@ def save_named_rubric(
 
     activate=True deactivates whatever else is active for this org (any
     name) first, in the same transaction, so at most one rubric is ever
-    active org-wide — same invariant the scoring path (fetch_active_rubric)
-    already depends on.
+    active org-wide *within this same kind* — same invariant the scoring
+    path (fetch_active_rubric) already depends on.
+
+    Found live: this deactivation had no kind exclusion, unlike every
+    read path in this module — activating a call rubric here would
+    silently deactivate an org's active Ticket QA rubric too (they share
+    this table's org-wide is_active column, PRD §10, no schema change),
+    and the next ticket scored would fall back to a fresh default,
+    quietly losing any ticket customization. Scoped to 'call' explicitly
+    (COALESCE(...,'call') <> 'ticket', matching fetch_active_rubric's own
+    exclusion) so the two engines' active rows never step on each other.
     """
     max_row = conn.execute(
         "SELECT COALESCE(MAX(version), 0) AS v FROM rubrics WHERE org_id = %s AND name = %s",
@@ -318,7 +339,11 @@ def save_named_rubric(
     version = int((max_row or {}).get("v") or 0) + 1
     if activate:
         conn.execute(
-            "UPDATE rubrics SET is_active = false, updated_at = now() WHERE org_id = %s AND is_active",
+            """
+            UPDATE rubrics SET is_active = false, updated_at = now()
+            WHERE org_id = %s AND is_active
+              AND COALESCE(definition->>'kind', 'call') <> 'ticket'
+            """,
             (org_id,),
         )
     rubric_id = str(uuid.uuid4())

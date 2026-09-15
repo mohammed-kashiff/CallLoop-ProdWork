@@ -180,7 +180,15 @@ def _describe(definition: dict) -> list[dict]:
 def current_rubric(org_id: str | None) -> dict:
     """The org's active rubric, described as builtin/custom dimension picks
     a UI can render directly. Falls back to CallLoop's default 4 dimensions,
-    all marked "builtin", when the org hasn't customized anything yet."""
+    all marked "builtin", when the org hasn't customized anything yet.
+
+    Excludes definition->>'kind' = 'ticket' rows — same exclusion
+    audit_store.fetch_active_rubric() already applies on the scoring path
+    (PRD §10: the Ticket QA rubric shares this table's org-wide is_active
+    column, no schema change). Found live: this call-rubric-only display
+    function never had the exclusion, so an org running both engines
+    could have the self-serve builder show its ticket rubric's name and
+    dimensions here instead of its actual call rubric."""
     oid = parse_org_id(org_id)
     if not oid:
         raise HTTPException(status_code=400, detail="org_id is required.")
@@ -189,7 +197,10 @@ def current_rubric(org_id: str | None) -> dict:
             row = conn.execute(
                 """
                 SELECT id, name, version, definition, updated_at
-                FROM rubrics WHERE org_id = %s AND is_active LIMIT 1
+                FROM rubrics
+                WHERE org_id = %s AND is_active
+                  AND COALESCE(definition->>'kind', 'call') <> 'ticket'
+                LIMIT 1
                 """,
                 (oid,),
             ).fetchone()
@@ -226,8 +237,17 @@ def _validate_name(name: str | None) -> str:
 
 
 def _resolve_default_name(conn, org_id: str) -> str:
+    """What name a plain "save my rubric" (no explicit name) writes under.
+    Same kind exclusion as current_rubric() — without it, an org whose
+    only active row was its ticket rubric would have a first-ever call
+    rubric save silently reuse "Ticket QA" as its name."""
     row = conn.execute(
-        "SELECT name FROM rubrics WHERE org_id = %s AND is_active LIMIT 1",
+        """
+        SELECT name FROM rubrics
+        WHERE org_id = %s AND is_active
+          AND COALESCE(definition->>'kind', 'call') <> 'ticket'
+        LIMIT 1
+        """,
         (org_id,),
     ).fetchone()
     return (str(row["name"]) if row and row.get("name") else "") or audit_store.LEGACY_RUBRIC_NAME
