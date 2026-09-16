@@ -1,11 +1,20 @@
-"""Self-serve rubric builder: a team defines its own audit criteria — a mix
-of CallLoop's built-in checks (reused unchanged, at a team-chosen weight)
-and free-text custom criteria Claude judges.
+"""Self-serve TICKET rubric builder (TA-24 follow-on): the exact
+customer-facing, owner-gated mechanism rubric_builder.py already proved
+out for call rubrics — mix of built-in and free-text custom dimensions,
+weights summing to 100, saved under a name, multiple named rubrics
+coexisting, choose-which-is-active — now for kind="ticket" rows in the
+same `rubrics` table (PRD §10, no schema change).
 
-Deliberately separate from admin_console.py: that module is Command
-Center's platform-admin-only reweighting tool (unchanged, kept as-is), this
-one is customer-facing and gated by auth.require_owner, not
-require_platform_admin.
+Deliberately a separate module, not folded into rubric_builder.py: the
+builtin dimension set (ticket_rubric.TICKET_QA_DIMENSIONS, not qa_v8's
+call dimensions), the wire shape (a flat dimensions list — what
+ticket_scoring.score_ticket() reads — not the two-bucket call shape),
+and the reserved "response_timeliness" id are all ticket-specific.
+Reuses audit_store.py's kind= parameter on save_named_rubric/
+list_rubric_lineages/fetch_rubric_by_name/activate_rubric_by_name rather
+than a second copy of the cross-engine isolation logic TA-35 (and the
+matching activate_rubric_by_name bug fixed alongside this module) had to
+get right for the call side.
 """
 
 from __future__ import annotations
@@ -23,33 +32,21 @@ from . import applog
 from . import audit_store
 from . import db
 from . import product_events
+from . import ticket_rubric
 from .org_ids import org_scope, parse_org_id
-from .qa_v8 import RESOLUTION_QUESTION, TONE_QUESTION, list_dimensions
 
-log = logging.getLogger("callproof.rubric_builder")
+log = logging.getLogger("callproof.ticket_rubric_builder")
 
+_KIND = "ticket"
 _WEIGHT_SUM = 100
 _MAX_DIMENSIONS = 12
 _MAX_QUESTION_LEN = 2000
 _MAX_NAME_LEN = 80
 
-# Plain-English starting text for "customize this criterion" on a built-in
-# row (frontend). Editing it converts that dimension to a custom, Claude-
-# judged one — the deterministic ones have no free-text criteria to begin
-# with, so this is a reasonable, honestly-described starting point, not the
-# literal logic that runs today.
-_BUILTIN_DEFAULT_QUESTIONS = {
-    "resolution_effectiveness": RESOLUTION_QUESTION,
-    "tone_empathy_professionalism": TONE_QUESTION,
-    "ownership_next_steps": (
-        "Did the agent clearly state who owns the next step and when the "
-        "customer should expect to hear back?"
-    ),
-    "active_listening": (
-        "Did the agent let the customer finish speaking without interrupting, "
-        "and avoid unexplained silence on the call?"
-    ),
-}
+# response_timeliness is always computed deterministically and appended
+# outside the weighted score (ticket_score_api._with_timeliness) — never a
+# pickable, weighted dimension a team could shadow or double up on.
+_RESERVED_IDS = {"response_timeliness"}
 
 
 def _json_value(value):
@@ -63,7 +60,7 @@ def _json_value(value):
 
 
 def _builtin_lookup() -> dict[str, dict]:
-    return {d["id"]: d for d in list_dimensions(audit_store.load_v8_definition())}
+    return {d["id"]: d for d in ticket_rubric.TICKET_QA_DIMENSIONS}
 
 
 def _slugify(name: str) -> str:
@@ -80,7 +77,7 @@ def _normalize_dimensions(raw) -> list[dict]:
         )
     builtins = _builtin_lookup()
     out: list[dict] = []
-    seen_ids: set[str] = set()
+    seen_ids: set[str] = set(_RESERVED_IDS)
     total = 0
     for item in raw:
         if not isinstance(item, dict):
@@ -124,10 +121,9 @@ def _normalize_dimensions(raw) -> list[dict]:
             while did in seen_ids:
                 did = f"{base_id}_{n}"
                 n += 1
-            dim = {
-                "id": did, "name": name, "method": "custom_llm",
-                "weight": weight, "question": question,
-            }
+            dim = {"id": did, "name": name, "weight": weight, "question": question}
+            if item.get("customer_facing_only"):
+                dim["customer_facing_only"] = True
         else:
             raise HTTPException(
                 status_code=400, detail="Each dimension needs kind 'builtin' or 'custom'.",
@@ -143,86 +139,57 @@ def _normalize_dimensions(raw) -> list[dict]:
 
 
 def _wrap_definition(dimensions: list[dict]) -> dict[str, Any]:
-    """The two-bucket shape qa_v8.list_dimensions()/is_v8_rubric() expect.
-    bucket_weight is unused anywhere in scoring (display-only historically)
-    so every dimension lives under one bucket for a self-serve rubric."""
-    return {
-        "technical_skills": {"bucket_weight": 0, "dimensions": dimensions},
-        "soft_skills": {"bucket_weight": 0, "dimensions": []},
-    }
+    """ticket_rubric/ticket_scoring's flat shape — never the two-bucket
+    call shape, which nothing on the ticket read path understands."""
+    return {"kind": _KIND, "dimensions": dimensions}
 
 
 def _available_builtins() -> list[dict]:
     return [
         {
-            "id": d["id"], "name": d["name"],
-            "default_question": _BUILTIN_DEFAULT_QUESTIONS.get(d["id"], ""),
+            "id": d["id"], "name": d["name"], "default_question": d["question"],
+            "customer_facing_only": bool(d.get("customer_facing_only")),
         }
-        for d in list_dimensions(audit_store.load_v8_definition())
+        for d in ticket_rubric.TICKET_QA_DIMENSIONS
     ]
 
 
-def _describe(definition: dict) -> list[dict]:
+def _describe(dimensions: list[dict] | None) -> list[dict]:
     builtins = _builtin_lookup()
     out = []
-    for dim in list_dimensions(definition):
+    for dim in dimensions or []:
         did = dim.get("id")
         if did in builtins:
-            out.append({"kind": "builtin", "id": did, "name": dim.get("name"), "weight": dim.get("weight")})
+            out.append({
+                "kind": "builtin", "id": did, "name": dim.get("name"),
+                "weight": dim.get("weight"),
+                "customer_facing_only": bool(dim.get("customer_facing_only")),
+            })
         else:
             out.append({
                 "kind": "custom", "id": did, "name": dim.get("name"),
                 "weight": dim.get("weight"), "question": dim.get("question"),
+                "customer_facing_only": bool(dim.get("customer_facing_only")),
             })
     return out
 
 
 def current_rubric(org_id: str | None) -> dict:
-    """The org's active rubric, described as builtin/custom dimension picks
-    a UI can render directly. Falls back to CallLoop's default 4 dimensions,
-    all marked "builtin", when the org hasn't customized anything yet.
-
-    Excludes definition->>'kind' = 'ticket' rows — same exclusion
-    audit_store.fetch_active_rubric() already applies on the scoring path
-    (PRD §10: the Ticket QA rubric shares this table's org-wide is_active
-    column, no schema change). Found live: this call-rubric-only display
-    function never had the exclusion, so an org running both engines
-    could have the self-serve builder show its ticket rubric's name and
-    dimensions here instead of its actual call rubric."""
+    """The org's active Ticket QA rubric, described for the builder editor
+    the same builtin/custom shape rubric_builder.current_rubric() uses.
+    Always a real row — ensure_ticket_rubric() seeds TA-13's default the
+    first time an org opens this builder or scores a ticket, whichever
+    comes first."""
     oid = parse_org_id(org_id)
     if not oid:
         raise HTTPException(status_code=400, detail="org_id is required.")
-    with org_scope(oid):
-        with db.connection() as conn:
-            row = conn.execute(
-                """
-                SELECT id, name, version, definition, updated_at
-                FROM rubrics
-                WHERE org_id = %s AND is_active
-                  AND COALESCE(definition->>'kind', 'call') <> 'ticket'
-                LIMIT 1
-                """,
-                (oid,),
-            ).fetchone()
-    if row:
-        definition = audit_store.decode_findings(row.get("definition"))
-    else:
-        definition = None
-    if isinstance(definition, dict):
-        source = "custom"
-        rubric_id, name, version = str(row["id"]), str(row["name"]), int(row["version"])
-        updated_at = _json_value(row.get("updated_at"))
-    else:
-        definition = audit_store.load_v8_definition()
-        source, rubric_id, name, version, updated_at = "legacy", None, None, None, None
+    rubric = ticket_rubric.ensure_ticket_rubric(oid)
     return {
         "org_id": oid,
-        "source": source,
-        "rubric_id": rubric_id,
-        "name": name,
-        "version": version,
-        "updated_at": updated_at,
-        "dimensions": _describe(definition),
+        "rubric_id": rubric.get("id"),
+        "name": rubric.get("name") or ticket_rubric.TICKET_QA_RUBRIC_NAME,
+        "version": rubric.get("version"),
+        "dimensions": _describe(rubric.get("dimensions")),
         "available_builtins": _available_builtins(),
     }
 
@@ -237,32 +204,31 @@ def _validate_name(name: str | None) -> str:
 
 
 def _resolve_default_name(conn, org_id: str) -> str:
-    """What name a plain "save my rubric" (no explicit name) writes under.
-    Same kind exclusion as current_rubric() — without it, an org whose
-    only active row was its ticket rubric would have a first-ever call
-    rubric save silently reuse "Ticket QA" as its name."""
+    """What name a plain "save my rubric" (no explicit name) writes under
+    — scoped to kind="ticket" so this can never pick up an org's active
+    CALL rubric's name."""
     row = conn.execute(
         """
         SELECT name FROM rubrics
         WHERE org_id = %s AND is_active
-          AND COALESCE(definition->>'kind', 'call') <> 'ticket'
+          AND COALESCE(definition->>'kind', 'call') = %s
         LIMIT 1
         """,
-        (org_id,),
+        (org_id, _KIND),
     ).fetchone()
-    return (str(row["name"]) if row and row.get("name") else "") or audit_store.LEGACY_RUBRIC_NAME
+    return (str(row["name"]) if row and row.get("name") else "") or ticket_rubric.TICKET_QA_RUBRIC_NAME
 
 
 def _save_response(org_id: str, saved: dict) -> dict:
+    definition = saved["definition"] if isinstance(saved["definition"], dict) else {}
     return {
         "org_id": org_id,
-        "source": "custom",
         "rubric_id": saved["rubric_id"],
         "name": saved["name"],
         "version": saved["version"],
         "is_active": saved.get("is_active", True),
         "updated_at": _json_value(saved.get("updated_at")),
-        "dimensions": _describe(saved["definition"]),
+        "dimensions": _describe(definition.get("dimensions")),
         "available_builtins": _available_builtins(),
     }
 
@@ -271,15 +237,17 @@ def save_rubric(
     org_id: str | None, raw_dimensions, *, changed_by: str,
     name: str | None = None, activate: bool = True,
 ) -> dict:
-    """Save a fully self-serve rubric: any mix of built-in and custom
-    dimensions the team picked, weights summing to 100. Never mutates an
-    existing rubrics row — inserts a new version under this name and
-    (if activate) deactivates whatever else was active for the org.
+    """Save a fully self-serve ticket rubric: any mix of TICKET_QA_
+    DIMENSIONS built-ins and custom dimensions the team picked, weights
+    summing to 100. Never mutates an existing rubrics row — inserts a new
+    version under this name and (if activate) deactivates whatever else
+    was active for the org *within kind="ticket" only* (audit_store.
+    save_named_rubric's kind= parameter — a call rubric save can never
+    touch this row, and this save can never touch a call rubric).
 
-    name=None reuses whatever's currently active (or the legacy default
-    name for a first-ever save) — the original single-rubric behavior,
-    still what the plain "save my rubric" flow uses. Pass an explicit name
-    to save a distinct, independently addressable library entry instead.
+    name=None reuses whatever's currently active (or "Ticket QA" for a
+    first-ever named save) — same single-rubric-by-default behavior
+    rubric_builder.save_rubric gives calls.
     """
     oid = parse_org_id(org_id)
     if not oid:
@@ -293,11 +261,11 @@ def save_rubric(
         with db.connection() as conn:
             resolved_name = _validate_name(name) if name else _resolve_default_name(conn, oid)
             saved = audit_store.save_named_rubric(
-                conn, org_id=oid, name=resolved_name, definition=definition, activate=activate,
-                kind="call",
+                conn, org_id=oid, name=resolved_name, definition=definition,
+                activate=activate, kind=_KIND,
             )
     applog.event(
-        log, "rubric_dimensions_saved",
+        log, "ticket_rubric_dimensions_saved",
         org_id=oid,
         rubric_id=saved["rubric_id"],
         rubric_name=saved["name"],
@@ -306,22 +274,23 @@ def save_rubric(
         changed_by=actor,
         dimension_ids=[d["id"] for d in dimensions],
     )
-    has_custom = any(d.get("kind") == "custom" for d in dimensions)
+    builtins = _builtin_lookup()
+    has_custom = any(d["id"] not in builtins for d in dimensions)
     product_events.track_event(
-        oid, None, "rubric_saved",
+        oid, None, "ticket_rubric_saved",
         {"kind": "custom" if has_custom else "reweight", "dimension_count": len(dimensions)},
     )
     return _save_response(oid, saved)
 
 
 def list_rubrics(org_id: str | None) -> dict:
-    """Every named rubric this org has saved — the library view."""
+    """Every named ticket rubric this org has saved — the library view."""
     oid = parse_org_id(org_id)
     if not oid:
         raise HTTPException(status_code=400, detail="org_id is required.")
     with org_scope(oid):
         with db.connection() as conn:
-            lineages = audit_store.list_rubric_lineages(conn, org_id=oid, kind="call")
+            lineages = audit_store.list_rubric_lineages(conn, org_id=oid, kind=_KIND)
     return {
         "org_id": oid,
         "rubrics": [
@@ -338,32 +307,33 @@ def list_rubrics(org_id: str | None) -> dict:
 
 
 def get_rubric(org_id: str | None, name: str) -> dict:
-    """One named rubric's latest version, described for the editor."""
+    """One named ticket rubric's latest version, described for the editor."""
     oid = parse_org_id(org_id)
     if not oid:
         raise HTTPException(status_code=400, detail="org_id is required.")
     name = _validate_name(name)
     with org_scope(oid):
         with db.connection() as conn:
-            found = audit_store.fetch_rubric_by_name(conn, org_id=oid, name=name, kind="call")
+            found = audit_store.fetch_rubric_by_name(conn, org_id=oid, name=name, kind=_KIND)
     if not found:
-        raise HTTPException(status_code=404, detail=f"No saved rubric named {name!r}.")
+        raise HTTPException(status_code=404, detail=f"No saved ticket rubric named {name!r}.")
+    definition = found["definition"] if isinstance(found["definition"], dict) else {}
     return {
         "org_id": oid,
-        "source": "custom",
         "rubric_id": found["rubric_id"],
         "name": found["name"],
         "version": found["version"],
         "is_active": found["is_active"],
         "updated_at": _json_value(found.get("updated_at")),
-        "dimensions": _describe(found["definition"]),
+        "dimensions": _describe(definition.get("dimensions")),
         "available_builtins": _available_builtins(),
     }
 
 
 def activate_rubric(org_id: str | None, name: str, *, changed_by: str) -> dict:
-    """Switch which saved rubric scores calls going forward — no dimension
-    change, just a swap of which name is active."""
+    """Switch which saved ticket rubric scores tickets going forward — no
+    dimension change, just a swap of which name is active (kind="ticket"
+    only — can never deactivate or pick up an org's call rubric)."""
     oid = parse_org_id(org_id)
     if not oid:
         raise HTTPException(status_code=400, detail="org_id is required.")
@@ -374,11 +344,13 @@ def activate_rubric(org_id: str | None, name: str, *, changed_by: str) -> dict:
     with org_scope(oid):
         with db.connection() as conn:
             try:
-                activated = audit_store.activate_rubric_by_name(conn, org_id=oid, name=name, kind="call")
+                activated = audit_store.activate_rubric_by_name(
+                    conn, org_id=oid, name=name, kind=_KIND,
+                )
             except ValueError as e:
                 raise HTTPException(status_code=404, detail=str(e)) from e
     applog.event(
-        log, "rubric_activated",
+        log, "ticket_rubric_activated",
         org_id=oid, rubric_name=name, rubric_id=activated["rubric_id"],
         version=activated["version"], changed_by=actor,
     )

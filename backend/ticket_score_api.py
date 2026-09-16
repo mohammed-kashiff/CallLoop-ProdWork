@@ -33,6 +33,7 @@ import logging
 import uuid
 
 from fastapi import HTTPException, Request
+from pydantic import BaseModel
 
 from . import applog
 from . import auth
@@ -43,6 +44,7 @@ from . import ticket_audit_summary
 from . import ticket_ingest
 from . import ticket_permissions
 from . import ticket_rubric
+from . import ticket_rubric_builder
 from . import ticket_scoring
 
 log = logging.getLogger("callproof.ticket_score_api")
@@ -119,6 +121,86 @@ def ticket_rubric_route(request: Request):
         "version": rubric.get("version"),
         "dimensions": rubric["dimensions"],
     }
+
+
+# ---------- TA-24 follow-on: self-serve ticket rubric builder ----------
+# Same customer-facing, owner-gated shape as /api/rubric[s] (api.py,
+# rubric_builder.py) — mix of built-in and free-text custom dimensions,
+# named, saved, multiple lineages, choose-which-is-active — for kind=
+# "ticket" rows via ticket_rubric_builder.py. Kept under /api/tickets/
+# rubric[s] rather than reusing the call paths: same URL shape one level
+# down, distinct from the read-only /api/tickets/rubric viewer above.
+
+
+class TicketRubricDimensionBody(BaseModel):
+    kind: str
+    id: str | None = None
+    name: str | None = None
+    question: str | None = None
+    weight: int
+    customer_facing_only: bool = False
+
+
+class SaveTicketRubricBody(BaseModel):
+    dimensions: list[TicketRubricDimensionBody]
+
+
+def ticket_rubric_builder_route(request: Request):
+    """The org's active Ticket QA rubric, described for the builder editor
+    (builtin/custom picks + available_builtins) — any authenticated org
+    member can view, same as GET /api/rubric for calls."""
+    return ticket_rubric_builder.current_rubric(auth.org_id_from_request(request))
+
+
+def save_ticket_rubric_route(request: Request, body: SaveTicketRubricBody):
+    """Save a new version of the org's own ticket rubric under whatever
+    name is currently active (or "Ticket QA" for a first-ever save).
+    Owner-only, same gate as the call rubric builder."""
+    auth.require_owner(request)
+    return ticket_rubric_builder.save_rubric(
+        auth.org_id_from_request(request),
+        [d.model_dump() for d in body.dimensions],
+        changed_by=getattr(request.state, "email", None) or "",
+    )
+
+
+def list_ticket_rubrics_route(request: Request):
+    """Every named ticket rubric this org has saved — the library view."""
+    return ticket_rubric_builder.list_rubrics(auth.org_id_from_request(request))
+
+
+def get_ticket_rubric_by_name_route(request: Request, name: str):
+    """One named ticket rubric's latest version, for loading into the editor."""
+    return ticket_rubric_builder.get_rubric(auth.org_id_from_request(request), name)
+
+
+class SaveNamedTicketRubricBody(BaseModel):
+    dimensions: list[TicketRubricDimensionBody]
+    activate: bool = True
+
+
+def save_named_ticket_rubric_route(request: Request, name: str, body: SaveNamedTicketRubricBody):
+    """Save a new version under this specific ticket rubric name — a
+    library entry, not necessarily replacing whatever's currently active.
+    Owner-only."""
+    auth.require_owner(request)
+    return ticket_rubric_builder.save_rubric(
+        auth.org_id_from_request(request),
+        [d.model_dump() for d in body.dimensions],
+        changed_by=getattr(request.state, "email", None) or "",
+        name=name,
+        activate=body.activate,
+    )
+
+
+def activate_ticket_rubric_route(request: Request, name: str):
+    """Switch which saved ticket rubric scores tickets going forward — no
+    dimension change, just a swap. Owner-only."""
+    auth.require_owner(request)
+    return ticket_rubric_builder.activate_rubric(
+        auth.org_id_from_request(request), name,
+        changed_by=getattr(request.state, "email", None) or "",
+    )
 
 
 def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
@@ -207,6 +289,22 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
 
 def register(app) -> None:
     app.add_api_route("/api/tickets/rubric", ticket_rubric_route, methods=["GET"])
+    app.add_api_route(
+        "/api/tickets/rubric/builder", ticket_rubric_builder_route, methods=["GET"],
+    )
+    app.add_api_route(
+        "/api/tickets/rubric/builder", save_ticket_rubric_route, methods=["POST"],
+    )
+    app.add_api_route("/api/tickets/rubrics", list_ticket_rubrics_route, methods=["GET"])
+    app.add_api_route(
+        "/api/tickets/rubrics/{name}", get_ticket_rubric_by_name_route, methods=["GET"],
+    )
+    app.add_api_route(
+        "/api/tickets/rubrics/{name}", save_named_ticket_rubric_route, methods=["POST"],
+    )
+    app.add_api_route(
+        "/api/tickets/rubrics/{name}/activate", activate_ticket_rubric_route, methods=["POST"],
+    )
     app.add_api_route(
         "/api/tickets/{ticket_id}/score", score_ticket_route, methods=["POST"],
     )

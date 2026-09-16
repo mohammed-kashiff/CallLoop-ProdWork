@@ -32,10 +32,17 @@ def _unwrap(value):
     return getattr(value, "obj", value)
 
 
+def _row_kind(row) -> str:
+    definition = row.get("definition") or {}
+    return definition.get("kind") or "call"
+
+
 class _LibraryConn:
     """In-memory rubrics table implementing exactly the queries
     list_rubric_lineages/fetch_rubric_by_name/save_named_rubric/
-    activate_rubric_by_name issue."""
+    activate_rubric_by_name issue — including their kind= scoping
+    (TA-24 follow-on: these four functions now serve both the call and
+    ticket engines, isolated by definition->>'kind', same table)."""
 
     def __init__(self, rows=None):
         self.rows = copy.deepcopy(rows or [])
@@ -44,16 +51,22 @@ class _LibraryConn:
         norm = " ".join(str(sql).split()).upper()
         params = params or []
 
-        if norm == "SELECT NAME FROM RUBRICS WHERE ORG_ID = %S AND IS_ACTIVE LIMIT 1":
+        if norm.startswith("SELECT NAME FROM RUBRICS WHERE ORG_ID = %S AND IS_ACTIVE"):
+            # rubric_builder._resolve_default_name's own literal-kind query
+            # (1 bind param) — distinct from the generalized kind= functions
+            # below, which bind kind as a real parameter.
             org_id = params[0]
-            active = [r for r in self.rows if r["org_id"] == org_id and r["is_active"]]
+            active = [
+                r for r in self.rows
+                if r["org_id"] == org_id and r["is_active"] and _row_kind(r) != "ticket"
+            ]
             return _Result([{"name": active[0]["name"]}] if active else [])
 
         if "DISTINCT ON (NAME)" in norm:
-            org_id = params[0]
+            org_id, kind = params
             by_name: dict[str, dict] = {}
             for r in self.rows:
-                if r["org_id"] != org_id:
+                if r["org_id"] != org_id or _row_kind(r) != kind:
                     continue
                 cur = by_name.get(r["name"])
                 if cur is None or r["version"] > cur["version"]:
@@ -62,26 +75,35 @@ class _LibraryConn:
             return _Result(ordered)
 
         if "COALESCE(MAX(VERSION), 0)" in norm:
-            org_id, name = params
-            versions = [r["version"] for r in self.rows if r["org_id"] == org_id and r["name"] == name]
+            org_id, name, kind = params
+            versions = [
+                r["version"] for r in self.rows
+                if r["org_id"] == org_id and r["name"] == name and _row_kind(r) == kind
+            ]
             return _Result([{"v": max(versions) if versions else 0}])
 
         if norm.startswith("SELECT ID, NAME, VERSION, DEFINITION, IS_ACTIVE, UPDATED_AT"):
-            org_id, name = params
-            matches = [r for r in self.rows if r["org_id"] == org_id and r["name"] == name]
+            org_id, name, kind = params
+            matches = [
+                r for r in self.rows
+                if r["org_id"] == org_id and r["name"] == name and _row_kind(r) == kind
+            ]
             matches.sort(key=lambda r: r["version"], reverse=True)
             return _Result(matches[:1])
 
         if norm.startswith("SELECT ID, VERSION, DEFINITION, UPDATED_AT") and "FOR UPDATE" in norm:
-            org_id, name = params
-            matches = [r for r in self.rows if r["org_id"] == org_id and r["name"] == name]
+            org_id, name, kind = params
+            matches = [
+                r for r in self.rows
+                if r["org_id"] == org_id and r["name"] == name and _row_kind(r) == kind
+            ]
             matches.sort(key=lambda r: r["version"], reverse=True)
             return _Result(matches[:1])
 
         if "UPDATE RUBRICS" in norm and "IS_ACTIVE = FALSE" in norm and "WHERE ID = %S" not in norm:
-            org_id = params[0]
+            org_id, kind = params
             for r in self.rows:
-                if r["org_id"] == org_id and r["is_active"]:
+                if r["org_id"] == org_id and r["is_active"] and _row_kind(r) == kind:
                     r["is_active"] = False
             return _Result([])
 

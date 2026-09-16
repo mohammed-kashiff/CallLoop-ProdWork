@@ -246,26 +246,40 @@ def insert_weighted_version(
     }
 
 
-def list_rubric_lineages(conn, *, org_id: str) -> list[dict[str, Any]]:
-    """One row per distinct rubric NAME for this org — its latest version and
-    whether that name is the one currently active. A "lineage" is a named,
-    independently-versioned rubric a team saved; multiple can coexist, only
-    one is ever active org-wide (within this kind — see save_named_rubric).
+def _fallback_definition(kind: str) -> dict[str, Any]:
+    """Defensive-only: reached when a row's stored definition fails to
+    decode as JSON (corrupt/legacy data), never for a row this module
+    itself wrote. A per-kind default rather than always load_v8_definition()
+    — that shape means nothing on the ticket read path (ticket_scoring
+    reads a flat dimensions list, not the call engine's two-bucket shape)."""
+    if kind == "ticket":
+        return {"kind": "ticket", "dimensions": []}
+    return load_v8_definition()
 
-    Excludes definition->>'kind' = 'ticket' rows, same exclusion as
-    fetch_active_rubric() — a call rubric library listing must never show
-    an org's Ticket QA rubric as if it were one of the team's own saved
-    call rubrics."""
+
+def list_rubric_lineages(conn, *, org_id: str, kind: str = "call") -> list[dict[str, Any]]:
+    """One row per distinct rubric NAME for this org and kind — its latest
+    version and whether that name is the one currently active. A "lineage"
+    is a named, independently-versioned rubric a team saved; multiple can
+    coexist, only one is ever active org-wide within this kind (see
+    save_named_rubric).
+
+    kind="call" (the default) reproduces the original call-only behavior
+    exactly. TA-24's follow-on passes kind="ticket" from
+    ticket_rubric_builder.py — same function, same isolation guarantee,
+    not a second copy of this query: a call rubric library listing must
+    never show an org's Ticket QA rubric as if it were one of the team's
+    own saved call rubrics, and vice versa."""
     rows = conn.execute(
         """
         SELECT DISTINCT ON (name)
             id, name, version, is_active, updated_at
         FROM rubrics
         WHERE org_id = %s
-          AND COALESCE(definition->>'kind', 'call') <> 'ticket'
+          AND COALESCE(definition->>'kind', 'call') = %s
         ORDER BY name, version DESC
         """,
-        (org_id,),
+        (org_id, kind),
     ).fetchall()
     return [
         {
@@ -279,23 +293,24 @@ def list_rubric_lineages(conn, *, org_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def fetch_rubric_by_name(conn, *, org_id: str, name: str) -> dict[str, Any] | None:
-    """Latest version of one named lineage, regardless of active status.
+def fetch_rubric_by_name(conn, *, org_id: str, name: str, kind: str = "call") -> dict[str, Any] | None:
+    """Latest version of one named lineage within this kind, regardless of
+    active status.
 
-    Excludes definition->>'kind' = 'ticket' rows, same exclusion as the
-    rest of this module's call-rubric reads — belt-and-suspenders against
-    a call rubric named the same as the Ticket QA rubric ("Ticket QA")
-    ever resolving to the wrong engine's row."""
+    kind="call" (the default) reproduces the original behavior exactly —
+    belt-and-suspenders against a call rubric named the same as the
+    Ticket QA rubric ("Ticket QA") ever resolving to the wrong engine's
+    row. kind="ticket" is the same guarantee for ticket_rubric_builder.py."""
     row = conn.execute(
         """
         SELECT id, name, version, definition, is_active, updated_at
         FROM rubrics
         WHERE org_id = %s AND name = %s
-          AND COALESCE(definition->>'kind', 'call') <> 'ticket'
+          AND COALESCE(definition->>'kind', 'call') = %s
         ORDER BY version DESC
         LIMIT 1
         """,
-        (org_id, name),
+        (org_id, name, kind),
     ).fetchone()
     if not row:
         return None
@@ -306,35 +321,43 @@ def fetch_rubric_by_name(conn, *, org_id: str, name: str) -> dict[str, Any] | No
         "version": int(row["version"]),
         "is_active": bool(row["is_active"]),
         "updated_at": row.get("updated_at"),
-        "definition": definition if isinstance(definition, dict) else load_v8_definition(),
+        "definition": definition if isinstance(definition, dict) else _fallback_definition(kind),
     }
 
 
 def save_named_rubric(
     conn, *, org_id: str, name: str, definition: Mapping[str, Any], activate: bool,
+    kind: str = "call",
 ) -> dict[str, Any]:
     """Insert a new version under this specific name (a library entry, not
     just "whatever's currently active" — the caller resolves that name
     itself, e.g. rubric_builder.save_rubric's default-name fallback, when
     it wants that older single-rubric behavior).
 
-    activate=True deactivates whatever else is active for this org (any
-    name) first, in the same transaction, so at most one rubric is ever
-    active org-wide *within this same kind* — same invariant the scoring
-    path (fetch_active_rubric) already depends on.
+    activate=True deactivates whatever else is active for this org AND
+    this kind (any name) first, in the same transaction, so at most one
+    rubric is ever active org-wide *within this same kind* — same
+    invariant the scoring path (fetch_active_rubric /
+    ticket_rubric.fetch_active_ticket_rubric) already depends on.
 
-    Found live: this deactivation had no kind exclusion, unlike every
-    read path in this module — activating a call rubric here would
-    silently deactivate an org's active Ticket QA rubric too (they share
-    this table's org-wide is_active column, PRD §10, no schema change),
-    and the next ticket scored would fall back to a fresh default,
-    quietly losing any ticket customization. Scoped to 'call' explicitly
-    (COALESCE(...,'call') <> 'ticket', matching fetch_active_rubric's own
-    exclusion) so the two engines' active rows never step on each other.
+    kind="call" (the default) reproduces the original single-engine
+    behavior exactly. Found live (2026-09-16): this deactivation had no
+    kind exclusion at all — activating a call rubric here would silently
+    deactivate an org's active Ticket QA rubric too (they share this
+    table's org-wide is_active column, PRD §10, no schema change), and
+    the next ticket scored would fall back to a fresh default, quietly
+    losing any ticket customization. Now scoped by kind explicitly
+    (COALESCE(...,'call') = kind) so the two engines' active rows never
+    step on each other — TA-24's follow-on reuses this same function with
+    kind="ticket" rather than a second copy of this logic.
     """
     max_row = conn.execute(
-        "SELECT COALESCE(MAX(version), 0) AS v FROM rubrics WHERE org_id = %s AND name = %s",
-        (org_id, name),
+        """
+        SELECT COALESCE(MAX(version), 0) AS v FROM rubrics
+        WHERE org_id = %s AND name = %s
+          AND COALESCE(definition->>'kind', 'call') = %s
+        """,
+        (org_id, name, kind),
     ).fetchone()
     version = int((max_row or {}).get("v") or 0) + 1
     if activate:
@@ -342,9 +365,9 @@ def save_named_rubric(
             """
             UPDATE rubrics SET is_active = false, updated_at = now()
             WHERE org_id = %s AND is_active
-              AND COALESCE(definition->>'kind', 'call') <> 'ticket'
+              AND COALESCE(definition->>'kind', 'call') = %s
             """,
-            (org_id,),
+            (org_id, kind),
         )
     rubric_id = str(uuid.uuid4())
     inserted = conn.execute(
@@ -371,25 +394,43 @@ def save_named_rubric(
     }
 
 
-def activate_rubric_by_name(conn, *, org_id: str, name: str) -> dict[str, Any]:
+def activate_rubric_by_name(conn, *, org_id: str, name: str, kind: str = "call") -> dict[str, Any]:
     """Switch which saved rubric is active — no dimension change, just a
-    swap. 404-equivalent (ValueError) if that name has no rows for this org."""
+    swap. 404-equivalent (ValueError) if that name has no rows for this
+    org and kind.
+
+    Found live (2026-09-16): both the "find this name's latest version"
+    lookup and the "deactivate whatever else is active" step here had no
+    kind exclusion at all — the exact cross-engine wipeout TA-35 fixed in
+    save_named_rubric, in this sibling function, which that fix session
+    missed. Activating a call rubric here would silently deactivate an
+    org's active Ticket QA rubric too (and vice versa), since both share
+    this table's org-wide is_active column (PRD §10, no schema change);
+    a coincidental name collision across kinds could also have activated
+    the wrong engine's row outright. Now scoped by kind exactly like
+    save_named_rubric/list_rubric_lineages/fetch_rubric_by_name — kind=
+    "call" (the default) reproduces the original single-engine behavior."""
     latest = conn.execute(
         """
         SELECT id, version, definition, updated_at
         FROM rubrics
         WHERE org_id = %s AND name = %s
+          AND COALESCE(definition->>'kind', 'call') = %s
         ORDER BY version DESC
         LIMIT 1
         FOR UPDATE
         """,
-        (org_id, name),
+        (org_id, name, kind),
     ).fetchone()
     if not latest:
         raise ValueError(f"No saved rubric named {name!r} for this org.")
     conn.execute(
-        "UPDATE rubrics SET is_active = false, updated_at = now() WHERE org_id = %s AND is_active",
-        (org_id,),
+        """
+        UPDATE rubrics SET is_active = false, updated_at = now()
+        WHERE org_id = %s AND is_active
+          AND COALESCE(definition->>'kind', 'call') = %s
+        """,
+        (org_id, kind),
     )
     conn.execute(
         "UPDATE rubrics SET is_active = true, updated_at = now() WHERE id = %s",
@@ -402,7 +443,7 @@ def activate_rubric_by_name(conn, *, org_id: str, name: str) -> dict[str, Any]:
         "version": int(latest["version"]),
         "is_active": True,
         "updated_at": latest.get("updated_at"),
-        "definition": definition if isinstance(definition, dict) else load_v8_definition(),
+        "definition": definition if isinstance(definition, dict) else _fallback_definition(kind),
     }
 
 
