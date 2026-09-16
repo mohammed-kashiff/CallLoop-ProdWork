@@ -53,6 +53,7 @@ from . import intercom_oauth
 from . import intercom_widget
 from . import justcall
 from . import org_features
+from . import org_roles
 from . import org_vault
 from . import password_events
 from . import platform_admins
@@ -268,6 +269,31 @@ def me_usage(request: Request):
     return admin_console.usage_for_org(_org(request))
 
 
+@app.get("/api/team")
+def get_team(request: Request):
+    """AC-56/AC-58: the owner's own "Your team" list — every member of
+    this org and their role, for promoting/demoting to Manager. Owner-only,
+    same as the promote/demote action itself."""
+    auth.require_owner(request)
+    return org_roles.list_team(_org(request))
+
+
+class SetMemberRoleBody(BaseModel):
+    role: str
+
+
+@app.post("/api/team/{user_id}/role")
+def set_team_member_role(request: Request, user_id: str, body: SetMemberRoleBody):
+    """Promote a team member to Manager, or demote a Manager back to a
+    regular member. Owner-only (AC-58) — never touches the owner's own
+    row, never assigns "owner"."""
+    auth.require_owner(request)
+    return org_roles.set_member_role(
+        _org(request), user_id, body.role,
+        changed_by=getattr(request.state, "email", None) or "",
+    )
+
+
 @app.get("/api/support/widget-identity")
 def support_widget_identity(request: Request):
     """Messenger Security JWT for CallLoop's own Intercom support widget
@@ -316,8 +342,8 @@ class SaveRubricBody(BaseModel):
 def save_rubric(request: Request, body: SaveRubricBody):
     """Self-serve rubric builder: save a new version of the org's own rubric
     (mix of built-in and custom dimensions, weights summing to 100).
-    Owner-only — no team-admin tier yet."""
-    auth.require_owner(request)
+    Owner or manager (AC-56/AC-61)."""
+    auth.require_owner_or_manager(request)
     return rubric_builder.save_rubric(
         _org(request),
         [d.model_dump() for d in body.dimensions],
@@ -346,8 +372,8 @@ class SaveNamedRubricBody(BaseModel):
 @app.post("/api/rubrics/{name}")
 def save_named_rubric_route(request: Request, name: str, body: SaveNamedRubricBody):
     """Save a new version under this specific name — a library entry, not
-    necessarily replacing whatever's currently active. Owner-only."""
-    auth.require_owner(request)
+    necessarily replacing whatever's currently active. Owner or manager."""
+    auth.require_owner_or_manager(request)
     return rubric_builder.save_rubric(
         _org(request),
         [d.model_dump() for d in body.dimensions],
@@ -360,8 +386,8 @@ def save_named_rubric_route(request: Request, name: str, body: SaveNamedRubricBo
 @app.post("/api/rubrics/{name}/activate")
 def activate_rubric_route(request: Request, name: str):
     """Switch which saved rubric scores calls going forward — no dimension
-    change, just a swap. Owner-only."""
-    auth.require_owner(request)
+    change, just a swap. Owner or manager."""
+    auth.require_owner_or_manager(request)
     return rubric_builder.activate_rubric(
         _org(request), name, changed_by=getattr(request.state, "email", None) or "",
     )

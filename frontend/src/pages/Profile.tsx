@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch, fmtUsd, readError } from '../lib/api'
 import { appHomePath } from '../lib/adminHost'
+import { roleTagLabel } from '../lib/roles'
 import { useAuth } from '../context/AuthContext'
 
 type UsagePayload = {
@@ -12,6 +13,107 @@ type UsagePayload = {
     >
   }
   cost: { pyai_usd: number; claude_usd: number; total_usd: number }
+}
+
+type TeamMember = {
+  user_id: string
+  first_name: string | null
+  last_name: string | null
+  role: string
+}
+
+function TeamSection() {
+  const [members, setMembers] = useState<TeamMember[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  const load = () => {
+    setError(null)
+    apiFetch('/api/team')
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await readError(r, 'Could not load your team.'))
+        return r.json() as Promise<{ members: TeamMember[] }>
+      })
+      .then((data) => setMembers(data.members))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Could not load your team.'))
+  }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  const setRole = async (userId: string, role: 'manager' | 'member') => {
+    setBusyId(userId)
+    setActionError(null)
+    try {
+      const r = await apiFetch(`/api/team/${encodeURIComponent(userId)}/role`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      })
+      if (!r.ok) throw new Error(await readError(r, 'Could not change that role.'))
+      load()
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : 'Could not change that role.')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const memberName = (m: TeamMember) =>
+    [m.first_name, m.last_name].filter(Boolean).join(' ') || m.user_id.slice(0, 8)
+
+  return (
+    <section className="profile-card">
+      <h2>Your team</h2>
+      <p className="admin-provision-hint">
+        Managers see the same ticket-audit team view and rubric builder access you do — nothing
+        else changes.
+      </p>
+      {error ? (
+        <p className="upload-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {actionError ? (
+        <p className="upload-error" role="alert">
+          {actionError}
+        </p>
+      ) : null}
+      {members ? (
+        <ul className="profile-team-list">
+          {members.map((m) => (
+            <li key={m.user_id} className="profile-team-row">
+              <span className="profile-team-name">{memberName(m)}</span>
+              <span className="topbar-chip soft">{roleTagLabel(m.role)}</span>
+              {m.role === 'member' ? (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  disabled={busyId === m.user_id}
+                  onClick={() => void setRole(m.user_id, 'manager')}
+                >
+                  {busyId === m.user_id ? 'Working…' : 'Promote to Manager'}
+                </button>
+              ) : m.role === 'manager' ? (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  disabled={busyId === m.user_id}
+                  onClick={() => void setRole(m.user_id, 'member')}
+                >
+                  {busyId === m.user_id ? 'Working…' : 'Remove Manager'}
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : !error ? (
+        <p className="panel-lede">Loading your team…</p>
+      ) : null}
+    </section>
+  )
 }
 
 export function Profile() {
@@ -86,7 +188,7 @@ export function Profile() {
 
   const pyai = usage?.usage?.by_provider?.pyai
   const claude = usage?.usage?.by_provider?.anthropic
-  const roleLabel = role === 'owner' ? 'Owner' : role === 'member' ? 'Member' : null
+  const roleLabel = role ? roleTagLabel(role) : null
 
   return (
     <>
@@ -157,6 +259,8 @@ export function Profile() {
           </button>
         </form>
       </section>
+
+      {role === 'owner' ? <TeamSection /> : null}
 
       <section className="profile-card">
         <h2>Workspace usage</h2>

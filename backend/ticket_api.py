@@ -151,17 +151,17 @@ def list_tickets(request: Request):
 
 
 def get_ticket(request: Request, ticket_id: str):
-    """TA-12: a manager (org owner) gets the row as ticket_ingest built it.
-    Anyone else gets only their own contribution — turns inside their own
-    agent span, the assets attached to those turns, and (if the ticket has
-    been scored) only their own findings/spans, never another agent's."""
+    """TA-12/AC-60: an owner or manager gets the row as ticket_ingest built
+    it. Anyone else gets only their own contribution — turns inside their
+    own agent span, the assets attached to those turns, and (if the ticket
+    has been scored) only their own findings/spans, never another agent's."""
     org_id = auth.org_id_from_request(request)
     tid = _parse_ticket_id(ticket_id)
     row = ticket_ingest.get_ticket(tid, org_id)
     if not row:
         raise HTTPException(status_code=404, detail="Ticket not found.")
 
-    is_manager = auth.is_org_owner(request)
+    is_manager = auth.is_owner_or_manager(request)
     if is_manager:
         return {**row, "view_scope": "full"}
 

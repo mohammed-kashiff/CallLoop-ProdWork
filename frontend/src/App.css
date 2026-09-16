@@ -3961,6 +3961,30 @@ html[data-color-mode='dark'] .claude-cord-plug {
   color: var(--ink-soft, var(--ink));
 }
 
+.profile-team-list {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.profile-team-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.profile-team-name {
+  font-weight: 700;
+  flex: 1;
+  min-width: 8rem;
+}
+
 .profile-card {
   width: min(36rem, 100%);
   display: grid;

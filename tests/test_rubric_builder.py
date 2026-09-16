@@ -225,6 +225,35 @@ def test_save_rubric_route_403_for_a_member_not_the_owner(monkeypatch):
     assert r.status_code == 403
 
 
+def test_save_rubric_route_allows_a_manager_too(monkeypatch):
+    """AC-56/AC-61: the rubric builder's owner gate widened to owner-or-
+    manager — a Manager must be able to save, exactly like an Owner."""
+    from backend.auth import Membership
+    from backend.api import app
+
+    uid = str(uuid.uuid4())
+    monkeypatch.setattr(
+        "backend.auth.ensure_membership",
+        lambda user_id, email=None, first_name=None, last_name=None: Membership(
+            ORG_A, "manager", str(user_id),
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.api.rubric_builder.save_rubric",
+        lambda org_id, dimensions, *, changed_by: {
+            "org_id": org_id, "source": "custom", "rubric_id": "rid", "version": 1,
+            "updated_at": None, "dimensions": dimensions, "available_builtins": [],
+        },
+    )
+    client = TestClient(app)
+    client.headers["Authorization"] = f"Bearer {mint_access_token(sub=uid)}"
+    r = client.post(
+        "/api/rubric",
+        json={"dimensions": [{"kind": "builtin", "id": "active_listening", "weight": 100}]},
+    )
+    assert r.status_code == 200
+
+
 def test_save_rubric_route_allows_the_owner_and_forwards_dimensions(monkeypatch):
     seen: list[tuple] = []
 

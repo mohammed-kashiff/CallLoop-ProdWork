@@ -4,8 +4,9 @@ and free-text custom criteria Claude judges.
 
 Deliberately separate from admin_console.py: that module is Command
 Center's platform-admin-only reweighting tool (unchanged, kept as-is), this
-one is customer-facing and gated by auth.require_owner, not
-require_platform_admin.
+one is customer-facing and gated by auth.require_owner_or_manager (AC-56/
+AC-61) — not require_platform_admin, and no longer owner-only now that a
+real Manager role exists.
 """
 
 from __future__ import annotations

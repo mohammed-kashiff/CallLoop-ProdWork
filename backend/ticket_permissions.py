@@ -3,11 +3,11 @@ own-contribution view.
 
 No new mechanism (PRD §7) — reuses the same narrow-then-broad shape as
 require_owner/require_platform_admin elsewhere in this codebase: a broad
-check (is the caller the org's owner, i.e. "manager") decides whether a
-narrower per-actor filter applies at all. org_members.role is only
-"owner"/"member" today; "owner" stands in for "manager" until a
-team-admin tier ships — the same substitution auth.is_org_owner() already
-makes for require_owner().
+check (auth.is_owner_or_manager(), AC-56/AC-60) decides whether a
+narrower per-actor filter applies at all. A real Manager role now exists
+(org_members.role: "owner"/"manager"/"member") — see auth.py's
+is_org_owner()/is_owner_or_manager() docstrings for exactly which gates
+widened to include Manager and which stayed owner-only.
 
 A manager sees the whole thread and every agent's findings. Any other
 member sees only turns that fall inside a span attributed to their own

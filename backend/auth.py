@@ -491,21 +491,49 @@ def require_platform_admin(request: Request) -> None:
 
 
 def is_org_owner(request: Request) -> bool:
-    """True iff this org member's role is "owner".
-
-    org_members.role is only "owner" or "member" today — no team-admin tier
-    yet (see the roles hierarchy doc). "Owner" stands in for "manager" until
-    that ships (TA-12: manager full-thread view vs. agent own-contribution
-    view — same narrow-then-broad shape as require_owner itself).
-    """
+    """True iff this org member's role is exactly "owner" — never true for
+    "manager". Some things stay owner-only forever even after AC-56 (Roles:
+    Owner, Manager, Agent) shipped the Manager tier: promoting/demoting a
+    Manager (AC-58), org-ownership transfer, and anything else not
+    explicitly re-pointed to is_owner_or_manager() below. Use this, not
+    is_owner_or_manager(), for any new owner-only gate."""
     role = (getattr(request.state, "role", None) or "").strip().lower()
     return role == "owner"
 
 
+def is_org_manager(request: Request) -> bool:
+    """True iff this org member's role is exactly "manager" (AC-56). A
+    Manager is not an Owner — see is_org_owner()'s docstring for what stays
+    owner-only regardless."""
+    role = (getattr(request.state, "role", None) or "").strip().lower()
+    return role == "manager"
+
+
+def is_owner_or_manager(request: Request) -> bool:
+    """AC-56's narrow grant: Owner and Manager get identical access to
+    exactly two things — the ticket-audit team view (TA-12) and the
+    self-serve rubric builder (call and ticket) — and nothing else. Every
+    other owner-only gate in this codebase (promote/demote, alias mapping,
+    admin routes) intentionally still calls is_org_owner()/require_owner()
+    directly; re-pointing a gate to this function is a deliberate,
+    individually-reviewed decision (AC-59), not a default."""
+    return is_org_owner(request) or is_org_manager(request)
+
+
 def require_owner(request: Request) -> None:
-    """Self-serve rubric builder: only the org's account owner may edit it."""
+    """Only the org's account owner may do this — never a Manager. See
+    is_org_owner()'s docstring for what's expected to stay gated this way."""
     if not is_org_owner(request):
         raise HTTPException(status_code=403, detail="Only the account owner can do this.")
+
+
+def require_owner_or_manager(request: Request) -> None:
+    """AC-56's narrow grant (see is_owner_or_manager()'s docstring) — the
+    ticket-audit team view and the self-serve rubric builder only."""
+    if not is_owner_or_manager(request):
+        raise HTTPException(
+            status_code=403, detail="Only the account owner or a manager can do this.",
+        )
 
 
 def user_id_from_request(request: Request) -> str:

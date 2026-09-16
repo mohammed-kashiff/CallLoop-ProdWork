@@ -13,7 +13,7 @@ import { apiFetch, trackEvent } from '../lib/api'
 import type { FeatureMap } from '../lib/features'
 import { supabase, supabaseConfigured, hasPasswordRecoveryHint, markPasswordRecovery, clearPasswordRecovery, clearImpersonating } from '../lib/supabase'
 
-type OrgRole = 'owner' | 'member'
+type OrgRole = 'owner' | 'manager' | 'member'
 
 type AuthContextValue = {
   configured: boolean
@@ -23,6 +23,11 @@ type AuthContextValue = {
   email: string | null
   orgName: string | null
   role: OrgRole | null
+  // AC-56: Owner and Manager share exactly two capabilities (the
+  // ticket-audit team view and the self-serve rubric builder) — this is
+  // that narrow grant, not a general "is this person important" flag.
+  // Every other owner-only gate stays role === 'owner' explicitly.
+  isOwnerOrManager: boolean
   firstName: string | null
   lastName: string | null
   features: FeatureMap
@@ -75,7 +80,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setIsPlatformAdmin(data.is_platform_admin === true)
     setOrgName(typeof data.org_name === 'string' ? data.org_name : null)
-    setRole(data.role === 'owner' || data.role === 'member' ? data.role : null)
+    setRole(
+      data.role === 'owner' || data.role === 'manager' || data.role === 'member'
+        ? data.role
+        : null,
+    )
     setFirstName(typeof data.first_name === 'string' ? data.first_name : null)
     setLastName(typeof data.last_name === 'string' ? data.last_name : null)
   }, [session])
@@ -144,6 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email,
       orgName,
       role,
+      isOwnerOrManager: role === 'owner' || role === 'manager',
       firstName,
       lastName,
       features,

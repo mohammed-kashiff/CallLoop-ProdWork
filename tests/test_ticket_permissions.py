@@ -197,6 +197,28 @@ def test_get_ticket_as_manager_returns_full_scope(monkeypatch):
     assert len(body["audit"]["findings"]) == 2
 
 
+def test_get_ticket_as_manager_role_also_returns_full_scope(monkeypatch):
+    """AC-56/AC-60: the TA-12 gate widened from owner-only to owner-or-
+    manager — a Manager must get the same full-thread view an Owner does."""
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+
+    agent_a, agent_b = str(uuid.uuid4()), str(uuid.uuid4())
+    monkeypatch.setattr(
+        "backend.ticket_api.ticket_ingest.get_ticket",
+        lambda *a, **k: _fake_ticket_row(agent_a, agent_b),
+    )
+    client = TestClient(app)
+    _authorize_as(client, monkeypatch, role="manager")
+    r = client.get(f"/api/tickets/{uuid.uuid4()}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["view_scope"] == "full"
+    assert len(body["messages"]) == 3
+    assert len(body["audit"]["findings"]) == 2
+
+
 def test_get_ticket_as_agent_returns_only_their_own_contribution(monkeypatch):
     from fastapi.testclient import TestClient
 

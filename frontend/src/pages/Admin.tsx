@@ -11,6 +11,7 @@ import { Link, Navigate } from 'react-router-dom'
 import { apiFetch, fmtUsd, readError } from '../lib/api'
 import type { FeatureMap } from '../lib/features'
 import { formatBytes } from '../lib/format'
+import { roleTagLabel } from '../lib/roles'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { CUSTOMER_ORIGIN, isAdminHost } from '../lib/adminHost'
@@ -1280,7 +1281,9 @@ export function Admin() {
                               <tr>
                                 <td>{displayName(m)}</td>
                                 <td>{m.email || '—'}</td>
-                                <td>{m.role || '—'}</td>
+                                <td>
+                                  <span className="topbar-chip soft">{roleTagLabel(m.role)}</span>
+                                </td>
                                 <td>{m.short_id ?? '—'}</td>
                                 <td>
                                   {m.first_seen ? new Date(m.first_seen).toLocaleDateString() : '—'}

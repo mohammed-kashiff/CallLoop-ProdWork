@@ -393,3 +393,63 @@ def test_org_directory_is_not_an_api_and_not_granted_to_app():
     auth = (ROOT / "backend" / "auth.py").read_text(encoding="utf-8")
     assert "org_directory" not in api
     assert "org_directory" not in auth
+
+
+# ---------- AC-56: Manager role gates ----------
+
+
+def _req(role: str | None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(state=SimpleNamespace(role=role))
+
+
+def test_is_org_owner_true_only_for_owner():
+    from backend.auth import is_org_owner
+
+    assert is_org_owner(_req("owner")) is True
+    assert is_org_owner(_req("manager")) is False
+    assert is_org_owner(_req("member")) is False
+    assert is_org_owner(_req(None)) is False
+
+
+def test_is_org_manager_true_only_for_manager():
+    from backend.auth import is_org_manager
+
+    assert is_org_manager(_req("manager")) is True
+    assert is_org_manager(_req("owner")) is False
+    assert is_org_manager(_req("member")) is False
+
+
+def test_is_owner_or_manager_true_for_either():
+    from backend.auth import is_owner_or_manager
+
+    assert is_owner_or_manager(_req("owner")) is True
+    assert is_owner_or_manager(_req("manager")) is True
+    assert is_owner_or_manager(_req("member")) is False
+    assert is_owner_or_manager(_req(None)) is False
+
+
+def test_require_owner_or_manager_raises_403_for_a_member():
+    from fastapi import HTTPException
+
+    from backend.auth import require_owner_or_manager
+
+    require_owner_or_manager(_req("owner"))  # no raise
+    require_owner_or_manager(_req("manager"))  # no raise
+    with pytest.raises(HTTPException) as exc:
+        require_owner_or_manager(_req("member"))
+    assert exc.value.status_code == 403
+
+
+def test_require_owner_still_rejects_a_manager():
+    """The narrow-grant contract (AC-56): promote/demote and every other
+    owner-only gate NOT explicitly re-pointed to owner_or_manager must
+    keep rejecting a Manager exactly like it rejects a regular member."""
+    from fastapi import HTTPException
+
+    from backend.auth import require_owner
+
+    with pytest.raises(HTTPException) as exc:
+        require_owner(_req("manager"))
+    assert exc.value.status_code == 403

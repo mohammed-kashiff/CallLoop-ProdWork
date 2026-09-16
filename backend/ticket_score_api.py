@@ -155,8 +155,8 @@ def ticket_rubric_builder_route(request: Request):
 def save_ticket_rubric_route(request: Request, body: SaveTicketRubricBody):
     """Save a new version of the org's own ticket rubric under whatever
     name is currently active (or "Ticket QA" for a first-ever save).
-    Owner-only, same gate as the call rubric builder."""
-    auth.require_owner(request)
+    Owner or manager (AC-56/AC-61), same gate as the call rubric builder."""
+    auth.require_owner_or_manager(request)
     return ticket_rubric_builder.save_rubric(
         auth.org_id_from_request(request),
         [d.model_dump() for d in body.dimensions],
@@ -182,8 +182,8 @@ class SaveNamedTicketRubricBody(BaseModel):
 def save_named_ticket_rubric_route(request: Request, name: str, body: SaveNamedTicketRubricBody):
     """Save a new version under this specific ticket rubric name — a
     library entry, not necessarily replacing whatever's currently active.
-    Owner-only."""
-    auth.require_owner(request)
+    Owner or manager."""
+    auth.require_owner_or_manager(request)
     return ticket_rubric_builder.save_rubric(
         auth.org_id_from_request(request),
         [d.model_dump() for d in body.dimensions],
@@ -195,8 +195,8 @@ def save_named_ticket_rubric_route(request: Request, name: str, body: SaveNamedT
 
 def activate_ticket_rubric_route(request: Request, name: str):
     """Switch which saved ticket rubric scores tickets going forward — no
-    dimension change, just a swap. Owner-only."""
-    auth.require_owner(request)
+    dimension change, just a swap. Owner or manager."""
+    auth.require_owner_or_manager(request)
     return ticket_rubric_builder.activate_rubric(
         auth.org_id_from_request(request), name,
         changed_by=getattr(request.state, "email", None) or "",
@@ -207,7 +207,7 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
     org_id = auth.org_id_from_request(request)
     tid = _parse_ticket_id(ticket_id)
     viewer_id = auth.user_id_from_request(request)
-    is_manager = auth.is_org_owner(request)
+    is_manager = auth.is_owner_or_manager(request)  # TA-12/AC-60
 
     ticket = ticket_ingest.get_ticket(tid, org_id)
     if not ticket:

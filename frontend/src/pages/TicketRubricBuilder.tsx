@@ -73,8 +73,8 @@ function toDraft(dims: RubricDimension[]): DraftDimension[] {
 }
 
 export function TicketRubricBuilder() {
-  const { role } = useAuth()
-  const isOwner = role === 'owner'
+  const { isOwnerOrManager } = useAuth()
+  const isOwner = isOwnerOrManager // AC-56: a Manager can edit this too, not just the literal Owner
 
   const [library, setLibrary] = useState<LibraryEntry[] | null>(null)
   const [libraryError, setLibraryError] = useState<string | null>(null)
