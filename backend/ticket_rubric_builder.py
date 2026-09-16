@@ -189,6 +189,7 @@ def current_rubric(org_id: str | None) -> dict:
         "rubric_id": rubric.get("id"),
         "name": rubric.get("name") or ticket_rubric.TICKET_QA_RUBRIC_NAME,
         "version": rubric.get("version"),
+        "updated_at": _json_value(rubric.get("updated_at")),
         "dimensions": _describe(rubric.get("dimensions")),
         "available_builtins": _available_builtins(),
     }

@@ -3953,6 +3953,14 @@ html[data-color-mode='dark'] .claude-cord-plug {
   font-size: 0.85rem;
 }
 
+.rubric-builder-customer-facing-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--ink-soft, var(--ink));
+}
+
 .profile-card {
   width: min(36rem, 100%);
   display: grid;

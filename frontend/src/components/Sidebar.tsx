@@ -381,20 +381,32 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
                 aria-expanded={ticketAuditOpen}
               >
                 Ticket Audit
-                <span className="nav-soon">Scaffold</span>
               </NavLink>
               {ticketAuditOpen ? (
-                <NavLink
-                  to="/ticket-audit-mine"
-                  className={({ isActive }) =>
-                    ['sidebar-link', 'is-child', isActive ? 'is-active' : '']
-                      .filter(Boolean)
-                      .join(' ')
-                  }
-                  onClick={onNavigate}
-                >
-                  My contributions
-                </NavLink>
+                <>
+                  <NavLink
+                    to="/ticket-audit-mine"
+                    className={({ isActive }) =>
+                      ['sidebar-link', 'is-child', isActive ? 'is-active' : '']
+                        .filter(Boolean)
+                        .join(' ')
+                    }
+                    onClick={onNavigate}
+                  >
+                    My contributions
+                  </NavLink>
+                  <NavLink
+                    to="/ticket-rubric-builder"
+                    className={({ isActive }) =>
+                      ['sidebar-link', 'is-child', isActive ? 'is-active' : '']
+                        .filter(Boolean)
+                        .join(' ')
+                    }
+                    onClick={onNavigate}
+                  >
+                    Ticket rubric
+                  </NavLink>
+                </>
               ) : null}
             </div>
           ) : null}

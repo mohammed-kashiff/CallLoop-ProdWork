@@ -27,6 +27,7 @@ import { RubricView } from './pages/RubricView'
 import { Pyai } from './pages/Pyai'
 import { MyTicketContributions } from './pages/MyTicketContributions'
 import { TicketAudit } from './pages/TicketAudit'
+import { TicketRubricBuilder } from './pages/TicketRubricBuilder'
 import { Training } from './pages/Training'
 import { appHomePath, isAdminHost } from './lib/adminHost'
 import './App.css'
@@ -75,6 +76,7 @@ function App() {
                     <Route path="ticket-audit" element={<TicketAudit />} />
                     <Route path="ticket-audit/:ticketId" element={<TicketAudit />} />
                     <Route path="ticket-audit-mine" element={<MyTicketContributions />} />
+                    <Route path="ticket-rubric-builder" element={<TicketRubricBuilder />} />
                     <Route path="profile" element={<Profile />} />
                     <Route path="pyai" element={<Pyai />} />
                     <Route path="*" element={<Navigate to={home} replace />} />

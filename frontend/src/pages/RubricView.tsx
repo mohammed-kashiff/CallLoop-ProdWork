@@ -105,7 +105,7 @@ export function RubricView() {
 
       <p className="scaffold-banner">
         View only — this is whatever rubric is currently active and being audited against. To
-        change the call rubric, use Rubric builder.
+        change the call rubric, use Rubric builder{ticketAuditEnabled ? '; to change the ticket rubric, use Ticket rubric builder' : ''}.
       </p>
 
       {loading ? <p className="panel-lede">Loading…</p> : null}

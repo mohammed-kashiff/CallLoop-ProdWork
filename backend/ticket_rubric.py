@@ -256,7 +256,7 @@ def fetch_active_ticket_rubric(org_id: str) -> dict | None:
         with db.connection() as conn:
             row = conn.execute(
                 """
-                SELECT id, name, version, definition
+                SELECT id, name, version, definition, updated_at
                 FROM rubrics
                 WHERE org_id = %s AND is_active
                   AND definition->>'kind' = %s
@@ -271,6 +271,7 @@ def fetch_active_ticket_rubric(org_id: str) -> dict | None:
         "id": str(row["id"]),
         "name": row["name"],
         "version": row["version"],
+        "updated_at": row.get("updated_at"),
         "dimensions": definition.get("dimensions") or [],
     }
 
@@ -280,13 +281,12 @@ def ensure_ticket_rubric(org_id: str) -> dict:
     first time an org scores a ticket, so scoring is backed by a real
     rubrics-table entry (PRD §10), not just this file's constant.
 
-    Known limitation: rubric_builder.py's save/activate functions for
-    CALL rubrics deactivate every active row for the org with no kind
-    filter, so activating a call rubric could silently deactivate this
-    row. Not audited/fixed here — v1 accepts self-healing re-seeding
-    (the next call here just creates a fresh one) as the recovery path
-    rather than auditing every call-rubric write path, which is a
-    separate, later effort.
+    Cross-kind write safety (call rubric saves/activates never touching
+    this row, and vice versa) is now a real invariant, not a caveat: see
+    audit_store.py's kind= parameter on save_named_rubric/
+    activate_rubric_by_name/etc. (generalized 2026-09-16, TA-24
+    follow-on, ticket_rubric_builder.py) — self-healing re-seeding here
+    is no longer the load-bearing recovery path it used to be.
     """
     existing = fetch_active_ticket_rubric(org_id)
     if existing is not None:
@@ -305,5 +305,5 @@ def ensure_ticket_rubric(org_id: str) -> dict:
             )
     return fetch_active_ticket_rubric(org_id) or {
         "id": rubric_id, "name": TICKET_QA_RUBRIC_NAME, "version": 1,
-        "dimensions": definition["dimensions"],
+        "updated_at": None, "dimensions": definition["dimensions"],
     }
