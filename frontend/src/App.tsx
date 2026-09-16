@@ -29,6 +29,7 @@ import { RubricView } from './pages/RubricView'
 import { Pyai } from './pages/Pyai'
 import { MyTicketContributions } from './pages/MyTicketContributions'
 import { TicketAudit } from './pages/TicketAudit'
+import { TeamPerformance } from './pages/TeamPerformance'
 import { TicketRubricBuilder } from './pages/TicketRubricBuilder'
 import { Training } from './pages/Training'
 import { appHomePath, isAdminHost } from './lib/adminHost'
@@ -63,6 +64,7 @@ function App() {
                     <Route path="neighbourhood" element={<Neighbourhood />} />
                     <Route path="agents-pulse" element={<AgentsPulse />} />
                     <Route path="agents-pulse/flagged" element={<FlaggedForReview />} />
+                    <Route path="team-performance" element={<TeamPerformance />} />
                     <Route path="audits" element={<Audits />} />
                     <Route path="audits/:callId" element={<AuditDetail />} />
                     <Route path="rubric-builder" element={<RubricBuilder />} />

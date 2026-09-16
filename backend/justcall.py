@@ -145,6 +145,26 @@ def extract_completed_id(payload: dict[str, Any]) -> str | None:
     return str(cid).strip()
 
 
+def agent_identity_for(payload: dict[str, Any]) -> str | None:
+    """IN-22/23: the real agent identifier from JustCall's own payload —
+    an email when present (the reliable, structured signal an alias
+    mapping resolves against, same role Intercom's author.email plays
+    for IN-10), else the agent's name as a fallback identifier. None if
+    the payload carries neither. Deliberately separate from
+    display_name() below, which formats a cosmetic label and has always
+    accepted a name-or-email fallback there — this function is what
+    identity resolution keys off, so it prefers the more stable
+    identifier (email) explicitly rather than "whichever came first"."""
+    data = payload if isinstance(payload, dict) else {}
+    nested = data.get("data") if isinstance(data.get("data"), dict) else data
+    agent_obj = nested.get("agent") if isinstance(nested.get("agent"), dict) else {}
+    email = str(agent_obj.get("email") or "").strip().lower()
+    if email:
+        return email
+    name = str(nested.get("agent_name") or agent_obj.get("name") or "").strip()
+    return name or None
+
+
 def display_name(payload: dict[str, Any], call_id: str) -> str:
     data = payload if isinstance(payload, dict) else {}
     nested = data.get("data") if isinstance(data.get("data"), dict) else data

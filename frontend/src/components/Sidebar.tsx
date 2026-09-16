@@ -20,6 +20,7 @@ type NavIconName =
   | typeof HOME.icon
   | (typeof LOOP_NAV)[number]['icon']
   | 'pulse'
+  | 'performance'
   | 'neighbourhood'
   | 'audits'
   | 'rubric'
@@ -77,6 +78,19 @@ function NavIcon({ name }: { name: NavIconName }) {
           strokeWidth="1.8"
           strokeLinecap="round"
           d="M4 12h2.8l1.7-4.5 2.6 9 2.2-6.2L15.6 12H20"
+        />
+      </svg>
+    )
+  }
+  if (name === 'performance') {
+    return (
+      <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          d="M5 19V10M10.5 19V6M16 19v-8M21 19H3"
         />
       </svg>
     )
@@ -357,6 +371,16 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               </NavLink>
             ) : null}
           </div>
+          <NavLink
+            to="/team-performance"
+            className={({ isActive }) =>
+              ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+            }
+            onClick={onNavigate}
+          >
+            <NavIcon name="performance" />
+            Team Performance
+          </NavLink>
           <NavLink
             to="/audits"
             className={() =>

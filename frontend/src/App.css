@@ -4692,3 +4692,22 @@ html[data-color-mode='dark'] .cc-shell {
     animation: none;
   }
 }
+
+.team-perf-panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 1.1rem 1.15rem 1.2rem;
+  margin-bottom: 1rem;
+}
+
+.team-perf-panel h2 {
+  margin: 0 0 0.45rem;
+  font-size: 1.05rem;
+}
+
+.team-perf-chart {
+  width: 100%;
+  height: 280px;
+}

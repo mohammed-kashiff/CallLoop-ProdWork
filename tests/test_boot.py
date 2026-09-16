@@ -50,6 +50,7 @@ EXPECTED_ROUTES = {
     "/api/tickets/{ticket_id}",
     "/api/tickets/{ticket_id}/assets/{seq}",
     "/api/tickets/{ticket_id}/score",
+    "/api/team-performance",
     "/api/integrations/justcall",
     "/api/integrations/justcall/sync",
     "/api/integrations/justcall/webhook",

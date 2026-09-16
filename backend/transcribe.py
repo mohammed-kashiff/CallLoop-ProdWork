@@ -799,10 +799,21 @@ def normalize_hear_result(result: dict) -> dict:
 def save_transcript(
     conn, identity, job_id, result, pyai_call_id=None, filename=None,
     source=None, external_id=None, *, org_id: str, uploaded_by: str | None = None,
+    agent_user_id: str | None = None, agent_identifier: str | None = None,
 ):
+    """IN-22/23: agent_user_id is the real per-agent identity a dashboard/
+    report reads. A caller with an already-resolved identity (a manual
+    upload, where uploaded_by already is the agent) passes agent_user_id
+    directly; a caller ingesting from a provider (JustCall) passes
+    agent_identifier instead when the raw email couldn't be resolved yet
+    — set_alias() backfills this row's agent_user_id later once an owner
+    maps it. Falling back to uploaded_by here (not at the call site) is
+    what makes a manual upload resolved with zero extra plumbing — no
+    guessing, uploaded_by already is a real org_members.user_id."""
     result = normalize_hear_result(result)
     segments = result.get("segments") or []
     safe_name = sanitize_filename(filename) if filename else None
+    resolved_agent = agent_user_id or uploaded_by
     if org_id == DEFAULT_ORG_ID:
         from .auth import ensure_placeholder_org
 
@@ -811,9 +822,10 @@ def save_transcript(
         """
         INSERT INTO calls (
             org_id, audio_url, job_id, status, full_text, speakers, audio_seconds,
-            raw_json, pyai_call_id, filename, source, external_id, uploaded_by
+            raw_json, pyai_call_id, filename, source, external_id, uploaded_by,
+            agent_user_id, agent_identifier
         )
-        VALUES (%s, %s, %s, 'completed', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, 'completed', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -829,6 +841,8 @@ def save_transcript(
             source,
             str(external_id) if external_id is not None else None,
             uploaded_by,
+            resolved_agent,
+            agent_identifier,
         ),
     ).fetchone()
     call_id = int(row["id"])

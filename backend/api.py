@@ -43,6 +43,8 @@ from . import audit_log
 from . import audit_store
 from . import audio_store
 from . import auth
+from . import call_agent_identity_aliases
+from . import call_agent_identity_aliases_api
 from . import db
 from . import env_keys
 from . import call_trail
@@ -78,6 +80,7 @@ from . import recap as pyai_recap
 from . import ticket_agent_aliases_api
 from . import ticket_agent_identity_aliases_api
 from . import ticket_api
+from . import team_performance_api
 from . import ticket_score_api
 from . import transcribe
 from .org_ids import (
@@ -120,7 +123,9 @@ app.add_middleware(auth.JwtAuthMiddleware)
 app.add_middleware(applog.RequestIdMiddleware)
 ticket_agent_aliases_api.register(app)
 ticket_agent_identity_aliases_api.register(app)
+call_agent_identity_aliases_api.register(app)
 ticket_score_api.register(app)
+team_performance_api.register(app)
 ticket_api.register(app)
 
 
@@ -2209,6 +2214,46 @@ def _hydrate_audit_segments(audit: dict, call_id: int, org_id: str) -> dict:
     return out
 
 
+class ReassignCallAgentBody(BaseModel):
+    agent_user_id: str
+
+
+@app.patch("/api/calls/{call_id}/agent")
+def reassign_call_agent(call_id: int, request: Request, body: ReassignCallAgentBody):
+    """IN-26: owner/manager correction for the exception cases — a
+    manager uploading on someone's behalf, a misrouted JustCall webhook,
+    an agent later identified for a call that ingested unresolved. Never
+    silent: writes an audit_log row with the real before/after, same
+    pattern as every other AC-63 write site."""
+    auth.require_owner_or_manager(request)
+    org_id = _org(request)
+    new_agent = parse_org_id(body.agent_user_id)
+    if not new_agent:
+        raise HTTPException(status_code=400, detail="A valid agent_user_id is required.")
+    with _conn() as c:
+        row = c.execute(
+            "SELECT agent_user_id FROM calls WHERE id = %s AND org_id = %s",
+            (call_id, org_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"No call with id {call_id}")
+        previous = str(row["agent_user_id"]) if row["agent_user_id"] else None
+        c.execute(
+            "UPDATE calls SET agent_user_id = %s WHERE id = %s AND org_id = %s",
+            (new_agent, call_id, org_id),
+        )
+    applog.event(
+        log, "call_agent_reassigned",
+        org_id=org_id, call_id=call_id, previous_agent=previous, new_agent=new_agent,
+    )
+    audit_log.record(
+        org_id, "call.agent_reassigned",
+        target_type="call", target_id=str(call_id),
+        before={"agent_user_id": previous}, after={"agent_user_id": new_agent},
+    )
+    return {"call_id": call_id, "agent_user_id": new_agent}
+
+
 @app.get("/api/calls/{call_id}/audit")
 def get_audit(call_id: int, request: Request, refresh: bool = False):
     org_id = _org(request)
@@ -2528,6 +2573,7 @@ def _ingest_audio_file(
     source: str | None = None,
     external_id: str | None = None,
     uploaded_by: str | None = None,
+    agent_identifier: str | None = None,
 ) -> tuple[int, bool]:
     """
     Dedup or transcribe one local audio file. Hear temp is unique per src_path.
@@ -2600,6 +2646,15 @@ def _ingest_audio_file(
                         },
                     )
                     return call_id, True
+                # IN-22/23: resolve a JustCall-supplied agent identifier
+                # against this org's own mapping before the insert — a
+                # manual upload has none (agent_identifier stays None,
+                # save_transcript() falls back to uploaded_by instead).
+                resolved_agent_user_id = None
+                if agent_identifier and source:
+                    resolved_agent_user_id = call_agent_identity_aliases.resolve_agent_user_id(
+                        org_id, source, agent_identifier,
+                    )
                 try:
                     call_id = transcribe.save_transcript(
                         conn, identity, job_id, result,
@@ -2609,6 +2664,8 @@ def _ingest_audio_file(
                         external_id=external_id,
                         org_id=org_id,
                         uploaded_by=uploaded_by,
+                        agent_user_id=resolved_agent_user_id,
+                        agent_identifier=agent_identifier,
                     )
                 except db.IntegrityError:
                     conn.rollback()
@@ -2757,12 +2814,14 @@ def _process_justcall_call(
                 f.write(data)
             source_name = justcall.display_name(payload or {}, cid)
             identity = justcall.identity_for(cid)
+            agent_identifier = justcall.agent_identity_for(payload or {})
             local_id, deduped = _ingest_audio_file(
                 tmp, source_name,
                 org_id=org_id,
                 identity=identity,
                 source="justcall",
                 external_id=cid,
+                agent_identifier=agent_identifier,
             )
             _store_playback(tmp, local_id, org_id)
             audit, _rh, _rid, _rv = _load_or_compute_audit(local_id, org_id)
