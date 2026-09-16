@@ -1,8 +1,7 @@
-"""TA-7/TA-13: the "Ticket QA" rubric — real content (PRD §10), still not
-the final design (PRD §4/§11). Every LLM-judged dimension carries
-scaffold=True so nothing downstream mistakes it for finished. TA-13 adds
-the real rubrics-table storage (ensure_ticket_rubric/fetch_active_ticket_
-rubric) and the new deterministic Response Timeliness dimension."""
+"""TA-13/TA-24: the "Ticket QA" rubric — final content (Sellable Release
+PRD §3), replacing TA-7's scaffold outright. TA-13 adds the real
+rubrics-table storage (ensure_ticket_rubric/fetch_active_ticket_rubric)
+and the deterministic Response Timeliness dimension."""
 
 from __future__ import annotations
 
@@ -15,9 +14,9 @@ import pytest
 
 from backend.paths import ROOT
 from backend.ticket_rubric import (
-    SCAFFOLD_TICKET_RUBRIC,
+    TICKET_QA_DIMENSIONS,
     evaluate_response_timeliness,
-    get_scaffold_rubric,
+    get_default_ticket_rubric,
 )
 
 FORBIDDEN_MODULES = ("rules_v8", "qa_v8")
@@ -34,17 +33,17 @@ def test_shares_no_code_with_the_call_rubric_dispatch():
             mod = node.module or ""
             assert not any(name in mod.split(".") for name in FORBIDDEN_MODULES)
     # no rules_v8-style deterministic "method" dispatch on any dimension
-    for dim in SCAFFOLD_TICKET_RUBRIC:
+    for dim in TICKET_QA_DIMENSIONS:
         assert "method" not in dim
 
 
-def test_every_dimension_is_labeled_as_scaffold():
-    for dim in SCAFFOLD_TICKET_RUBRIC:
-        assert dim["scaffold"] is True, dim["id"]
+def test_no_dimension_is_labeled_as_scaffold():
+    for dim in TICKET_QA_DIMENSIONS:
+        assert "scaffold" not in dim, dim["id"]
 
 
 def test_every_dimension_has_the_fields_ticket_scoring_reads():
-    for dim in SCAFFOLD_TICKET_RUBRIC:
+    for dim in TICKET_QA_DIMENSIONS:
         assert isinstance(dim["id"], str) and dim["id"]
         assert isinstance(dim["name"], str) and dim["name"]
         assert isinstance(dim["weight"], (int, float)) and dim["weight"] > 0
@@ -52,39 +51,39 @@ def test_every_dimension_has_the_fields_ticket_scoring_reads():
 
 
 def test_dimension_ids_are_unique():
-    ids = [d["id"] for d in SCAFFOLD_TICKET_RUBRIC]
+    ids = [d["id"] for d in TICKET_QA_DIMENSIONS]
     assert len(ids) == len(set(ids))
 
 
 def test_weights_sum_to_one_hundred():
-    assert sum(d["weight"] for d in SCAFFOLD_TICKET_RUBRIC) == 100
+    assert sum(d["weight"] for d in TICKET_QA_DIMENSIONS) == 100
 
 
-def test_covers_the_six_prd_named_criteria():
-    ids = {d["id"] for d in SCAFFOLD_TICKET_RUBRIC}
+def test_covers_the_five_prd_named_criteria():
+    ids = {d["id"] for d in TICKET_QA_DIMENSIONS}
     assert ids == {
-        "tone", "ownership", "diagnostic_reasoning", "investigation_rigor",
-        "resolution_effectiveness", "escalation_quality",
+        "problem_diagnosis", "resolution_correctness", "communication_clarity",
+        "tone_and_empathy", "ownership_and_handoff_quality",
     }
 
 
-def test_only_tone_is_customer_facing_only():
-    """IN-9: locks in the deliberate design choice — Tone is the one
-    dimension that's unambiguously about customer-visible communication.
-    The other five are left to include internal notes on purpose (the
-    epic's own motivating example was a decisive decision delivered
-    entirely through a note) — a silent drift here would quietly widen
-    or narrow which dimensions see internal contributions."""
-    flagged = {d["id"] for d in SCAFFOLD_TICKET_RUBRIC if d.get("customer_facing_only")}
-    assert flagged == {"tone"}
+def test_only_the_two_customer_facing_dimensions_are_flagged():
+    """IN-9's reasoning, reapplied to the final five: Communication Clarity
+    and Tone & Empathy are unambiguously about customer-visible
+    communication; the other three are left to include internal notes on
+    purpose (the epic's own motivating example was a decisive decision
+    delivered entirely through a note) — a silent drift here would
+    quietly widen or narrow which dimensions see internal contributions."""
+    flagged = {d["id"] for d in TICKET_QA_DIMENSIONS if d.get("customer_facing_only")}
+    assert flagged == {"communication_clarity", "tone_and_empathy"}
 
 
-def test_get_scaffold_rubric_returns_an_independent_copy():
-    a = get_scaffold_rubric()
+def test_get_default_ticket_rubric_returns_an_independent_copy():
+    a = get_default_ticket_rubric()
     a[0]["weight"] = 999
-    b = get_scaffold_rubric()
+    b = get_default_ticket_rubric()
     assert b[0]["weight"] != 999
-    assert b == SCAFFOLD_TICKET_RUBRIC
+    assert b == TICKET_QA_DIMENSIONS
 
 
 # ---------- exercises TA-6 end to end with this real rubric shape ----------
@@ -100,16 +99,16 @@ TURNS = [
 ]
 
 
-def test_scaffold_rubric_runs_end_to_end_through_ticket_scoring():
+def test_ticket_qa_rubric_runs_end_to_end_through_ticket_scoring():
     from backend import ticket_scoring
 
     def _dispatch(prompt: str) -> str:
-        if "diagnose" in prompt.lower():
+        if "diagnos" in prompt.lower():
             return json.dumps({
                 "verdict": "pass", "reasoning": "correctly named the 504",
                 "evidence_quote": "I can see the 504 in the logs", "evidence_seq": 1,
             })
-        if "resolved" in prompt.lower():
+        if "correct" in prompt.lower():
             return json.dumps({
                 "verdict": "pass", "reasoning": "customer confirmed the fix",
                 "evidence_quote": "That fixed it, thank you!", "evidence_seq": 2,
@@ -120,19 +119,19 @@ def test_scaffold_rubric_runs_end_to_end_through_ticket_scoring():
         })
 
     result = ticket_scoring.score_ticket(
-        TURNS, get_scaffold_rubric(), call_claude_fn=_dispatch,
+        TURNS, get_default_ticket_rubric(), call_claude_fn=_dispatch,
     )
     assert 0 <= result["score"] <= 100
     by_id = {f["id"]: f for f in result["findings"]}
-    assert set(by_id) == {d["id"] for d in SCAFFOLD_TICKET_RUBRIC}
-    assert by_id["diagnostic_reasoning"]["verdict"] == "pass"
-    assert by_id["diagnostic_reasoning"]["evidence_verified"] is True
-    assert by_id["resolution_effectiveness"]["verdict"] == "pass"
-    # escalation/ownership/tone/investigation weren't matched by the fake
-    # dispatcher's keywords, so they legitimately came back not_applicable
-    # — not_applicable dimensions are excluded from the score, not scored
-    # as failures (see ticket_scoring._numeric_score / _SKIP_SCORE).
-    assert by_id["escalation_quality"]["verdict"] == "not_applicable"
+    assert set(by_id) == {d["id"] for d in TICKET_QA_DIMENSIONS}
+    assert by_id["problem_diagnosis"]["verdict"] == "pass"
+    assert by_id["problem_diagnosis"]["evidence_verified"] is True
+    assert by_id["resolution_correctness"]["verdict"] == "pass"
+    # communication/tone/ownership weren't matched by the fake dispatcher's
+    # keywords, so they legitimately came back not_applicable —
+    # not_applicable dimensions are excluded from the score, not scored as
+    # failures (see ticket_scoring._numeric_score / _SKIP_SCORE).
+    assert by_id["ownership_and_handoff_quality"]["verdict"] == "not_applicable"
 
 
 # ---------- TA-13: evaluate_response_timeliness (deterministic, no Claude) ----------
@@ -264,7 +263,7 @@ def test_ensure_ticket_rubric_creates_a_row_when_none_exists_live():
 
         created = ticket_rubric.ensure_ticket_rubric(org_id)
         assert created["name"] == ticket_rubric.TICKET_QA_RUBRIC_NAME
-        assert len(created["dimensions"]) == 6
+        assert len(created["dimensions"]) == len(ticket_rubric.TICKET_QA_DIMENSIONS)
 
         # Idempotent: calling again returns the same row, doesn't duplicate.
         again = ticket_rubric.ensure_ticket_rubric(org_id)

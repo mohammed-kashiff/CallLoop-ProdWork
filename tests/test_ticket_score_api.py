@@ -94,15 +94,15 @@ def _no_prior_audit(monkeypatch):
     # TA-13: score_ticket_route calls ensure_ticket_rubric() before
     # scoring — without this mock these "mocked" tests would silently
     # hit the real rubrics table for DEFAULT_ORG_ID on every run. Reuses
-    # the real scaffold content (pure, no DB) rather than an empty list,
+    # the real default content (pure, no DB) rather than an empty list,
     # since some tests inspect the dimensions actually passed through.
-    from backend.ticket_rubric import get_scaffold_rubric
+    from backend.ticket_rubric import get_default_ticket_rubric
 
     monkeypatch.setattr(
         "backend.ticket_score_api.ticket_rubric.ensure_ticket_rubric",
         lambda org_id: {
             "id": "rubric-id", "name": "Ticket QA", "version": 1,
-            "dimensions": get_scaffold_rubric(),
+            "dimensions": get_default_ticket_rubric(),
         },
     )
 
@@ -149,7 +149,7 @@ def test_score_502_when_scoring_raises(auth_client, monkeypatch):
     assert r.status_code == 502
 
 
-def test_score_success_shape_and_scaffold_flag(auth_client, monkeypatch):
+def test_score_success_shape(auth_client, monkeypatch):
     tid = str(uuid.uuid4())
     seen_org = {}
 
@@ -162,14 +162,14 @@ def test_score_success_shape_and_scaffold_flag(auth_client, monkeypatch):
     _no_prior_audit(monkeypatch)
 
     def fake_score(turns, dimensions, **kwargs):
-        assert dimensions[0]["scaffold"] is True
+        assert dimensions[0]["id"] == "problem_diagnosis"
         assert turns[0]["seq"] == 0
         return {
             "score": 100.0,
             "primary_owner": None,
             "spans": [],
             "findings": [
-                {"id": "diagnostic_reasoning", "verdict": "pass",
+                {"id": "problem_diagnosis", "verdict": "pass",
                  "evidence_text": "Fixed the payment worker.", "evidence_seq": 1,
                  "evidence_verified": True, "attributed_to": None},
             ],
@@ -180,7 +180,6 @@ def test_score_success_shape_and_scaffold_flag(auth_client, monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["ticket_id"] == tid
-    assert body["rubric_scaffold"] is True
     assert body["cached"] is False
     assert body["score"] == 100.0
     assert body["findings"][0]["evidence_verified"] is True
@@ -356,12 +355,11 @@ def test_upload_then_score_live_end_to_end(monkeypatch):
         assert score_resp.status_code == 200, score_resp.text
         body = score_resp.json()
         assert body["ticket_id"] == ticket_id
-        assert body["rubric_scaffold"] is True
         assert body["cached"] is False
         assert 0 <= body["score"] <= 100
-        # 6 scaffold dimensions (TA-7/13) + Response Timeliness (TA-13,
+        # 5 Ticket QA dimensions (TA-24) + Response Timeliness (TA-13,
         # deterministic — appended fresh on every response, cached or not).
-        assert len(body["findings"]) == 7
+        assert len(body["findings"]) == 6
         assert all("verdict" in f for f in body["findings"])
         assert sum(1 for f in body["findings"] if f.get("deterministic")) == 1
 

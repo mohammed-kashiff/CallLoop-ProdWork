@@ -1,5 +1,6 @@
-"""Ticket Audit Engine (TA-7 scaffold content, TA-13 real storage): the
-"Ticket QA" rubric.
+"""Ticket Audit Engine: the real "Ticket QA" rubric (TA-20/TA-23/TA-24,
+Sellable Release PRD §3, 2026-09-12 — replaces TA-7's scaffold content
+outright).
 
 PRD §10: a Ticket QA rubric is a normal entry in the existing `rubrics`
 library — no schema change, since that table was already designed to
@@ -10,25 +11,36 @@ below creates that row the first time an org scores a ticket, so scoring
 is genuinely backed by a real rubrics-table entry, not just this file's
 in-memory constant.
 
-*** Still not the final rubric design. *** None of this needs to be
-finalized for v1 (PRD §4/§10/TA-7's own scaffolding note) — this ships
-enough real content to validate the pipeline (TA-14). The full rubric
-design (final weights, dimension set, per-span v2 scoring) is a separate,
-later effort once the pipeline itself is proven (PRD §12 step 4). Every
-dimension still carries "scaffold": True for that reason.
+Content, grounded in what the Intercom ingestion pipeline actually
+proves is present in real ticket data — not generic, not guessed: real
+sample payloads examined during that epic showed decisive,
+customer-impacting decisions delivered through internal notes (a
+refund-policy determination), multi-agent handoffs on a single case, and
+real per-message timestamps.
 
-Content, per PRD §10:
-  - Diagnostic Reasoning, Investigation Rigor, Escalation Quality: carried
-    over largely unchanged from TA-7 — these judge technical reasoning
-    against an issue, not against a call specifically, so they transfer.
-  - Ownership: genuinely reworked for the async, multi-touch pattern — a
-    ticket can bounce between agents and span days, which a single
-    synchronous call never has to account for.
-  - Response Timeliness: new. Tickets enable this and calls structurally
-    can't — see evaluate_response_timeliness() below, which is
-    deterministic (real elapsed time between messages), not an LLM
-    judgment call, and is NOT folded into score_ticket()'s weighted
-    score for v1 — shown as its own informational finding instead.
+  - Problem Diagnosis (22%): did the agent correctly identify the
+    customer's actual issue before acting — evidenced against the
+    agent's own turns, not whether the ticket was eventually closed.
+  - Resolution Correctness (27%): was the fix/decision actually correct
+    against policy and the issue, not just "a resolution was offered."
+    Internal notes are evidence here, not just customer-facing replies —
+    the exact refund-policy-in-a-note case this rubric is grounded in.
+  - Communication Clarity (17%) and Tone & Empathy (17%): both
+    customer_facing_only=True, same reasoning IN-9 already established
+    for the single "Tone" dimension in the old scaffold — these two are
+    unambiguously about customer-visible communication, unlike the other
+    three, which are deliberately left able to see internal notes.
+  - Ownership & Handoff Quality (17%): the async, multi-touch pattern
+    tickets structurally have and calls don't — a ticket can bounce
+    between agents and span days.
+  - Response Timeliness: unchanged, deterministic, informational only
+    (see evaluate_response_timeliness() below) — not folded into the
+    weighted score, shown per agent span once the Per-Agent Ticket Audit
+    epic (TA-21) ships.
+
+Weights were originally specified summing to 90% (TA-23) — rescaled
+proportionally (×1.111, rounded, adjusted by one point) to land on 100%
+without changing any dimension's relative emphasis.
 
 Shares zero code with rules_v8.py (the call engine's rubric dispatch) —
 LLM-judged questions have no deterministic `method` dispatch.
@@ -50,33 +62,60 @@ from .org_ids import org_scope
 TICKET_QA_RUBRIC_NAME = "Ticket QA"
 _RUBRIC_KIND = "ticket"
 
-SCAFFOLD_TICKET_RUBRIC: list[dict] = [
+TICKET_QA_DIMENSIONS: list[dict] = [
     {
-        "id": "tone",
-        "name": "Tone",
-        "weight": 15,
+        "id": "problem_diagnosis",
+        "name": "Problem Diagnosis",
+        "weight": 22,
         "question": (
-            "Did the agent maintain a professional, empathetic tone "
-            "throughout the ticket, even if the customer was frustrated?"
+            "Did the agent correctly identify the customer's actual "
+            "underlying issue, using the technical details available in "
+            "the thread (including any screenshots described in it), "
+            "before acting on it?"
         ),
-        "scaffold": True,
-        # IN-9: the one dimension of the six that's unambiguously about
-        # customer-facing communication — tone toward a customer can't be
-        # judged from a note they never saw. The other five (Ownership,
-        # Diagnostic Reasoning, Investigation Rigor, Resolution
-        # Effectiveness, Escalation Quality) are deliberately left
-        # customer_facing_only=False (the default) — they're about the
-        # agent's internal work, which is exactly what IN-9's own
-        # motivating example showed can live entirely inside a note (a
-        # refund-policy determination delivered through note_and_unsnooze,
-        # never surfaced as a customer-facing comment). Excluding notes
-        # from those would recreate the same blind spot.
+    },
+    {
+        "id": "resolution_correctness",
+        "name": "Resolution Correctness",
+        "weight": 27,
+        "question": (
+            "Was the fix or decision the agent actually made correct "
+            "against policy and the diagnosed issue — not just whether a "
+            "resolution was offered? Internal notes count as evidence "
+            "here: a decision recorded only in a note (e.g. a refund "
+            "determination) is still the resolution being judged."
+        ),
+    },
+    {
+        "id": "communication_clarity",
+        "name": "Communication Clarity",
+        "weight": 17,
+        "question": (
+            "Were the agent's customer-facing replies clear, free of "
+            "unexplained jargon, and easy for the customer to act on?"
+        ),
+        # Unambiguously about customer-visible language — judging it against
+        # an internal note the customer never saw would score wording they
+        # never read.
         "customer_facing_only": True,
     },
     {
-        "id": "ownership",
-        "name": "Ownership",
-        "weight": 15,
+        "id": "tone_and_empathy",
+        "name": "Tone & Empathy",
+        "weight": 17,
+        "question": (
+            "Did the agent maintain a professional, empathetic tone "
+            "toward the customer throughout the ticket, even if the "
+            "customer was frustrated?"
+        ),
+        # Same reasoning as Communication Clarity — tone toward a customer
+        # can't be judged from a note they never saw.
+        "customer_facing_only": True,
+    },
+    {
+        "id": "ownership_and_handoff_quality",
+        "name": "Ownership & Handoff Quality",
+        "weight": 17,
         "question": (
             "Across the whole thread — even as it may have passed between "
             "different agents or spanned multiple days — was it always "
@@ -85,50 +124,10 @@ SCAFFOLD_TICKET_RUBRIC: list[dict] = [
             "leaving the ticket to go quiet or making the customer "
             "re-explain what already happened?"
         ),
-        "scaffold": True,
-    },
-    {
-        "id": "diagnostic_reasoning",
-        "name": "Diagnostic Reasoning",
-        "weight": 20,
-        "question": (
-            "Did the agent correctly diagnose the underlying cause of the "
-            "customer's problem, using the technical details available in "
-            "the thread (including any screenshots described in it)?"
-        ),
-        "scaffold": True,
-    },
-    {
-        "id": "investigation_rigor",
-        "name": "Investigation Rigor",
-        "weight": 20,
-        "question": (
-            "Did the agent investigate thoroughly before responding — "
-            "checking logs, reproducing the issue, or asking clarifying "
-            "questions — rather than guessing at a fix?"
-        ),
-        "scaffold": True,
-    },
-    {
-        "id": "resolution_effectiveness",
-        "name": "Resolution Effectiveness",
-        "weight": 20,
-        "question": (
-            "Was the customer's issue actually resolved by the end of "
-            "the thread, not just acknowledged?"
-        ),
-        "scaffold": True,
-    },
-    {
-        "id": "escalation_quality",
-        "name": "Escalation Quality",
-        "weight": 10,
-        "question": (
-            "If the issue required escalation or handoff, was it "
-            "escalated promptly and with enough context for the next "
-            "agent to continue without re-asking the customer?"
-        ),
-        "scaffold": True,
+        # Deliberately NOT customer_facing_only — a clean handoff is judged
+        # from internal notes/context passed between agents as much as from
+        # what the customer saw, consistent with IN-9's reasoning for
+        # Resolution Correctness above.
     },
 ]
 
@@ -136,10 +135,10 @@ _TIMELINESS_PASS_MAX = timedelta(hours=4)
 _TIMELINESS_PARTIAL_MAX = timedelta(hours=24)
 
 
-def get_scaffold_rubric() -> list[dict]:
-    """A fresh copy of the six LLM-judged dimensions — callers can't
+def get_default_ticket_rubric() -> list[dict]:
+    """A fresh copy of the five LLM-judged dimensions — callers can't
     accidentally mutate the module-level constant."""
-    return copy.deepcopy(SCAFFOLD_TICKET_RUBRIC)
+    return copy.deepcopy(TICKET_QA_DIMENSIONS)
 
 
 def _as_datetime(value) -> datetime | None:
@@ -158,11 +157,10 @@ def _as_datetime(value) -> datetime | None:
 
 
 def evaluate_response_timeliness(turns: list[dict]) -> dict:
-    """TA-13's new dimension: the longest real wait between a customer
-    message and the next AGENT reply (bot replies don't count as the
-    agent responding). Deterministic — a computed number, not a
-    judgment call — so it never calls Claude and is scaffold=False;
-    "scaffold" here describes the LLM-judged six, not this one.
+    """TA-13's dimension: the longest real wait between a customer message
+    and the next AGENT reply (bot replies don't count as the agent
+    responding). Deterministic — a computed number, not a judgment call —
+    so it never calls Claude, unlike the five LLM-judged TICKET_QA_DIMENSIONS.
 
     Needs turn["sent_at"] (ticket_pdf_parser.py's real per-message
     timestamps, TA-13). A ticket with no timestamps at all (ingested
@@ -241,7 +239,7 @@ def evaluate_response_timeliness(turns: list[dict]) -> dict:
 
 
 def _default_ticket_definition() -> dict:
-    return {"kind": _RUBRIC_KIND, "dimensions": get_scaffold_rubric()}
+    return {"kind": _RUBRIC_KIND, "dimensions": get_default_ticket_rubric()}
 
 
 def fetch_active_ticket_rubric(org_id: str) -> dict | None:

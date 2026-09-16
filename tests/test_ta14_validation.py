@@ -114,10 +114,9 @@ def test_real_ticket_end_to_end_text_only(monkeypatch):
         score_resp = client.post(f"/api/tickets/{ticket_id}/score")
         assert score_resp.status_code == 200, score_resp.text
         scorecard = score_resp.json()
-        assert scorecard["rubric_scaffold"] is True
         assert 0 <= scorecard["score"] <= 100
-        # 6 LLM-judged dimensions (TA-13) + Response Timeliness (deterministic).
-        assert len(scorecard["findings"]) == 7
+        # 5 LLM-judged dimensions (TA-24) + Response Timeliness (deterministic).
+        assert len(scorecard["findings"]) == 6
 
         # Independently re-verify the primary success metric's own
         # definition of "verified evidence" for text, using the exact

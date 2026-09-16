@@ -584,11 +584,6 @@ export function TicketAudit() {
         </div>
       </header>
 
-      <p className="scaffold-banner">
-        Scaffolding — six placeholder criteria (not the final rubric, see TA-13) exercising the
-        pipeline end to end. Scores here validate the mechanism, not a real performance review.
-      </p>
-
       {!ticketId && role === 'owner' ? <AgentAliasMapping /> : null}
       {!ticketId && role === 'owner' ? <IntercomIdentityAliasMapping /> : null}
 

@@ -21,9 +21,10 @@ Off by default: an already-audited ticket is not silently re-scored;
 ?refresh=true on POST /api/tickets/{id}/score is 403 until a platform
 admin opts the org in.
 show_ticket_audit_nav gates the "Ticket Audit" sidebar entry (TA-10) —
-off by default since the whole engine is still scaffolding (PRD §11: it
-must not be mistaken for production). A platform admin turns it on per
-org from Command Center to let a specific team try it.
+off by default pending the Launch Gating epic's rollout checklist
+(TA-22), not because the rubric itself is unfinished (TA-24 replaced the
+scaffold content with the real PRD-specified rubric). A platform admin
+turns it on per org from Command Center to let a specific team try it.
 
 org_id is the JWT tenant only. Do not read it from the request body here.
 """
@@ -100,8 +101,8 @@ FEATURE_DEFINITIONS: dict[str, FeatureDefinition] = {
         "label": "Ticket Audit nav",
         "description": (
             "Shows the Ticket Audit page in this org's sidebar. Off by "
-            "default — the ticket-scoring engine is still scaffolding, not "
-            "the final rubric. Turn on per org to let a team try it."
+            "default pending launch gating (TA-22), not because the "
+            "rubric is unfinished. Turn on per org to let a team try it."
         ),
         "risk": "low",
         "default_enabled": False,

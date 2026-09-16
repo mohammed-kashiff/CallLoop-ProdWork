@@ -10,11 +10,10 @@ development; `register()` is called separately from api.py.
 POST /api/tickets/{ticket_id}/score scores every turn against the org's
 "Ticket QA" rubric — a real rubrics-table row (TA-13, PRD §10), created
 on first use via ticket_rubric.ensure_ticket_rubric() — via
-ticket_scoring.score_ticket(). *** Still not the final rubric design,
-see ticket_rubric.py's own scaffolding note. *** Response Timeliness
-(TA-13) is computed deterministically from real message timestamps and
-appended to the findings list separately — it is not part of
-score_ticket()'s weighted score for v1.
+ticket_scoring.score_ticket(). Response Timeliness (TA-13) is computed
+deterministically from real message timestamps and appended to the
+findings list separately — it is not part of score_ticket()'s weighted
+score for v1.
 
 TA-11 (PRD §9): the first successful POST persists the scorecard in
 ticket_audits. A later POST without ?refresh=true returns that stored
@@ -101,7 +100,6 @@ def _payload(
     }
     return {
         "ticket_id": tid,
-        "rubric_scaffold": True,
         "cached": cached,
         "view_scope": "full" if is_manager else "own",
         **filtered,
