@@ -375,6 +375,75 @@ def test_score_renormalises_when_a_dimension_errors():
     assert result["score"] == 100.0  # only the passing 40-weight dim counts
 
 
+def test_earned_marks_are_weight_times_points_for_the_verdict():
+    """Each finding's `earned` field is what the frontend renders as
+    "given/total" next to a criterion — weight for a pass, half-weight
+    for a partial, zero for a fail. Not part of _numeric_score's
+    renormalization test above; this asserts the per-finding field
+    directly."""
+    from backend.ticket_scoring import score_ticket_for_agent
+
+    dims = [
+        {"id": "passed", "question": "Q-pass", "weight": 20},
+        {"id": "partial", "question": "Q-partial", "weight": 30},
+        {"id": "failed", "question": "Q-fail", "weight": 50},
+    ]
+
+    def _dispatch(prompt: str) -> str:
+        if "Q-pass" in prompt:
+            verdict = "pass"
+        elif "Q-partial" in prompt:
+            verdict = "partial"
+        else:
+            verdict = "fail"
+        return json.dumps({
+            "verdict": verdict, "reasoning": "r",
+            "evidence_quote": "I can help with that", "evidence_seq": 1,
+        })
+
+    result = score_ticket_for_agent(
+        TURNS, dims, target_agent_user_id="agent-a", call_claude_fn=_dispatch,
+    )
+    by_id = {f["id"]: f for f in result["findings"]}
+    assert by_id["passed"]["earned"] == 20
+    assert by_id["partial"]["earned"] == 15
+    assert by_id["failed"]["earned"] == 0
+
+
+def test_earned_is_none_for_not_applicable_and_error_verdicts():
+    """A dimension excluded from the weighted score (not_applicable, or
+    downgraded to error for foreign evidence) has nothing to show as
+    "given/total" — earned is None, not a misleading 0."""
+    from backend.ticket_scoring import score_ticket_for_agent
+
+    dims = [{"id": "na", "question": "Q1", "weight": 100}]
+
+    def _not_applicable(prompt: str) -> str:
+        return json.dumps({
+            "verdict": "not_applicable", "reasoning": "n/a",
+            "evidence_quote": "", "evidence_seq": None,
+        })
+
+    result = score_ticket_for_agent(
+        TURNS, dims, target_agent_user_id="agent-a", call_claude_fn=_not_applicable,
+    )
+    assert result["findings"][0]["earned"] is None
+
+    def _foreign_evidence(prompt: str) -> str:
+        # evidence_seq=3 belongs to agent-b's span, not agent-a's — this
+        # gets downgraded to "error" by evidence-ownership enforcement.
+        return json.dumps({
+            "verdict": "pass", "reasoning": "r",
+            "evidence_quote": "restarted the payment worker", "evidence_seq": 3,
+        })
+
+    result = score_ticket_for_agent(
+        TURNS, dims, target_agent_user_id="agent-a", call_claude_fn=_foreign_evidence,
+    )
+    assert result["findings"][0]["verdict"] == "error"
+    assert result["findings"][0]["earned"] is None
+
+
 def test_score_ticket_per_agent_does_not_call_run_v8_wave(monkeypatch):
     """Own loop: even if qa_v8.run_v8_wave exists, TA-6 must not touch it."""
     from backend import ticket_scoring

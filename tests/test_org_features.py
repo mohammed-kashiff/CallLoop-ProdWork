@@ -139,12 +139,13 @@ def test_default_features_keeps_trial_on_and_selfhosted_off():
     assert flags["enable_call_rescoring"] is False
     assert "enable_ticket_rescoring" in FEATURE_KEYS
     assert flags["enable_ticket_rescoring"] is False
+    # TA-32 (Launch Gating, 2026-09-16): on by default now that the Rubric,
+    # Roles, and Per-Agent Rebuild epics it was gating on are shipped.
     assert "show_ticket_audit_nav" in FEATURE_KEYS
-    assert flags["show_ticket_audit_nav"] is False
+    assert flags["show_ticket_audit_nav"] is True
     off_by_default = {
         "use_selfhosted_transcription", "enable_bulk_call_clear",
         "enable_call_rescoring", "enable_ticket_rescoring",
-        "show_ticket_audit_nav",
     }
     assert all(
         flags[key] is True

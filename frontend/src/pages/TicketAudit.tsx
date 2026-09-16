@@ -36,9 +36,22 @@ type TicketFinding = {
   evidence_verified: boolean
   attributed_to: string | null
   weight?: number
+  // This finding's contribution to the weighted score — weight for a
+  // pass, half-weight for a partial, zero for a fail — or null when the
+  // finding isn't part of the weighted score at all (not_applicable,
+  // error, or a dimension with no weight like Response Timeliness).
+  // Read straight from the rubric's own weight at scoring time, so a
+  // rubric edit is picked up automatically on the next score.
+  earned?: number | null
   // TA-13: Response Timeliness is computed from real message timestamps,
   // not judged by Claude — not folded into the weighted score above.
   deterministic?: boolean
+}
+
+function marksLabel(f: TicketFinding): string | null {
+  if (f.earned == null || f.weight == null) return null
+  const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
+  return `${fmt(f.earned)}/${fmt(f.weight)}`
 }
 
 type TicketSpan = {
@@ -733,8 +746,13 @@ export function TicketAudit() {
                                       </span>
                                     )}
                                   </h3>
-                                  <span className={`verdict verdict-${verdictSlug(f.verdict)}`}>
-                                    {verdictLabel(f.verdict)}
+                                  <span className="criterion-badges">
+                                    {marksLabel(f) && (
+                                      <span className="criterion-marks">{marksLabel(f)}</span>
+                                    )}
+                                    <span className={`verdict verdict-${verdictSlug(f.verdict)}`}>
+                                      {verdictLabel(f.verdict)}
+                                    </span>
                                   </span>
                                 </div>
                                 {f.reasoning && <p className="criterion-rationale">{f.reasoning}</p>}

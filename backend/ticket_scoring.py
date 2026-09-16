@@ -57,6 +57,22 @@ ALLOWED_VERDICTS = ("pass", "partial", "fail")
 POINTS = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
 _SKIP_SCORE = frozenset({"not_applicable", "error", "unverified"})
 
+
+def _earned_weight(verdict: str, weight: float) -> float | None:
+    """This one finding's contribution in rubric points — weight × the
+    verdict's points fraction (pass=full, partial=half, fail=0) — or None
+    when the finding isn't part of the weighted score at all (not_applicable/
+    error/unverified, or a dimension with no weight, e.g. Response
+    Timeliness). Single source of truth for the pass/partial/fail→points
+    rule, shared by _numeric_score() and the per-finding "earned" field the
+    frontend renders next to each criterion."""
+    if verdict in _SKIP_SCORE or weight <= 0:
+        return None
+    points = POINTS.get(verdict)
+    if points is None:
+        return None
+    return weight * points
+
 _AGENT_UNDER_REVIEW = "agent under review"
 _OTHER_TEAMMATE = "a different teammate — shown for context only, do not judge them"
 
@@ -385,9 +401,11 @@ def run_ticket_wave_for_agent(
             call_claude_fn=call_claude_fn,
             validate_evidence_fn=validate_evidence_fn,
         )
+        weight = dim.get("weight") or 0
         result["id"] = dim.get("id")
         result["name"] = dim.get("name")
-        result["weight"] = dim.get("weight") or 0
+        result["weight"] = weight
+        result["earned"] = _earned_weight(result["verdict"], weight)
         result["attributed_to"] = target_agent_user_id if result["evidence_verified"] else None
         findings.append(result)
         applog.event(
@@ -405,13 +423,12 @@ def _numeric_score(findings: list[dict]) -> float:
     num = den = 0.0
     for f in findings:
         weight = f.get("weight") or 0
-        verdict = f.get("verdict")
-        if verdict in _SKIP_SCORE or weight <= 0:
+        earned = f.get("earned")
+        if earned is None:
+            earned = _earned_weight(f.get("verdict"), weight)
+        if earned is None:
             continue
-        points = POINTS.get(verdict)
-        if points is None:
-            continue
-        num += weight * points
+        num += earned
         den += weight
     if den <= 0:
         return 0.0

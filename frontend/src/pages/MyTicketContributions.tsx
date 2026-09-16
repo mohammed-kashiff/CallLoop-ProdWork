@@ -24,6 +24,8 @@ type OwnFinding = {
   verdict: string
   evidence_text: string | null
   evidence_seq: number | null
+  weight?: number
+  earned?: number | null
 }
 
 type OwnTicketContribution = {
@@ -39,6 +41,12 @@ function verdictSlug(verdict: string): string {
   if (verdict === 'not_applicable') return 'n-a'
   if (verdict === 'error') return 'fail'
   return verdict
+}
+
+function marksLabel(f: OwnFinding): string | null {
+  if (f.earned == null || f.weight == null) return null
+  const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
+  return `${fmt(f.earned)}/${fmt(f.weight)}`
 }
 
 export function MyTicketContributions() {
@@ -132,8 +140,11 @@ export function MyTicketContributions() {
                 <li key={f.id} className="criterion">
                   <div className="criterion-top">
                     <h3>{f.name || f.id}</h3>
-                    <span className={`verdict verdict-${verdictSlug(f.verdict)}`}>
-                      {f.verdict === 'not_applicable' ? 'N/A' : f.verdict.toUpperCase()}
+                    <span className="criterion-badges">
+                      {marksLabel(f) && <span className="criterion-marks">{marksLabel(f)}</span>}
+                      <span className={`verdict verdict-${verdictSlug(f.verdict)}`}>
+                        {f.verdict === 'not_applicable' ? 'N/A' : f.verdict.toUpperCase()}
+                      </span>
                     </span>
                   </div>
                   <TicketEvidence

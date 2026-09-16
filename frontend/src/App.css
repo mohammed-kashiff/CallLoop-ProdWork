@@ -2056,6 +2056,21 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   background: var(--control-bg);
 }
 
+.criterion-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.criterion-marks {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted-fg);
+  font-variant-numeric: tabular-nums;
+}
+
 .verdict-pass {
   color: var(--pass);
   background: rgba(15, 118, 110, 0.08);

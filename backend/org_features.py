@@ -17,14 +17,17 @@ number). Off by default means neither ?refresh=true nor a retranscribe can
 recompute an already-scored call's audit for an org until a platform admin
 opts that org in.
 enable_ticket_rescoring is the same rule for tickets (TA-11 / PRD §9).
-Off by default: an already-audited ticket is not silently re-scored;
-?refresh=true on POST /api/tickets/{id}/score is 403 until a platform
-admin opts the org in.
-show_ticket_audit_nav gates the "Ticket Audit" sidebar entry (TA-10) —
-off by default pending the Launch Gating epic's rollout checklist
-(TA-22), not because the rubric itself is unfinished (TA-24 replaced the
-scaffold content with the real PRD-specified rubric). A platform admin
-turns it on per org from Command Center to let a specific team try it.
+**TA-33 (Launch Gating, 2026-09-16): deliberately kept off by default,
+permanently — not a leftover launch-gating caution flag.** Same reasoning
+as enable_call_rescoring: Claude isn't perfectly deterministic, so a
+score should stay fixed once set rather than drift on a re-run, and
+re-scoring costs a real Claude call per agent per ticket. An org opts in
+per-org from Command Center when they specifically want that tradeoff.
+show_ticket_audit_nav gates the "Ticket Audit" sidebar entry (TA-10).
+**TA-32 (Launch Gating, 2026-09-16): on by default for new orgs** — the
+Real Ticket QA Rubric, Roles, and Per-Agent Ticket Audit Rebuild epics
+this flag was gating on are shipped. A platform admin can still turn it
+off per org from Command Center if a specific team shouldn't see it yet.
 
 org_id is the JWT tenant only. Do not read it from the request body here.
 """
@@ -100,12 +103,12 @@ FEATURE_DEFINITIONS: dict[str, FeatureDefinition] = {
     "show_ticket_audit_nav": {
         "label": "Ticket Audit nav",
         "description": (
-            "Shows the Ticket Audit page in this org's sidebar. Off by "
-            "default pending launch gating (TA-22), not because the "
-            "rubric is unfinished. Turn on per org to let a team try it."
+            "Shows the Ticket Audit page in this org's sidebar. On by "
+            "default (TA-32, Launch Gating) — turn off per org if a "
+            "specific team shouldn't see it yet."
         ),
         "risk": "low",
-        "default_enabled": False,
+        "default_enabled": True,
     },
     "use_selfhosted_transcription": {
         "label": "Self-hosted transcription",
@@ -129,9 +132,11 @@ FEATURE_DEFINITIONS: dict[str, FeatureDefinition] = {
     "enable_ticket_rescoring": {
         "label": "Ticket rescoring",
         "description": (
-            "Lets an already-audited ticket be re-scored. Off by default "
-            "so a ticket's score stays fixed once set. Off until you turn "
-            "it on for this org."
+            "Lets an already-audited ticket be re-scored. Deliberately off "
+            "by default, permanently (TA-33, Launch Gating) — a ticket's "
+            "score stays fixed once set rather than drift on a re-run, and "
+            "re-scoring spends a real Claude call per agent. Turn on per "
+            "org if that tradeoff is wanted there."
         ),
         "risk": "medium",
         "default_enabled": False,
