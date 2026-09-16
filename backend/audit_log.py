@@ -76,3 +76,71 @@ def record(
             log, "audit_log_write_failed", level=logging.ERROR,
             org_id=oid, action=action, error=applog.safe_exception_text(e),
         )
+
+
+def _iso(value):
+    return value.isoformat() if hasattr(value, "isoformat") else value
+
+
+def _row_to_dict(row, *, include_org: bool = False) -> dict:
+    out = {
+        "id": str(row["id"]),
+        "actor_id": str(row["actor_id"]) if row["actor_id"] else None,
+        "actor_email": row["actor_email"],
+        "action": row["action"],
+        "target_type": row["target_type"],
+        "target_id": row["target_id"],
+        "before": row["before"],
+        "after": row["after"],
+        "ip_address": row["ip_address"],
+        "created_at": _iso(row["created_at"]),
+    }
+    if include_org:
+        out["org_id"] = str(row["org_id"])
+    return out
+
+
+def list_for_org(org_id: str, *, limit: int = 200) -> list[dict]:
+    """AC-69: every audit_log row for this org, newest first — the
+    org-scoped Activity Log an owner/manager sees. RLS-scoped like every
+    other org read; empty list for an invalid org_id rather than raising,
+    since this is a read-only view, not a mutation."""
+    oid = parse_org_id(org_id)
+    if not oid:
+        return []
+    lim = max(1, min(int(limit), 500))
+    with org_scope(oid):
+        with db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, actor_id, actor_email, action, target_type, target_id,
+                       before, after, ip_address, created_at
+                FROM audit_log
+                WHERE org_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (oid, lim),
+            ).fetchall()
+    return [_row_to_dict(r) for r in rows or []]
+
+
+def list_all(*, limit: int = 200) -> list[dict]:
+    """AC-69: every org's audit_log rows, newest first — the platform-
+    admin cross-org Activity Log. bypass_rls, narrowly scoped to this one
+    read (same pattern as org_vault.find_org_id_by_external_account /
+    admin_console.search_directory) — caller must already have checked
+    auth.require_platform_admin before calling this."""
+    lim = max(1, min(int(limit), 500))
+    with db.connection(bypass_rls=True) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, org_id, actor_id, actor_email, action, target_type,
+                   target_id, before, after, ip_address, created_at
+            FROM audit_log
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (lim,),
+        ).fetchall()
+    return [_row_to_dict(r, include_org=True) for r in rows or []]

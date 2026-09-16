@@ -39,6 +39,7 @@ from pydantic import BaseModel
 from . import admin_console
 from . import admin_provision
 from . import applog
+from . import audit_log
 from . import audit_store
 from . import audio_store
 from . import auth
@@ -58,6 +59,7 @@ from . import org_vault
 from . import password_events
 from . import platform_admins
 from . import product_events
+from . import rate_limit
 from . import rubric_builder
 from . import sentry_report
 from . import tracing
@@ -748,6 +750,14 @@ def admin_call_logs_export(request: Request, query: str = ""):
         log, "admin_call_logs_exported",
         count=len(calls), scope=matched.get("scope"), org_id=matched.get("org_id"),
     )
+    if matched.get("org_id"):
+        # Cross-org/"all" scope exports have no single org_id to attach an
+        # audit_log row to (NOT NULL by design, same boundary as platform
+        # admin actions) — only a single-org-scoped export gets a row.
+        audit_log.record(
+            matched["org_id"], "export.generated",
+            target_type="call_logs_csv", after={"count": len(calls), "scope": matched.get("scope")},
+        )
     # UTF-8 BOM helps Excel open the CSV cleanly
     content = "\ufeff" + buf.getvalue()
     return Response(
@@ -757,6 +767,22 @@ def admin_call_logs_export(request: Request, query: str = ""):
             "Content-Disposition": f'attachment; filename="callproof-call-logs-{stamp}.csv"',
         },
     )
+
+
+@app.get("/api/audit-log")
+def audit_log_route(request: Request, limit: int = 200):
+    """AC-69: this org's own Activity Log — owner or manager only (AC-56),
+    same tier as the ticket-audit team view and the rubric builder."""
+    auth.require_owner_or_manager(request)
+    org_id = auth.org_id_from_request(request)
+    return {"rows": audit_log.list_for_org(org_id, limit=limit)}
+
+
+@app.get("/api/admin/audit-log")
+def admin_audit_log_route(request: Request, limit: int = 200):
+    """AC-69: every org's Activity Log — Command Center, platform admin only."""
+    auth.require_platform_admin(request)
+    return {"rows": audit_log.list_all(limit=limit)}
 
 
 @app.get("/api/admin/orgs/{org_id}/rubric")
@@ -2039,6 +2065,10 @@ def export_scorecard(request: Request):
     body = _scorecard_xls(records)
     applog.event(log, "scorecard_exported", count=len(records))
     log.info("scorecard export %d audited call(s)", len(records))
+    audit_log.record(
+        _org(request), "export.generated",
+        target_type="scorecard_xls", after={"count": len(records)},
+    )
     return Response(
         content=body,
         media_type="application/vnd.ms-excel",
@@ -2111,6 +2141,10 @@ def export_calls(request: Request, format: str = "csv"):
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     applog.event(log, "calls_exported", count=len(records), format=fmt)
     log.info("bulk export %d audited call(s) as %s", len(records), fmt)
+    audit_log.record(
+        org_id, "export.generated",
+        target_type=f"calls_{fmt}", after={"count": len(records)},
+    )
 
     if fmt == "json":
         body = json.dumps({"exported_at": stamp, "count": len(records), "calls": records}, indent=2)
@@ -3387,6 +3421,40 @@ def _sync_intercom_recent(org_id: str, *, hours: int = 24) -> dict:
     return {"found": found, "processed": processed, "errors": errors}
 
 
+_intercom_poll_failures: dict[str, int] = {}
+_INTERCOM_POLL_ERROR_ESCALATE_EVERY = 20  # same cadence as JustCall (AC-54)
+
+
+def _intercom_poll_error_level(consecutive: int) -> int:
+    """AC-71: parity with _justcall_poll_error_level — a persistently
+    broken connection shouldn't page on every single cycle forever, but
+    the first failure and every 20th repeat still should."""
+    if consecutive <= 1 or consecutive % _INTERCOM_POLL_ERROR_ESCALATE_EVERY == 0:
+        return logging.ERROR
+    return logging.WARNING
+
+
+def _record_intercom_poll_failure(org_id: str, exc: BaseException) -> None:
+    n = _intercom_poll_failures.get(org_id, 0) + 1
+    _intercom_poll_failures[org_id] = n
+    applog.event(
+        log, "intercom_poll_error",
+        level=_intercom_poll_error_level(n),
+        consecutive=n,
+        **_org_error_fields(org_id, exc),
+    )
+
+
+def _record_intercom_poll_success(org_id: str) -> None:
+    prev = _intercom_poll_failures.pop(org_id, 0)
+    if prev:
+        org_name = _org_name_for_log(org_id)
+        applog.event(
+            log, "intercom_poll_recovered",
+            org_id=org_id, org_name=org_name or "-", previous_consecutive=prev,
+        )
+
+
 def _intercom_poll_loop():
     while True:
         try:
@@ -3398,10 +3466,9 @@ def _intercom_poll_loop():
                 with org_scope(oid):
                     _sync_intercom_recent(oid)
             except Exception as e:  # noqa: BLE001
-                applog.event(
-                    log, "intercom_poll_error", level=logging.ERROR,
-                    **_org_error_fields(oid, e),
-                )
+                _record_intercom_poll_failure(oid, e)
+            else:
+                _record_intercom_poll_success(oid)
         time.sleep(intercom_oauth.poll_seconds())
 
 
@@ -3603,6 +3670,8 @@ def retranscribe_call(call_id: int, request: Request):
 
 @app.post("/api/upload")
 def upload(request: Request, file: UploadFile = File(...)):
+    # AC-72: transcription + scoring runs real Claude/PyAI calls per file.
+    rate_limit.enforce("call_upload", _org(request), limit=30, window_seconds=300)
     data = file.file.read()
     if not data:
         raise HTTPException(status_code=400, detail="The uploaded file was empty.")
@@ -3678,6 +3747,9 @@ def upload_batch(request: Request, file: UploadFile = File(...)):
     One zip of up to MAX_BULK_FILES audio files. Extract to unique paths,
     transcribe all on PyAI in parallel, then run Claude QA in parallel.
     """
+    # AC-72: one request can trigger dozens of Claude/PyAI calls at once —
+    # tighter than the single-file upload limit on purpose.
+    rate_limit.enforce("call_upload_batch", _org(request), limit=10, window_seconds=300)
     data = file.file.read()
     if not data:
         raise HTTPException(status_code=400, detail="The uploaded zip was empty.")

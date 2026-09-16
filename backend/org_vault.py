@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from psycopg.errors import UniqueViolation
 
+from . import audit_log
 from . import db
 from .org_ids import bound_org_id, parse_org_id
 
@@ -170,6 +171,11 @@ def put_credential(
                     ) from None
                 raise
     log.info("vault put provider=%s org_id=%s", prov, oid)
+    audit_log.record(
+        oid, "integration.credential_saved",
+        target_type="integration", target_id=prov,
+        after={"key_suffix": suffix, "external_account_id": ext_account},
+    )
     return suffix or ""
 
 
@@ -244,6 +250,8 @@ def delete_credential(org_id: str, provider: str) -> bool:
         if _vault_present(conn):
             conn.execute("DELETE FROM vault.secrets WHERE name = %s", (name,))
     log.info("vault delete provider=%s org_id=%s", prov, oid)
+    if existed:
+        audit_log.record(oid, "integration.disconnected", target_type="integration", target_id=prov)
     return existed
 
 

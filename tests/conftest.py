@@ -67,3 +67,17 @@ def auth_client(monkeypatch):
     client = TestClient(app)
     authorize(client, monkeypatch)
     return client
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit():
+    """AC-72: rate_limit.py's hit counter is module-level, in-process
+    state — most fixtures reuse DEFAULT_ORG_ID across many test
+    functions, so without this an unrelated test could start seeing 429s
+    purely from accumulated test volume across the whole session, not
+    from anything that test itself did."""
+    from backend import rate_limit
+
+    rate_limit._reset_for_tests()
+    yield
+    rate_limit._reset_for_tests()

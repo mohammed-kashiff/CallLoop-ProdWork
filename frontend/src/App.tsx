@@ -7,6 +7,8 @@ import { ColorModeProvider } from './context/ColorMode'
 import { PyaiStatusProvider } from './context/PyaiStatus'
 import { UsageEnvProvider } from './context/UsageEnv'
 import { Admin } from './pages/Admin'
+import { ActivityLog } from './pages/ActivityLog'
+import { AdminActivityLog } from './pages/AdminActivityLog'
 import { AgentsPulse } from './pages/AgentsPulse'
 import { AuditDetail } from './pages/AuditDetail'
 import { Audits } from './pages/Audits'
@@ -72,6 +74,8 @@ function App() {
                     <Route path="admin" element={<Admin />} />
                     <Route path="call-logs" element={<CallLogs />} />
                     <Route path="platform-admins" element={<PlatformAdmins />} />
+                    <Route path="admin-activity-log" element={<AdminActivityLog />} />
+                    <Route path="activity-log" element={<ActivityLog />} />
                     <Route path="call-logs/:callId/trail" element={<CallTrail />} />
                     <Route path="ticket-audit" element={<TicketAudit />} />
                     <Route path="ticket-audit/:ticketId" element={<TicketAudit />} />

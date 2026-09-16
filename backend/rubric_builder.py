@@ -21,6 +21,7 @@ from uuid import UUID
 from fastapi import HTTPException
 
 from . import applog
+from . import audit_log
 from . import audit_store
 from . import db
 from . import product_events
@@ -307,6 +308,12 @@ def save_rubric(
         changed_by=actor,
         dimension_ids=[d["id"] for d in dimensions],
     )
+    audit_log.record(
+        oid, "rubric.saved",
+        target_type="rubric", target_id=saved["name"],
+        after={"version": saved["version"], "activated": activate, "kind": "call"},
+        actor_email=actor,
+    )
     has_custom = any(d.get("kind") == "custom" for d in dimensions)
     product_events.track_event(
         oid, None, "rubric_saved",
@@ -382,5 +389,11 @@ def activate_rubric(org_id: str | None, name: str, *, changed_by: str) -> dict:
         log, "rubric_activated",
         org_id=oid, rubric_name=name, rubric_id=activated["rubric_id"],
         version=activated["version"], changed_by=actor,
+    )
+    audit_log.record(
+        oid, "rubric.activated",
+        target_type="rubric", target_id=name,
+        after={"version": activated["version"], "kind": "call"},
+        actor_email=actor,
     )
     return _save_response(oid, activated)

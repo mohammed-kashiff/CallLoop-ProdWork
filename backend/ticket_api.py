@@ -20,6 +20,7 @@ from fastapi import File, HTTPException, Request, UploadFile
 from . import applog
 from . import auth
 from . import product_events
+from . import rate_limit
 from . import sentry_report
 from . import ticket_image_store
 from . import ticket_ingest
@@ -52,6 +53,8 @@ def _parse_ticket_id(ticket_id: str) -> str:
 def upload_ticket(request: Request, file: UploadFile = File(...)):
     """Accept a ticket PDF and run TA-4/TA-5 ingestion. Not /api/upload."""
     org_id = auth.org_id_from_request(request)
+    # AC-72: ingestion runs real Claude vision calls per screenshot.
+    rate_limit.enforce("ticket_upload", org_id, limit=30, window_seconds=300)
     filename = _safe_pdf_name(file.filename)
     data = file.file.read()
     size = len(data)

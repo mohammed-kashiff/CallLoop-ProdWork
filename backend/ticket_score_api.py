@@ -42,6 +42,7 @@ from pydantic import BaseModel
 from . import applog
 from . import auth
 from . import org_features
+from . import rate_limit
 from . import sentry_report
 from . import ticket_audit_store
 from . import ticket_audit_summary
@@ -210,6 +211,8 @@ def activate_ticket_rubric_route(request: Request, name: str):
 
 def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
     org_id = auth.org_id_from_request(request)
+    # AC-72: a real Claude call per agent per ticket — generous but real.
+    rate_limit.enforce("ticket_score", org_id, limit=60, window_seconds=300)
     tid = _parse_ticket_id(ticket_id)
     viewer_id = auth.user_id_from_request(request)
     is_manager = auth.is_owner_or_manager(request)  # TA-12/AC-60

@@ -16,7 +16,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from . import applog, cost_estimate, db
-from .org_ids import DEFAULT_ORG_ID, bound_org_id
+from .org_ids import DEFAULT_ORG_ID, bound_actor_email, bound_org_id, bound_user_id
 
 log = logging.getLogger("callproof.usage")
 _lock = threading.Lock()
@@ -134,8 +134,8 @@ def record_http_response(
                 c.execute(
                     """
                     INSERT INTO api_usage
-                      (org_id, provider, method, path, status, units, units_raw, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                      (org_id, provider, method, path, status, units, units_raw, created_at, actor_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         tenant,
@@ -146,6 +146,7 @@ def record_http_response(
                         units,
                         (str(units_raw)[:240] if units_raw is not None else None),
                         created,
+                        bound_user_id(),
                     ),
                 )
         try:
@@ -163,6 +164,8 @@ def record_http_response(
                 status=status,
                 units=units if units is not None else "-",
                 cost_usd=_call_cost_usd(provider, method, units),
+                actor_id=bound_user_id(),
+                actor_email=bound_actor_email(),
             )
         except Exception:  # noqa: BLE001
             pass

@@ -203,7 +203,7 @@ interface SidebarProps {
 export function Sidebar({ open, onNavigate }: SidebarProps) {
   const { pathname } = useLocation()
   const { flaggedCount } = useAudit()
-  const { features, isPlatformAdmin, orgName, email } = useAuth()
+  const { features, isPlatformAdmin, isOwnerOrManager, orgName, email } = useAuth()
   const adminHost = isAdminHost()
   const home = appHomePath()
   const onHome = pathname === home
@@ -276,6 +276,15 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               onClick={onNavigate}
             >
               Platform Admins
+            </NavLink>
+            <NavLink
+              to="/admin-activity-log"
+              className={({ isActive }) =>
+                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+              }
+              onClick={onNavigate}
+            >
+              Activity log
             </NavLink>
             <div className="cc-sidebar-footer">
               <span className="cc-sidebar-avatar" aria-hidden="true">
@@ -409,6 +418,17 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
                 </>
               ) : null}
             </div>
+          ) : null}
+          {isOwnerOrManager ? (
+            <NavLink
+              to="/activity-log"
+              className={({ isActive }) =>
+                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+              }
+              onClick={onNavigate}
+            >
+              Activity log
+            </NavLink>
           ) : null}
           {showGrowth
             ? LOOP_NAV.map((item) => (

@@ -24,6 +24,7 @@ import httpx
 from fastapi import HTTPException
 
 from . import applog
+from . import audit_log
 from . import audit_store
 from . import auth
 from . import db
@@ -123,6 +124,14 @@ def provision_user(
         user_id=user_id,
         role=role,
         created_org=created,
+    )
+    # This is admin-triggered provisioning (Command Center), not public
+    # self-signup — there is no other path that creates an org in this
+    # codebase, so this is the one real "org.created" moment worth a row.
+    audit_log.record(
+        out_org_id, "org.created" if created else "member.provisioned",
+        target_type="org_member", target_id=user_id,
+        after={"email": email_s, "role": role, "org_name": out_org_name},
     )
     return {
         "email": email_s,

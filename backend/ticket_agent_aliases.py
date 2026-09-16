@@ -22,6 +22,7 @@ import logging
 from fastapi import HTTPException
 
 from . import applog
+from . import audit_log
 from . import db
 from .org_ids import org_scope, parse_org_id
 
@@ -123,6 +124,11 @@ def set_alias(org_id: str, display_name: str, user_id: str) -> dict:
         log, "ticket_agent_alias_set",
         org_id=org_id, display_name=name, backfilled_turns=backfilled,
     )
+    audit_log.record(
+        org_id, "alias.mapped",
+        target_type="ticket_agent_alias", target_id=name,
+        after={"user_id": uid, "backfilled_turns": backfilled},
+    )
     return {"display_name": name, "user_id": uid, "backfilled_turns": backfilled}
 
 
@@ -137,6 +143,7 @@ def delete_alias(org_id: str, display_name: str) -> None:
                 (org_id, name),
             )
     applog.event(log, "ticket_agent_alias_deleted", org_id=org_id, display_name=name)
+    audit_log.record(org_id, "alias.removed", target_type="ticket_agent_alias", target_id=name)
 
 
 def resolve_agent_user_id(org_id: str, display_name: str | None) -> str | None:

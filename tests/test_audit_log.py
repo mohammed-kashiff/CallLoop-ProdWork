@@ -184,3 +184,164 @@ def test_record_reads_actor_from_bound_context_when_not_passed_explicitly():
         admin.execute("DELETE FROM orgs WHERE id = %s", (org_id,))
         admin.commit()
         admin.close()
+
+
+def test_list_for_org_is_newest_first_and_org_scoped():
+    """AC-69: the org-scoped Activity Log read — RLS-scoped like every
+    other org read, never another org's rows."""
+    from dotenv import load_dotenv
+
+    from backend.db_url import database_url, psycopg_url
+    from backend.paths import ENV_FILE
+
+    load_dotenv(ENV_FILE)
+    raw = database_url()
+    if not raw:
+        pytest.skip("DATABASE_URL not set")
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from backend import audit_log
+
+    admin = psycopg.connect(psycopg_url(raw), row_factory=dict_row, prepare_threshold=0)
+    exists = admin.execute("SELECT to_regclass('public.audit_log') AS t").fetchone()
+    if not exists or not exists["t"]:
+        admin.close()
+        pytest.skip("0040_audit_log not applied")
+
+    org_a = str(uuid.uuid4())
+    org_b = str(uuid.uuid4())
+    try:
+        admin.execute("INSERT INTO orgs (id, name) VALUES (%s, %s)", (org_a, "audit-list-a"))
+        admin.execute("INSERT INTO orgs (id, name) VALUES (%s, %s)", (org_b, "audit-list-b"))
+        admin.commit()
+
+        audit_log.record(org_a, "test.first")
+        audit_log.record(org_a, "test.second")
+        audit_log.record(org_b, "test.other_org")
+
+        rows = audit_log.list_for_org(org_a)
+        assert [r["action"] for r in rows] == ["test.second", "test.first"]
+        assert all("org_id" not in r for r in rows)  # single-org view, org_id is implicit
+    finally:
+        admin.execute("DELETE FROM audit_log WHERE org_id IN (%s, %s)", (org_a, org_b))
+        admin.execute("DELETE FROM orgs WHERE id IN (%s, %s)", (org_a, org_b))
+        admin.commit()
+        admin.close()
+
+
+def test_list_for_org_empty_for_invalid_org_id():
+    from backend import audit_log
+
+    assert audit_log.list_for_org("not-a-uuid") == []
+
+
+def test_list_all_spans_every_org_and_includes_org_id():
+    """AC-69: the platform-admin cross-org view — bypass_rls, narrowly
+    scoped to this one read, same pattern as org_vault's directory lookup."""
+    from dotenv import load_dotenv
+
+    from backend.db_url import database_url, psycopg_url
+    from backend.paths import ENV_FILE
+
+    load_dotenv(ENV_FILE)
+    raw = database_url()
+    if not raw:
+        pytest.skip("DATABASE_URL not set")
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from backend import audit_log
+
+    admin = psycopg.connect(psycopg_url(raw), row_factory=dict_row, prepare_threshold=0)
+    exists = admin.execute("SELECT to_regclass('public.audit_log') AS t").fetchone()
+    if not exists or not exists["t"]:
+        admin.close()
+        pytest.skip("0040_audit_log not applied")
+
+    org_a = str(uuid.uuid4())
+    org_b = str(uuid.uuid4())
+    try:
+        admin.execute("INSERT INTO orgs (id, name) VALUES (%s, %s)", (org_a, "audit-all-a"))
+        admin.execute("INSERT INTO orgs (id, name) VALUES (%s, %s)", (org_b, "audit-all-b"))
+        admin.commit()
+
+        audit_log.record(org_a, "test.from_a")
+        audit_log.record(org_b, "test.from_b")
+
+        rows = audit_log.list_all(limit=500)
+        seen_orgs = {r["org_id"] for r in rows if r["action"] in ("test.from_a", "test.from_b")}
+        assert seen_orgs == {org_a, org_b}
+    finally:
+        admin.execute("DELETE FROM audit_log WHERE org_id IN (%s, %s)", (org_a, org_b))
+        admin.execute("DELETE FROM orgs WHERE id IN (%s, %s)", (org_a, org_b))
+        admin.commit()
+        admin.close()
+
+
+def test_audit_log_route_requires_owner_or_manager(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+    from backend.auth import Membership
+    from tests.conftest import authorize
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    monkeypatch.setattr(
+        "backend.auth.ensure_membership",
+        lambda user_id, email=None, first_name=None, last_name=None: Membership(
+            "00000000-0000-4000-8000-000000000001", "member", str(user_id),
+        ),
+    )
+    r = client.get("/api/audit-log")
+    assert r.status_code == 403
+
+
+def test_audit_log_route_returns_the_callers_own_org_rows(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+    from tests.conftest import authorize
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)  # conftest's authorize() defaults to role=owner
+    monkeypatch.setattr(
+        "backend.api.audit_log.list_for_org",
+        lambda org_id, limit=200: [{"action": "test.route", "org_id_seen": org_id}],
+    )
+    r = client.get("/api/audit-log")
+    assert r.status_code == 200
+    assert r.json()["rows"][0]["action"] == "test.route"
+
+
+def test_admin_audit_log_route_requires_platform_admin(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+    from tests.conftest import authorize
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.get("/api/admin/audit-log")
+    assert r.status_code == 403
+
+
+def test_admin_audit_log_route_returns_every_orgs_rows(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.api import app
+    from tests.conftest import authorize
+
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    monkeypatch.setattr("backend.api.auth.require_platform_admin", lambda request: None)
+    monkeypatch.setattr(
+        "backend.api.audit_log.list_all",
+        lambda limit=200: [{"action": "test.cross_org"}],
+    )
+    r = client.get("/api/admin/audit-log")
+    assert r.status_code == 200
+    assert r.json()["rows"][0]["action"] == "test.cross_org"
