@@ -355,9 +355,12 @@ def list_tickets(org_id: str) -> list[dict]:
                        (SELECT COUNT(*) FROM ticket_messages m
                           WHERE m.ticket_id = t.id AND m.org_id = t.org_id)
                          AS message_count,
-                       (SELECT ta.score FROM ticket_audits ta
+                       (SELECT COUNT(*) FROM ticket_audits ta
                           WHERE ta.ticket_id = t.id AND ta.org_id = t.org_id)
-                         AS audit_score
+                         AS agents_scored,
+                       (SELECT AVG(ta.score) FROM ticket_audits ta
+                          WHERE ta.ticket_id = t.id AND ta.org_id = t.org_id)
+                         AS avg_score
                 FROM tickets t
                 WHERE t.org_id = %s
                 ORDER BY t.created_at DESC
@@ -371,8 +374,15 @@ def list_tickets(org_id: str) -> list[dict]:
             "status": r["status"],
             "created_at": _iso(r["created_at"]),
             "message_count": int(r["message_count"] or 0),
-            "has_audit": r["audit_score"] is not None,
-            "score": r["audit_score"],
+            # TA-28: a ticket now has zero-to-many agent scorecards, not
+            # one whole-ticket score. has_audit/score here are a rollup
+            # for the library list view — score is the average across
+            # whichever agents have been scored so far, not a single
+            # canonical number. The ticket detail page shows each agent's
+            # own score separately.
+            "has_audit": int(r["agents_scored"] or 0) > 0,
+            "agents_scored": int(r["agents_scored"] or 0),
+            "score": float(r["avg_score"]) if r["avg_score"] is not None else None,
         }
         for r in rows
     ]
@@ -415,14 +425,15 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
                 """,
                 (ticket_id, org_id),
             ).fetchall()
-            audit_row = conn.execute(
+            audit_rows = conn.execute(
                 """
-                SELECT score, findings, created_at
+                SELECT agent_user_id, score, findings, created_at, updated_at
                 FROM ticket_audits
                 WHERE ticket_id = %s AND org_id = %s
+                ORDER BY created_at
                 """,
                 (ticket_id, org_id),
-            ).fetchone()
+            ).fetchall()
             agent_ids = {m["agent_user_id"] for m in messages if m["agent_user_id"]}
             member_names: dict[str, str] = {}
             if agent_ids:
@@ -473,12 +484,18 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
             }
             for a in assets
         ],
-        "audit": None if not audit_row else {
-            "score": audit_row["score"],
-            "created_at": _iso(audit_row["created_at"]),
-            **(audit_row["findings"] if isinstance(audit_row["findings"], dict)
-               else {}),
-        },
+        "audits": [
+            {
+                "agent_user_id": str(row["agent_user_id"]),
+                "display_name": member_names.get(str(row["agent_user_id"]))
+                or str(row["agent_user_id"])[:8],
+                "score": row["score"],
+                "created_at": _iso(row["created_at"]),
+                "updated_at": _iso(row["updated_at"]),
+                **(row["findings"] if isinstance(row["findings"], dict) else {}),
+            }
+            for row in audit_rows
+        ],
     }
 
 

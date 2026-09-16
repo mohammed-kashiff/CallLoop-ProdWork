@@ -41,18 +41,38 @@ type TicketFinding = {
   deterministic?: boolean
 }
 
-type TicketAuditResult = {
+type TicketSpan = {
+  agent_user_id: string | null
+  start_seq: number
+  end_seq: number
+  turn_count: number
+}
+
+// TA-21/TA-28: one independent scorecard per agent, not one per ticket.
+type PerAgentAudit = {
+  agent_user_id: string
+  display_name: string
   score: number
-  primary_owner: string | null
-  spans: Array<{
-    agent_user_id: string | null
-    start_seq: number
-    end_seq: number
-    turn_count: number
-  }>
+  created_at: string | null
+  updated_at: string | null
   findings: TicketFinding[]
-  created_at?: string
-  view_scope?: 'full' | 'own'
+  spans: TicketSpan[]
+}
+
+// The shape POST /score returns — response_timeliness/top_strength/top_gap
+// are computed fresh on every score response and never persisted, so they
+// only exist here, not on a plain GET (see backend/ticket_score_api.py's
+// own docstring on _agent_with_timeliness/_with_summary).
+type ScoreRouteAgent = {
+  agent_user_id: string
+  score: number
+  findings: TicketFinding[]
+  spans: TicketSpan[]
+}
+
+type ScoreRouteResponse = {
+  view_scope: 'full' | 'own'
+  agents: ScoreRouteAgent[]
 }
 
 type TicketDetail = {
@@ -62,8 +82,14 @@ type TicketDetail = {
   created_at: string | null
   messages: TicketMessage[]
   assets: TicketAsset[]
-  audit: TicketAuditResult | null
-  view_scope?: 'full' | 'own'
+  audits: PerAgentAudit[]
+  own_span_seqs: number[]
+  view_scope: 'full' | 'own'
+}
+
+function displayNameFor(agentUserId: string, messages: TicketMessage[]): string {
+  const turn = messages.find((m) => m.agent_user_id === agentUserId && m.display_name)
+  return turn?.display_name || agentUserId.slice(0, 8)
 }
 
 // TA-15: an org owner maps a ticket PDF's raw agent display name (e.g.
@@ -543,8 +569,20 @@ export function TicketAudit() {
     try {
       const r = await apiFetch(`/api/tickets/${ticketId}/score`, { method: 'POST' })
       if (!r.ok) throw new Error(await readError(r, 'Scoring failed.'))
-      const result = (await r.json()) as TicketAuditResult
-      setTicket((prev) => (prev ? { ...prev, audit: result } : prev))
+      const data = (await r.json()) as ScoreRouteResponse
+      setTicket((prev) => {
+        if (!prev) return prev
+        const audits: PerAgentAudit[] = data.agents.map((a) => ({
+          agent_user_id: a.agent_user_id,
+          display_name: displayNameFor(a.agent_user_id, prev.messages),
+          score: a.score,
+          created_at: null,
+          updated_at: null,
+          findings: a.findings,
+          spans: a.spans,
+        }))
+        return { ...prev, audits, view_scope: data.view_scope }
+      })
     } catch (e) {
       setScoreError(e instanceof Error ? e.message : 'Scoring failed.')
     } finally {
@@ -645,8 +683,9 @@ export function TicketAudit() {
 
       {ticket && ticket.view_scope === 'own' ? (
         <p className="scaffold-banner">
-          Showing only your own contribution to this ticket (TA-12) — not another agent's
-          turns or scores, even though this thread is shared.
+          You're seeing your own scorecard only — not a teammate's individual score, even
+          though this thread is shared. The full thread is shown below for context; your own
+          turns are highlighted.
         </p>
       ) : null}
 
@@ -661,16 +700,68 @@ export function TicketAudit() {
                     ? "This ticket's PDF could not be ingested, so there is nothing to score."
                     : "This ticket is still processing — scoring isn't available yet."}
                 </p>
-              ) : !ticket.audit ? (
+              ) : (
                 <>
-                  <p className="panel-lede">Not scored yet.</p>
+                  {ticket.audits.length === 0 ? (
+                    <p className="panel-lede">Not scored yet.</p>
+                  ) : (
+                    ticket.audits.map((audit) => (
+                      <div key={audit.agent_user_id} className="agent-scorecard">
+                        <div className="criterion-top">
+                          <h3>{audit.display_name}</h3>
+                          <p className="agent-scorecard-score">
+                            {Math.round(audit.score)}
+                            <span>/100</span>
+                          </p>
+                        </div>
+                        <ul className="criteria-list">
+                          {audit.findings.map((f) => {
+                            const turn =
+                              f.evidence_seq != null ? messagesBySeq.get(f.evidence_seq) : undefined
+                            const assetUrl = turn?.has_image ? assetUrls[turn.seq] : undefined
+                            return (
+                              <li key={f.id} className="criterion">
+                                <div className="criterion-top">
+                                  <h3>
+                                    {f.name || f.id}
+                                    {f.deterministic && (
+                                      <span
+                                        className="nav-soon"
+                                        title="Computed from real message timestamps, not judged by Claude"
+                                      >
+                                        Measured
+                                      </span>
+                                    )}
+                                  </h3>
+                                  <span className={`verdict verdict-${verdictSlug(f.verdict)}`}>
+                                    {verdictLabel(f.verdict)}
+                                  </span>
+                                </div>
+                                {f.reasoning && <p className="criterion-rationale">{f.reasoning}</p>}
+                                <TicketEvidence
+                                  text={f.evidence_text}
+                                  isImage={Boolean(turn?.has_image)}
+                                  assetUrl={assetUrl}
+                                  verified={f.evidence_verified}
+                                />
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      </div>
+                    ))
+                  )}
                   <button
                     type="button"
                     className="start-btn"
                     disabled={scoring}
                     onClick={() => void runScore()}
                   >
-                    {scoring ? 'Scoring…' : 'Score this ticket'}
+                    {scoring
+                      ? 'Scoring…'
+                      : ticket.audits.length === 0
+                        ? 'Score this ticket'
+                        : 'Check for newly resolved agents'}
                   </button>
                   {scoreError && (
                     <p className="upload-error" role="alert">
@@ -678,55 +769,26 @@ export function TicketAudit() {
                     </p>
                   )}
                 </>
-              ) : (
-                <>
-                  <p className="score-headline">
-                    {Math.round(ticket.audit.score)}
-                    <span>/100</span>
-                  </p>
-                  <ul className="criteria-list">
-                    {ticket.audit.findings.map((f) => {
-                      const turn =
-                        f.evidence_seq != null ? messagesBySeq.get(f.evidence_seq) : undefined
-                      const assetUrl = turn?.has_image ? assetUrls[turn.seq] : undefined
-                      return (
-                        <li key={f.id} className="criterion">
-                          <div className="criterion-top">
-                            <h3>
-                              {f.name || f.id}
-                              {f.deterministic && (
-                                <span className="nav-soon" title="Computed from real message timestamps, not judged by Claude">
-                                  Measured
-                                </span>
-                              )}
-                            </h3>
-                            <span className={`verdict verdict-${verdictSlug(f.verdict)}`}>
-                              {verdictLabel(f.verdict)}
-                            </span>
-                          </div>
-                          {f.reasoning && <p className="criterion-rationale">{f.reasoning}</p>}
-                          <TicketEvidence
-                            text={f.evidence_text}
-                            isImage={Boolean(turn?.has_image)}
-                            assetUrl={assetUrl}
-                            verified={f.evidence_verified}
-                          />
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </>
               )}
             </section>
           </div>
           <div className="eval-pane is-transcript">
             <h2 className="panel-title">Ticket thread</h2>
-            {/* TA-12: the backend already filtered this list server-side —
-                the full thread for a manager (org owner), or only the
-                viewer's own span for anyone else. Nothing to filter here. */}
+            {/* TA-30: the full thread, always, for every viewer — only
+                which agent's scorecard(s) are visible is access-controlled
+                (above). own_span_seqs highlights the viewer's own turns
+                rather than hiding everyone else's. */}
             <ul className="ticket-thread">
               {ticket.messages.map((m) => (
-                <li key={m.seq} className={`ticket-turn is-${m.speaker}`}>
+                <li
+                  key={m.seq}
+                  className={[
+                    `ticket-turn is-${m.speaker}`,
+                    ticket.own_span_seqs.includes(m.seq) ? 'is-own-turn' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
                   <span className="ticket-turn-speaker">
                     {capFirst(m.speaker)}
                     {m.display_name ? ` (${m.display_name})` : ''}

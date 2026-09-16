@@ -1,25 +1,27 @@
-"""TA-8 (PRD §6): multi-agent attribution, v1 scope.
+"""TA-8 (PRD §6), rebuilt TA-21/TA-28: multi-agent attribution.
 
-The mechanism (agent_spans / primary_owner / attributed_agent) already
-lives in ticket_scoring.py — Cursor built it as part of TA-6, since
-attribution falls out of the evidence-verification system that already
-exists rather than needing a bespoke mechanism (that's the whole PRD
-point). This file is TA-8's own verification, not a reimplementation:
+The mechanism (agent_spans / resolved_agent_ids / attributed_agent /
+evidence-ownership enforcement) lives in ticket_scoring.py. This file is
+TA-8's own verification, not a reimplementation:
 
 1. Proves the PRD's exact named scenario (Agent 1 responds and goes off
    shift, the customer replies, Agent 2 picks up and resolves) end to
-   end with real Postgres UUIDs — Cursor's own ticket_scoring tests only
-   ever used string placeholders ("agent-a"/"agent-b"), never a genuine
-   uuid.UUID as psycopg actually returns from an agent_user_id column,
-   so equality/hashing across real UUID objects was never actually
-   exercised until this test.
+   end with real Postgres UUIDs — never a genuine uuid.UUID as psycopg
+   actually returns from an agent_user_id column, so equality/hashing
+   across real UUID objects was never actually exercised until this
+   test. TA-21 replaced the old "one whole-ticket score, primary_owner
+   gets credit by default" model with independent per-agent scoring: each
+   agent gets their own findings, and a finding whose evidence falls
+   outside the agent being judged is downgraded to "error" rather than
+   silently credited to the wrong person or to whoever resolved the
+   ticket.
 2. Documents, with a real ingested PDF, today's honest limitation: the
    PDF-upload MVP cannot resolve a display name to an org_members user
    id (TA-2's finding, called out in ticket_ingest.py's docstring), so a
-   real two-agent bounce collapses into one undifferentiated span right
-   now. That's expected behavior, not a bug — TA-3's schema is what
-   makes the full mechanism ready for whenever identity resolution
-   exists, without a rebuild.
+   real two-agent bounce collapses into one undifferentiated span and
+   resolves zero independently-scoreable agents right now. That's
+   expected behavior, not a bug — TA-15's alias-mapping UI (built later
+   in the same epic line) is what closes this gap without a rebuild.
 """
 
 from __future__ import annotations
@@ -34,10 +36,12 @@ import pytest
 
 def test_agent_bounce_scenario_attributes_correctly_with_real_postgres_uuids():
     """Agent 1 answers, goes off shift; customer replies; Agent 2 picks up
-    and resolves. primary_owner must be Agent 2 (the resolving agent),
-    but a finding whose evidence falls in Agent 1's span must still
-    attribute to Agent 1 — attribution is per-finding, not "whoever
-    closed the ticket gets credit for everything"."""
+    and resolves. Each agent gets their own independent scorecard: a
+    finding whose evidence falls in Agent 1's span attributes to Agent 1
+    even when judged as part of Agent 2's run stub, and vice versa — and
+    a finding whose evidence falls *outside* the agent being judged is
+    downgraded to "error", never silently credited to the wrong person or
+    handed to whoever happened to resolve the ticket."""
     from dotenv import load_dotenv
 
     from backend.db_url import database_url, psycopg_url
@@ -113,8 +117,7 @@ def test_agent_bounce_scenario_attributes_correctly_with_real_postgres_uuids():
         assert str(spans[1]["agent_user_id"]) == agent_2
         assert spans[1]["start_seq"] == 3 and spans[1]["end_seq"] == 4
 
-        owner = ticket_scoring.primary_owner(turns)
-        assert str(owner) == agent_2  # the resolving agent, not whoever spoke first
+        assert {str(a) for a in ticket_scoring.resolved_agent_ids(turns)} == {agent_1, agent_2}
 
         def _dispatch(prompt: str) -> str:
             if "acknowledge" in prompt.lower():
@@ -135,15 +138,24 @@ def test_agent_bounce_scenario_attributes_correctly_with_real_postgres_uuids():
             {"id": "fixed", "name": "Actually resolved", "weight": 50,
              "question": "Was the issue actually fixed?"},
         ]
-        result = ticket_scoring.score_ticket(turns, dims, call_claude_fn=_dispatch)
-        by_id = {f["id"]: f for f in result["findings"]}
+        results = ticket_scoring.score_ticket_per_agent(turns, dims, call_claude_fn=_dispatch)
+        by_agent = {str(r["agent_user_id"]): {f["id"]: f for f in r["findings"]} for r in results}
 
-        # The whole-thread audit's single v1 owner is Agent 2 (resolver)...
-        assert str(result["primary_owner"]) == agent_2
-        # ...but per-finding attribution still correctly credits Agent 1
-        # for the thing Agent 1 actually did, not Agent 2 by default.
-        assert str(by_id["ack"]["attributed_to"]) == agent_1
-        assert str(by_id["fixed"]["attributed_to"]) == agent_2
+        # Agent 1's own scorecard: correctly credited for what Agent 1
+        # actually did (evidence_seq=1 sits inside Agent 1's span)...
+        assert by_agent[agent_1]["ack"]["verdict"] == "pass"
+        assert str(by_agent[agent_1]["ack"]["attributed_to"]) == agent_1
+        # ...but the stub's "fixed" evidence (seq=3) belongs to Agent 2's
+        # span, not Agent 1's — foreign evidence, downgraded to "error"
+        # rather than silently credited to Agent 1 by default.
+        assert by_agent[agent_1]["fixed"]["verdict"] == "error"
+        assert by_agent[agent_1]["fixed"]["attributed_to"] is None
+
+        # Agent 2's own scorecard: the flip side.
+        assert by_agent[agent_2]["fixed"]["verdict"] == "pass"
+        assert str(by_agent[agent_2]["fixed"]["attributed_to"]) == agent_2
+        assert by_agent[agent_2]["ack"]["verdict"] == "error"
+        assert by_agent[agent_2]["ack"]["attributed_to"] is None
     finally:
         admin.execute("DELETE FROM ticket_messages WHERE org_id = %s", (org_id,))
         admin.execute("DELETE FROM tickets WHERE org_id = %s", (org_id,))
@@ -226,7 +238,10 @@ def test_real_pdf_ingestion_of_an_agent_bounce_currently_collapses_to_one_span()
         assert spans[0]["agent_user_id"] is None
         assert spans[0]["turn_count"] == 2
 
-        assert ticket_scoring.primary_owner(turns) is None
+        # No real identity resolved on this ticket — nobody gets their own
+        # scorecard yet (score_ticket_per_agent would return an empty
+        # list, not a guess at who "Tanu" or "Dhruv" might be).
+        assert ticket_scoring.resolved_agent_ids(turns) == []
     finally:
         admin.execute("DELETE FROM ticket_messages WHERE org_id = %s", (org_id,))
         admin.execute("DELETE FROM tickets WHERE org_id = %s", (org_id,))

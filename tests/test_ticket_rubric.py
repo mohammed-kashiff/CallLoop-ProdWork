@@ -89,10 +89,12 @@ def test_get_default_ticket_rubric_returns_an_independent_copy():
 # ---------- exercises TA-6 end to end with this real rubric shape ----------
 
 
+AGENT_ID = "66666666-6666-6666-6666-666666666666"
+
 TURNS = [
     {"seq": 0, "speaker": "customer", "agent_user_id": None,
      "text": "Checkout keeps failing with a 504 error."},
-    {"seq": 1, "speaker": "agent", "agent_user_id": None,
+    {"seq": 1, "speaker": "agent", "agent_user_id": AGENT_ID,
      "text": "I can see the 504 in the logs — restarting the payment worker now."},
     {"seq": 2, "speaker": "customer", "agent_user_id": None,
      "text": "That fixed it, thank you!"},
@@ -118,9 +120,10 @@ def test_ticket_qa_rubric_runs_end_to_end_through_ticket_scoring():
             "evidence_quote": "", "evidence_seq": None,
         })
 
-    result = ticket_scoring.score_ticket(
-        TURNS, get_default_ticket_rubric(), call_claude_fn=_dispatch,
+    result = ticket_scoring.score_ticket_for_agent(
+        TURNS, get_default_ticket_rubric(), target_agent_user_id=AGENT_ID, call_claude_fn=_dispatch,
     )
+    assert result["agent_user_id"] == AGENT_ID
     assert 0 <= result["score"] <= 100
     by_id = {f["id"]: f for f in result["findings"]}
     assert set(by_id) == {d["id"] for d in TICKET_QA_DIMENSIONS}
@@ -225,7 +228,7 @@ def test_timeliness_accepts_iso_strings_the_same_as_datetimes():
 
 def test_timeliness_not_folded_into_the_weighted_score():
     """A deterministic finding sitting alongside the LLM ones must never
-    be summed into score_ticket()'s own weighted score — it has no
+    be summed into score_ticket_for_agent()'s own weighted score — it has no
     'weight' key, so ticket_scoring._numeric_score() already skips it
     (falls back to 0 and is excluded); this just documents that on purpose."""
     timeliness = evaluate_response_timeliness([

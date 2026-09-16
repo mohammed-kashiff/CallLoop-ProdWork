@@ -1,4 +1,5 @@
-"""Ticket Audit Engine (TA-6): content-blind scoring of a sequenced ticket.
+"""Ticket Audit Engine (TA-6, rebuilt TA-21/TA-25/TA-26): independent
+per-agent scoring of a sequenced ticket.
 
 The call-scoring engine's mechanism — judge a criterion against speaker-labeled
 turns, cite a quote, verify it — is channel-agnostic. That does not mean the
@@ -13,10 +14,20 @@ plus sequenced text in, a verdict plus a checkable quote out. No call-specific
 logic lives in this file (no hostile-language gate, no rules_v8 dispatch, no
 run_v8_wave).
 
-v1 scores the whole thread once. Multi-agent span logic (TA-8) still runs on
-every score: every turn already carries agent_user_id (nullable), every finding
-is attributed via evidence_seq to the span that turn falls in, and the audit
-as a whole is assigned a single primary owner. Per-span re-scoring is v2.
+TA-21 replaced v1's whole-thread-once model outright: scoring used to run
+once per dimension for the whole ticket, then post-hoc attribute each
+finding's evidence to whichever agent's span it happened to land in — so
+if a criterion's only citable evidence sat in Agent B's turns, Agent A
+got no finding at all, not a pass or fail. Every agent who touched a
+ticket now gets their own independent Claude call per dimension
+(`score_ticket_for_agent`), with the transcript itself marking which
+turns belong to the agent under review, and with any evidence checked
+to actually fall inside that agent's own span before it counts —
+evidence borrowed from a teammate's turns is downgraded, never silently
+accepted as that agent's own contribution. `score_ticket_per_agent` is
+the entrypoint: one independent result per real, identified agent
+(agent_user_id present on at least one turn) — a ticket with no
+resolved agent identities yet simply has nothing to score.
 
 Image-derived turns (TA-5) arrive as ordinary sequenced text — a vision
 description injected at the right seq — so this module has no reason to know
@@ -35,7 +46,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections import Counter
 
 from . import applog
 from . import tracing
@@ -46,6 +56,14 @@ log = logging.getLogger("callproof.ticket_scoring")
 ALLOWED_VERDICTS = ("pass", "partial", "fail")
 POINTS = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
 _SKIP_SCORE = frozenset({"not_applicable", "error", "unverified"})
+
+_AGENT_UNDER_REVIEW = "agent under review"
+_OTHER_TEAMMATE = "a different teammate — shown for context only, do not judge them"
+
+_FOREIGN_EVIDENCE_REASONING = (
+    "The model's cited evidence belonged to a different agent's turns, not this "
+    "agent's own contribution — discarded rather than credited to the wrong person."
+)
 
 
 def format_turns(turns: list[dict]) -> str:
@@ -63,6 +81,37 @@ def format_turns(turns: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def format_turns_for_agent(turns: list[dict], target_agent_user_id: str) -> str:
+    """TA-25: the same sequenced text as format_turns, except every agent
+    turn is labeled with whether it belongs to the agent under review or
+    a different teammate — the signal that makes independent per-agent
+    scoring possible. Customer/bot turns are unchanged; the model needs
+    them for context regardless of whose span they fall in."""
+    lines = []
+    for t in sorted(turns, key=lambda row: row["seq"]):
+        text = (t.get("text") or "").replace("\r\n", "\n").replace("\n", " ").strip()
+        speaker = t.get("speaker") or "unknown"
+        if speaker == "agent":
+            label = (
+                _AGENT_UNDER_REVIEW
+                if str(t.get("agent_user_id") or "") == str(target_agent_user_id)
+                else _OTHER_TEAMMATE
+            )
+            lines.append(f'[seq {t["seq"]}] (agent — {label}) {text}')
+        else:
+            lines.append(f'[seq {t["seq"]}] ({speaker}) {text}')
+    return "\n".join(lines)
+
+
+def _question_for_agent(question: str) -> str:
+    return (
+        'Judge only the turns marked "(agent — agent under review)" below. '
+        'Turns marked "(agent — a different teammate...)" are shown for '
+        "context only — never cite them as this agent's own work, and never "
+        "judge this agent on what a different teammate did. " + question
+    )
+
+
 def agent_spans(turns: list[dict]) -> list[dict]:
     """Split a thread into agent-owned spans.
 
@@ -72,9 +121,9 @@ def agent_spans(turns: list[dict]) -> list[dict]:
     agent turns with the same agent_user_id (including both NULL) merge;
     a change of agent_user_id opens a new span.
 
-    v1 does not re-score per span. The spans are captured so a finding's
-    evidence_seq can be attributed, and so v2 can score them independently
-    without a schema rebuild.
+    Spans are how a finding's evidence gets checked as genuinely belonging
+    to the agent it's scored for (score_ticket_for_agent), and how the UI
+    highlights a viewer's own turns in the full thread (TA-30).
     """
     spans: list[dict] = []
     current: dict | None = None
@@ -101,30 +150,23 @@ def agent_spans(turns: list[dict]) -> list[dict]:
     return spans
 
 
-def primary_owner(turns: list[dict]) -> str | None:
-    """v1 single-owner attribution for the whole-thread audit.
-
-    Prefer whoever sent the last agent message (the resolving turn). If
-    that turn has no agent_user_id — the PDF parser's current state — fall
-    back to whoever has the most agent turns among those that do have an
-    id. None when no agent turn is identifiable.
-    """
-    agents = [t for t in sorted(turns, key=lambda row: row["seq"])
-              if t.get("speaker") == "agent"]
-    if not agents:
-        return None
-    last_id = agents[-1].get("agent_user_id")
-    if last_id:
-        return last_id
-    counts = Counter(t.get("agent_user_id") for t in agents if t.get("agent_user_id"))
-    if not counts:
-        return None
-    best = max(counts.values())
-    for t in agents:
+def resolved_agent_ids(turns: list[dict]) -> list[str]:
+    """Every distinct, real agent_user_id with at least one agent turn on
+    this ticket, in first-appearance order — the set score_ticket_per_agent
+    scores independently. A turn with no resolved identity (agent_user_id
+    is None — unmapped PDF name, or an unresolved Intercom identity) is
+    still part of the thread everyone sees, but doesn't get its own
+    scorecard: there's no real person to score."""
+    seen: list[str] = []
+    seen_set: set[str] = set()
+    for t in sorted(turns, key=lambda row: row["seq"]):
+        if t.get("speaker") != "agent":
+            continue
         uid = t.get("agent_user_id")
-        if uid and counts[uid] == best:
-            return uid
-    return None
+        if uid and uid not in seen_set:
+            seen_set.add(uid)
+            seen.append(uid)
+    return seen
 
 
 def attributed_agent(turns: list[dict], evidence_seq, spans: list[dict] | None = None):
@@ -145,6 +187,16 @@ def attributed_agent(turns: list[dict], evidence_seq, spans: list[dict] | None =
         if span["start_seq"] <= seq <= span["end_seq"]:
             return span["agent_user_id"]
     return None
+
+
+def _seq_in_agent_span(seq: int | None, target_agent_user_id: str, spans: list[dict]) -> bool:
+    if seq is None:
+        return False
+    return any(
+        str(span.get("agent_user_id") or "") == str(target_agent_user_id)
+        and span["start_seq"] <= seq <= span["end_seq"]
+        for span in spans
+    )
 
 
 def _parse_json(text: str) -> dict:
@@ -175,6 +227,7 @@ def evaluate_criterion(
     question: str,
     turns: list[dict],
     *,
+    transcript_text: str | None = None,
     allowed_verdicts: tuple[str, ...] = ALLOWED_VERDICTS,
     build_prompt_fn=build_prompt,
     call_claude_fn=call_claude,
@@ -184,6 +237,11 @@ def evaluate_criterion(
 
     Content-blind: the same function scores a typed reply and an
     image-description turn, because both are just lines in `turns`.
+    transcript_text overrides the rendered transcript sent to the model
+    (score_ticket_for_agent passes format_turns_for_agent's agent-aware
+    labeling) while turns stays the real, unfiltered list for evidence
+    validation — validate_evidence_fn needs real seqs to check a quote
+    against, regardless of how the transcript text labeled each line.
     """
     question = (question or "").strip()
     if not question:
@@ -203,15 +261,15 @@ def evaluate_criterion(
             "evidence_verified": False,
         }
 
-    transcript_text = format_turns(turns)
-    prompt = build_prompt_fn(question, transcript_text, list(allowed_verdicts))
+    text_for_model = transcript_text if transcript_text is not None else format_turns(turns)
+    prompt = build_prompt_fn(question, text_for_model, list(allowed_verdicts))
     try:
         raw = call_claude_fn(prompt)
         try:
             parsed = _parse_json(raw)
         except ValueError:
             raw = call_claude_fn(
-                build_prompt_fn(question, transcript_text, list(allowed_verdicts), strict=True),
+                build_prompt_fn(question, text_for_model, list(allowed_verdicts), strict=True),
             )
             parsed = _parse_json(raw)
     except Exception as exc:  # noqa: BLE001
@@ -260,28 +318,69 @@ def _scoreable_turns(turns: list[dict], dim: dict) -> list[dict]:
     return [t for t in turns if not t.get("internal_contribution")]
 
 
-def run_ticket_wave(
+def evaluate_criterion_for_agent(
+    question: str,
+    turns: list[dict],
+    *,
+    target_agent_user_id: str,
+    spans: list[dict],
+    build_prompt_fn=build_prompt,
+    call_claude_fn=call_claude,
+    validate_evidence_fn=validate_evidence,
+) -> dict:
+    """TA-25/TA-26: one criterion, independently judged for one specific
+    agent. The transcript sent to the model marks which turns are this
+    agent's own vs. a teammate's (format_turns_for_agent); the question
+    is wrapped with an explicit instruction to judge only the marked
+    agent. Evidence is then checked against real spans: if the model
+    cited a turn outside this agent's own span, that's evidence for
+    someone else's work, not this agent's — downgraded to "error" rather
+    than silently credited or blamed to the wrong person. This is the
+    fix for the root bug TA-21 exists to close: v1 scored the criterion
+    once and attributed evidence after the fact, so an agent whose only
+    citable moment sat in a teammate's turns got no finding at all.
+    """
+    result = evaluate_criterion(
+        _question_for_agent(question),
+        turns,
+        transcript_text=format_turns_for_agent(turns, target_agent_user_id),
+        build_prompt_fn=build_prompt_fn,
+        call_claude_fn=call_claude_fn,
+        validate_evidence_fn=validate_evidence_fn,
+    )
+    if result["evidence_verified"] and not _seq_in_agent_span(
+        result["evidence_seq"], target_agent_user_id, spans,
+    ):
+        result = {
+            **result,
+            "verdict": "error",
+            "reasoning": _FOREIGN_EVIDENCE_REASONING,
+            "evidence_verified": False,
+        }
+    return result
+
+
+def run_ticket_wave_for_agent(
     turns: list[dict],
     dimensions: list[dict],
     *,
+    target_agent_user_id: str,
+    spans: list[dict],
     build_prompt_fn=build_prompt,
     call_claude_fn=call_claude,
     validate_evidence_fn=validate_evidence,
 ) -> list[dict]:
-    """Ticket engine's own evaluation loop. Not run_v8_wave.
-
-    Scores the whole thread once per dimension (v1) — except a
-    customer_facing_only dimension (IN-9), which scores only the
-    non-internal subset; see _scoreable_turns. Span split and
-    primary-owner assignment happen after, in score_ticket, always
-    against the full thread — they do not change how many Claude calls
-    fire.
-    """
+    """Every rubric dimension, independently scored for one agent — one
+    finding per dimension, always (TA-26: no dimension is ever silently
+    skipped; a genuinely inapplicable one still comes back as its own
+    "not_applicable" finding, never simply absent from the list)."""
     findings = []
     for dim in dimensions:
-        result = evaluate_criterion(
+        result = evaluate_criterion_for_agent(
             _dimension_question(dim),
             _scoreable_turns(turns, dim),
+            target_agent_user_id=target_agent_user_id,
+            spans=spans,
             build_prompt_fn=build_prompt_fn,
             call_claude_fn=call_claude_fn,
             validate_evidence_fn=validate_evidence_fn,
@@ -289,10 +388,12 @@ def run_ticket_wave(
         result["id"] = dim.get("id")
         result["name"] = dim.get("name")
         result["weight"] = dim.get("weight") or 0
+        result["attributed_to"] = target_agent_user_id if result["evidence_verified"] else None
         findings.append(result)
         applog.event(
             log, "ticket_criterion_scored",
             dimension=dim.get("id"),
+            agent_user_id=target_agent_user_id,
             verdict=result["verdict"],
             evidence_verified=result["evidence_verified"],
             evidence_seq=result["evidence_seq"],
@@ -317,58 +418,78 @@ def _numeric_score(findings: list[dict]) -> float:
     return round(100.0 * num / den, 1)
 
 
-def score_ticket(
+def score_ticket_for_agent(
     turns: list[dict],
     dimensions: list[dict],
     *,
+    target_agent_user_id: str,
+    spans: list[dict] | None = None,
     build_prompt_fn=build_prompt,
     call_claude_fn=call_claude,
     validate_evidence_fn=validate_evidence,
 ) -> dict:
-    """Score a sequenced ticket against a list of {id, question, weight} dims.
-
-    Returns score, findings (each attributed to a span's agent_user_id),
-    the v1 primary_owner, and the span list itself.
-    """
-    with tracing.span("task", "ticket.score"):
-        return _score_ticket(
+    """One agent's complete, independent scorecard for this ticket."""
+    spans = spans if spans is not None else agent_spans(turns)
+    with tracing.span("task", "ticket.score_agent"):
+        findings = run_ticket_wave_for_agent(
             turns, dimensions,
+            target_agent_user_id=target_agent_user_id,
+            spans=spans,
             build_prompt_fn=build_prompt_fn,
             call_claude_fn=call_claude_fn,
             validate_evidence_fn=validate_evidence_fn,
         )
+    own_spans = [s for s in spans if str(s.get("agent_user_id") or "") == str(target_agent_user_id)]
+    result = {
+        "agent_user_id": target_agent_user_id,
+        "score": _numeric_score(findings),
+        "findings": findings,
+        "spans": own_spans,
+    }
+    applog.event(
+        log, "ticket_agent_scored",
+        agent_user_id=target_agent_user_id,
+        score=result["score"],
+        dimensions=len(findings),
+    )
+    return result
 
 
-def _score_ticket(
+def score_ticket_per_agent(
     turns: list[dict],
     dimensions: list[dict],
     *,
+    only_agent_ids: list[str] | None = None,
     build_prompt_fn=build_prompt,
     call_claude_fn=call_claude,
     validate_evidence_fn=validate_evidence,
-) -> dict:
+) -> list[dict]:
+    """TA-21/TA-25 entrypoint: one independent scorecard per real,
+    identified agent on this ticket. only_agent_ids restricts which
+    agents actually get (re-)scored — the caller's rescoring guard is
+    per-agent (ticket_audit_store), so a ticket that's already scored for
+    Agent A but has since resolved a new Agent B only needs a real
+    Claude run for B, not a full re-score of A.
+    """
     spans = agent_spans(turns)
-    findings = run_ticket_wave(
-        turns, dimensions,
-        build_prompt_fn=build_prompt_fn,
-        call_claude_fn=call_claude_fn,
-        validate_evidence_fn=validate_evidence_fn,
-    )
-    for finding in findings:
-        finding["attributed_to"] = attributed_agent(
-            turns, finding.get("evidence_seq"), spans,
+    targets = resolved_agent_ids(turns)
+    if only_agent_ids is not None:
+        allowed = {str(a) for a in only_agent_ids}
+        targets = [a for a in targets if str(a) in allowed]
+    results = [
+        score_ticket_for_agent(
+            turns, dimensions,
+            target_agent_user_id=agent_id,
+            spans=spans,
+            build_prompt_fn=build_prompt_fn,
+            call_claude_fn=call_claude_fn,
+            validate_evidence_fn=validate_evidence_fn,
         )
-    result = {
-        "score": _numeric_score(findings),
-        "primary_owner": primary_owner(turns),
-        "spans": spans,
-        "findings": findings,
-    }
+        for agent_id in targets
+    ]
     applog.event(
         log, "ticket_scored",
-        score=result["score"],
-        dimensions=len(findings),
+        agents=len(results),
         spans=len(spans),
-        primary_owner=result["primary_owner"],
     )
-    return result
+    return results

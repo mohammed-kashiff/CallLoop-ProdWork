@@ -156,19 +156,28 @@ def _as_datetime(value) -> datetime | None:
     return None
 
 
-def evaluate_response_timeliness(turns: list[dict]) -> dict:
-    """TA-13's dimension: the longest real wait between a customer message
-    and the next AGENT reply (bot replies don't count as the agent
-    responding). Deterministic — a computed number, not a judgment call —
-    so it never calls Claude, unlike the five LLM-judged TICKET_QA_DIMENSIONS.
+def evaluate_response_timeliness(
+    turns: list[dict], *, target_agent_user_id: str | None = None,
+) -> dict:
+    """TA-13/TA-27's dimension: the longest real wait between a customer
+    message and the next AGENT reply (bot replies don't count as the
+    agent responding). Deterministic — a computed number, not a judgment
+    call — so it never calls Claude, unlike the five LLM-judged
+    TICKET_QA_DIMENSIONS.
+
+    TA-27: target_agent_user_id scopes this to one specific agent's own
+    responsiveness — only a gap ending in *that* agent's reply counts,
+    so a fast-replying agent's score isn't dragged down by a teammate's
+    slow one on the same ticket, and vice versa. Omitting it keeps the
+    old ticket-wide "worst gap by anyone" measurement.
 
     Needs turn["sent_at"] (ticket_pdf_parser.py's real per-message
     timestamps, TA-13). A ticket with no timestamps at all (ingested
     before TA-13, or a hand-built test fixture) can't be measured —
-    verdict "error" rather than a guess. A ticket where no customer
-    message ever waited on an agent gets "not_applicable".
+    verdict "error" rather than a guess. A ticket (or agent) where no
+    customer message ever waited on a reply gets "not_applicable".
 
-    Not folded into score_ticket()'s weighted score for v1 — the
+    Not folded into score_ticket_for_agent()'s weighted score — the
     aggregate-scoring design is exactly the "final design" work PRD §10
     defers to later. Returned as its own finding for the caller to
     display, not to sum in.
@@ -199,19 +208,30 @@ def evaluate_response_timeliness(turns: list[dict]) -> dict:
             continue
         if t["speaker"] != "agent":
             continue  # a bot reply doesn't count as the agent responding
-        if waiting_since is not None and t["sent_at"]:
+        is_target = (
+            target_agent_user_id is None
+            or str(t.get("agent_user_id") or "") == str(target_agent_user_id)
+        )
+        if waiting_since is not None and t["sent_at"] and is_target:
             gap = t["sent_at"] - waiting_since
             if worst_gap is None or gap > worst_gap:
                 worst_gap = gap
                 worst_seq = t["seq"]
-        waiting_since = None
+        if waiting_since is not None and t["sent_at"]:
+            # Any agent's reply — target or not — ends this customer's wait;
+            # only whether it COUNTS toward the target's worst gap differs.
+            waiting_since = None
 
     if worst_gap is None:
         return {
             "id": "response_timeliness",
             "name": "Response Timeliness",
             "verdict": "not_applicable",
-            "reasoning": "No customer message was ever waiting on an agent reply.",
+            "reasoning": (
+                "No customer message was ever waiting on a reply from this agent."
+                if target_agent_user_id is not None
+                else "No customer message was ever waiting on an agent reply."
+            ),
             "evidence_text": None,
             "evidence_seq": None,
             "evidence_verified": False,
@@ -230,7 +250,7 @@ def evaluate_response_timeliness(turns: list[dict]) -> dict:
         "id": "response_timeliness",
         "name": "Response Timeliness",
         "verdict": verdict,
-        "reasoning": f"Longest wait for an agent reply was {hours:.1f} hours.",
+        "reasoning": f"Longest wait for a reply was {hours:.1f} hours.",
         "evidence_text": None,
         "evidence_seq": worst_seq,
         "evidence_verified": True,

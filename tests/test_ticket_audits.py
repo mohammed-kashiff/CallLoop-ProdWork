@@ -1,11 +1,18 @@
-"""TA-11: ticket_audits schema — one stored scorecard per ticket, RLS,
-no call-engine tables touched."""
+"""TA-11: ticket_audits schema — originally one stored scorecard per
+ticket, RLS, no call-engine tables touched. Superseded by
+0039_ticket_audits_per_agent.py (TA-21/TA-28) — see
+test_ticket_audits_per_agent_migration below — which widens the table to
+one row per (ticket_id, agent_user_id). These tests inspect 0024's own
+historical content, which is unchanged and still accurate as a record of
+what that revision did; they are not a claim about the table's current
+live shape."""
 
 from __future__ import annotations
 
 from backend.paths import ROOT
 
 REV = ROOT / "alembic" / "versions" / "0024_ticket_audits.py"
+REV_PER_AGENT = ROOT / "alembic" / "versions" / "0039_ticket_audits_per_agent.py"
 SCORING = ("qa_engine.py", "qa_v8.py", "rules_v8.py")
 
 

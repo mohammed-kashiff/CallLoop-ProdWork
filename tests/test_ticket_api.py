@@ -110,8 +110,8 @@ def test_upload_hands_pdf_to_ingest_not_call_upload(auth_client, monkeypatch):
 
     scored = {"called": False}
     monkeypatch.setattr(
-        "backend.ticket_scoring.score_ticket",
-        lambda *a, **k: scored.update(called=True) or {},
+        "backend.ticket_scoring.score_ticket_per_agent",
+        lambda *a, **k: scored.update(called=True) or [],
         raising=False,
     )
 
@@ -228,6 +228,7 @@ def test_get_ticket_returns_turns_and_image_flags(auth_client, monkeypatch):
                  "agent_user_id": None, "sent_at": None, "has_image": True},
             ],
             "assets": [{"seq": 1, "width": 300, "height": 150, "content_type": "image/png"}],
+            "audits": [],
         }
 
     monkeypatch.setattr("backend.ticket_api.ticket_ingest.get_ticket", fake_get)
@@ -236,6 +237,8 @@ def test_get_ticket_returns_turns_and_image_flags(auth_client, monkeypatch):
     body = r.json()
     assert body["messages"][1]["has_image"] is True
     assert "storage_key" not in body["assets"][0]
+    assert body["audits"] == []
+    assert body["own_span_seqs"] == []
 
 
 def test_asset_signed_url_404_when_row_missing(auth_client, monkeypatch):
@@ -327,7 +330,7 @@ def test_org_b_cannot_get_org_a_ticket_via_api(monkeypatch):
             return None
         if ticket_id == hidden:
             return None
-        return {"id": ticket_id, "messages": [], "assets": []}
+        return {"id": ticket_id, "messages": [], "assets": [], "audits": []}
 
     monkeypatch.setattr("backend.ticket_api.ticket_ingest.get_ticket", fake_get)
     client = TestClient(app)

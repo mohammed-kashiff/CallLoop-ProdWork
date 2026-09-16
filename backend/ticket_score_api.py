@@ -7,20 +7,24 @@ scorecard to render: nothing else in this codebase wires TA-6
 added to ticket_api.py since that file is under active concurrent
 development; `register()` is called separately from api.py.
 
-POST /api/tickets/{ticket_id}/score scores every turn against the org's
-"Ticket QA" rubric — a real rubrics-table row (TA-13, PRD §10), created
-on first use via ticket_rubric.ensure_ticket_rubric() — via
-ticket_scoring.score_ticket(). Response Timeliness (TA-13) is computed
-deterministically from real message timestamps and appended to the
-findings list separately — it is not part of score_ticket()'s weighted
-score for v1.
+POST /api/tickets/{ticket_id}/score scores every resolved agent on the
+ticket independently against the org's "Ticket QA" rubric — a real
+rubrics-table row (TA-13, PRD §10), created on first use via
+ticket_rubric.ensure_ticket_rubric() — via
+ticket_scoring.score_ticket_per_agent() (TA-21/TA-25). Response
+Timeliness (TA-13/TA-27) is computed deterministically from real message
+timestamps, per agent, and appended to each agent's findings list
+separately — it is not part of score_ticket_for_agent()'s weighted score
+and is never persisted (recomputed fresh on every response).
 
-TA-11 (PRD §9): the first successful POST persists the scorecard in
-ticket_audits. A later POST without ?refresh=true returns that stored
-result and does not call Claude. ?refresh=true is blocked with 403
-unless the org's enable_ticket_rescoring flag is on (off by default) —
-same rule as enable_call_rescoring, so Claude's non-determinism cannot
-quietly change a stored ticket score.
+TA-11 (PRD §9), rebuilt per-agent (TA-28): the rescoring guard is now
+per agent, not per ticket. An agent who already has a stored row is
+skipped unless ?refresh=true and the org's enable_ticket_rescoring flag
+is on — same rule as enable_call_rescoring, so Claude's non-determinism
+cannot quietly change a stored score. A newly-resolved agent with no row
+yet still gets a real first score on a plain POST, even if other agents
+on the same ticket were already audited — that's a genuine first score
+for them, not a re-score of already-audited data.
 
 POST, not GET: a first-time score costs real money per call, so it must
 not be something a browser could trigger accidentally (a prefetch, a
@@ -61,50 +65,51 @@ def _parse_ticket_id(ticket_id: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid ticket id.") from None
 
 
-def _with_timeliness(payload: dict, turns: list[dict]) -> dict:
-    """TA-13: Response Timeliness is deterministic, computed fresh from the
-    ticket's real message timestamps every time — never persisted, never
-    part of score_ticket()'s weighted score (v1; see ticket_rubric.
-    evaluate_response_timeliness()'s own docstring), and never filtered by
-    TA-12's own-contribution view: it's a whole-thread metric, not one
-    agent's individual score, so it's appended after _payload() has
-    already applied that filtering to everything else."""
-    timeliness = ticket_rubric.evaluate_response_timeliness(turns)
-    return {**payload, "findings": [*(payload.get("findings") or []), timeliness]}
+def _agent_with_timeliness(agent_result: dict, turns: list[dict]) -> dict:
+    """TA-13/TA-27: Response Timeliness is deterministic, computed fresh
+    from this ticket's real message timestamps every time, scoped to this
+    one agent's own replies — never persisted (see ticket_rubric.
+    evaluate_response_timeliness()'s own docstring), never part of the
+    weighted score."""
+    timeliness = ticket_rubric.evaluate_response_timeliness(
+        turns, target_agent_user_id=agent_result["agent_user_id"],
+    )
+    return {**agent_result, "findings": [*(agent_result.get("findings") or []), timeliness]}
+
+
+def _with_summary(agent_result: dict) -> dict:
+    """IN-12: audit_summary/top_strength/top_gap computed from this one
+    agent's own findings only — never persisted (ticket_audit_summary.py's
+    own docstring), never mixed with another agent's scoring output."""
+    findings = agent_result.get("findings") or []
+    return {
+        **agent_result,
+        "top_strength": ticket_audit_summary.top_strength(findings),
+        "top_gap": ticket_audit_summary.top_gap(findings),
+        "audit_summary": ticket_audit_summary.generate_audit_summary(findings),
+    }
 
 
 def _payload(
-    tid: str, result: dict, *, cached: bool, viewer_user_id: str, is_manager: bool,
+    tid: str, agent_results: list[dict], turns: list[dict],
+    *, cached: bool, viewer_user_id: str, is_manager: bool,
 ) -> dict:
-    """TA-12: a manager (org owner) gets every finding/span. Anyone else
-    gets only the ones attributed to their own agent_user_id — never
-    another agent's individual scores, even on a ticket they share.
-
-    IN-12: audit_summary/top_strength/top_gap are computed here, after
-    TA-12's own filtering, from the already-filtered findings — never
-    persisted (see ticket_audit_summary.py's own docstring), and never
-    computed from the unfiltered ticket, so a non-manager's summary
-    reflects only what they personally contributed, same as their
-    findings/spans already do.
+    """TA-29: a manager (owner or manager, AC-56/AC-60) gets every agent's
+    independent scorecard. Anyone else gets only their own — never a
+    teammate's individual score, even on a ticket they share. The full
+    thread itself is never filtered here (TA-30) — that's the caller's
+    job via ticket_ingest.get_ticket(), which always returns every turn
+    regardless of viewer; this payload is scores only.
     """
-    filtered_findings = ticket_permissions.filter_findings_for_viewer(
-        result.get("findings") or [], viewer_user_id=viewer_user_id, is_manager=is_manager,
+    visible = ticket_permissions.filter_audits_for_viewer(
+        agent_results, viewer_user_id=viewer_user_id, is_manager=is_manager,
     )
-    filtered = {
-        **result,
-        "findings": filtered_findings,
-        "spans": ticket_permissions.filter_spans_for_viewer(
-            result.get("spans") or [], viewer_user_id=viewer_user_id, is_manager=is_manager,
-        ),
-        "top_strength": ticket_audit_summary.top_strength(filtered_findings),
-        "top_gap": ticket_audit_summary.top_gap(filtered_findings),
-        "audit_summary": ticket_audit_summary.generate_audit_summary(filtered_findings),
-    }
+    agents = [_with_summary(_agent_with_timeliness(a, turns)) for a in visible]
     return {
         "ticket_id": tid,
         "cached": cached,
         "view_scope": "full" if is_manager else "own",
-        **filtered,
+        "agents": agents,
     }
 
 
@@ -232,59 +237,76 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
         for m in ticket["messages"]
     ]
 
-    prior = ticket_audit_store.fetch_latest(tid, org_id)
-    if prior is not None:
-        stored = prior["findings"]
-        if refresh:
-            if not org_features.features_for_org(org_id).get("enable_ticket_rescoring"):
-                applog.event(
-                    log, "ticket_rescore_blocked",
-                    ticket_id=tid, score=prior.get("score"),
-                )
-                raise HTTPException(status_code=403, detail=_RESCORE_DENIED)
-        else:
+    resolved = ticket_scoring.resolved_agent_ids(turns)
+    if not resolved:
+        raise HTTPException(
+            status_code=400,
+            detail="No agent identities are resolved on this ticket yet — map agent names first.",
+        )
+
+    stored_by_agent = {
+        row["agent_user_id"]: row for row in ticket_audit_store.fetch_all(tid, org_id)
+    }
+    if refresh and stored_by_agent:
+        if not org_features.features_for_org(org_id).get("enable_ticket_rescoring"):
             applog.event(
-                log, "ticket_audit_cache",
-                result="HIT", ticket_id=tid, score=prior.get("score"),
+                log, "ticket_rescore_blocked",
+                ticket_id=tid, agents=list(stored_by_agent),
             )
-            payload = _payload(
-                tid, stored, cached=True, viewer_user_id=viewer_id, is_manager=is_manager,
+            raise HTTPException(status_code=403, detail=_RESCORE_DENIED)
+        to_score = resolved  # allowed re-score: every resolved agent runs fresh
+    else:
+        # TA-28: the guard is per-agent — an agent with no stored row yet
+        # always gets a real first score, even if a teammate on the same
+        # ticket was already audited.
+        to_score = [a for a in resolved if a not in stored_by_agent]
+
+    fresh_results: list[dict] = []
+    if to_score:
+        try:
+            rubric = ticket_rubric.ensure_ticket_rubric(org_id)
+            fresh_results = ticket_scoring.score_ticket_per_agent(
+                turns, rubric["dimensions"], only_agent_ids=to_score,
             )
-            return _with_timeliness(payload, turns)
+        except Exception as e:  # noqa: BLE001
+            applog.event(
+                log, "ticket_scoring_failed", level=logging.ERROR,
+                ticket_id=tid, error=applog.safe_exception_text(e),
+            )
+            sentry_report.capture_exception(e)
+            raise HTTPException(status_code=502, detail="Ticket scoring failed.") from None
 
-    try:
-        rubric = ticket_rubric.ensure_ticket_rubric(org_id)
-        result = ticket_scoring.score_ticket(turns, rubric["dimensions"])
-    except Exception as e:  # noqa: BLE001
+        try:
+            ticket_audit_store.upsert_many(
+                tid, org_id, fresh_results,
+                requested_by=getattr(request.state, "user_id", None),
+            )
+        except Exception as e:  # noqa: BLE001
+            applog.event(
+                log, "ticket_audit_persist_failed", level=logging.ERROR,
+                ticket_id=tid, error=applog.safe_exception_text(e),
+            )
+            sentry_report.capture_exception(e)
+            raise HTTPException(status_code=502, detail="Ticket scoring failed.") from None
+
         applog.event(
-            log, "ticket_scoring_failed", level=logging.ERROR,
-            ticket_id=tid, error=applog.safe_exception_text(e),
+            log, "ticket_scored",
+            ticket_id=tid, agents=[r["agent_user_id"] for r in fresh_results],
+            refresh=bool(refresh),
         )
-        sentry_report.capture_exception(e)
-        raise HTTPException(status_code=502, detail="Ticket scoring failed.") from None
 
-    try:
-        ticket_audit_store.upsert(
-            tid, org_id, result,
-            requested_by=getattr(request.state, "user_id", None),
-        )
-    except Exception as e:  # noqa: BLE001
-        applog.event(
-            log, "ticket_audit_persist_failed", level=logging.ERROR,
-            ticket_id=tid, error=applog.safe_exception_text(e),
-        )
-        sentry_report.capture_exception(e)
-        raise HTTPException(status_code=502, detail="Ticket scoring failed.") from None
+    fresh_by_agent = {r["agent_user_id"]: r for r in fresh_results}
+    agent_results = [
+        fresh_by_agent[a] if a in fresh_by_agent else stored_by_agent[a]
+        for a in resolved
+    ]
+    cached = not fresh_results
+    if cached:
+        applog.event(log, "ticket_audit_cache", result="HIT", ticket_id=tid, agents=resolved)
 
-    applog.event(
-        log, "ticket_scored",
-        ticket_id=tid, score=result["score"], dimensions=len(result["findings"]),
-        refresh=bool(refresh),
+    return _payload(
+        tid, agent_results, turns, cached=cached, viewer_user_id=viewer_id, is_manager=is_manager,
     )
-    payload = _payload(
-        tid, result, cached=False, viewer_user_id=viewer_id, is_manager=is_manager,
-    )
-    return _with_timeliness(payload, turns)
 
 
 def register(app) -> None:

@@ -151,10 +151,13 @@ def list_tickets(request: Request):
 
 
 def get_ticket(request: Request, ticket_id: str):
-    """TA-12/AC-60: an owner or manager gets the row as ticket_ingest built
-    it. Anyone else gets only their own contribution — turns inside their
-    own agent span, the assets attached to those turns, and (if the ticket
-    has been scored) only their own findings/spans, never another agent's."""
+    """TA-12/AC-60/TA-29/TA-30: the full thread, always, for every viewer
+    — no longer filtered by who's asking (the bug found live: hiding the
+    rest of the ticket meant an agent reviewing their own work couldn't
+    see what the customer originally asked). An owner or manager gets
+    every agent's independent scorecard; anyone else gets only their own,
+    plus own_span_seqs so the UI can highlight their own turns in the
+    full thread instead of isolating them."""
     org_id = auth.org_id_from_request(request)
     tid = _parse_ticket_id(ticket_id)
     row = ticket_ingest.get_ticket(tid, org_id)
@@ -162,35 +165,25 @@ def get_ticket(request: Request, ticket_id: str):
         raise HTTPException(status_code=404, detail="Ticket not found.")
 
     is_manager = auth.is_owner_or_manager(request)
-    if is_manager:
-        return {**row, "view_scope": "full"}
-
     viewer_id = auth.user_id_from_request(request)
-    turns = ticket_permissions.filter_turns_for_viewer(
-        row["messages"], viewer_user_id=viewer_id, is_manager=False,
+    audits = ticket_permissions.filter_audits_for_viewer(
+        row["audits"], viewer_user_id=viewer_id, is_manager=is_manager,
     )
-    visible_seqs = {t["seq"] for t in turns}
-    assets = [a for a in row["assets"] if a["seq"] in visible_seqs]
-    audit = row["audit"]
-    if audit is not None:
-        audit = {
-            **audit,
-            "findings": ticket_permissions.filter_findings_for_viewer(
-                audit.get("findings") or [], viewer_user_id=viewer_id, is_manager=False,
-            ),
-            "spans": ticket_permissions.filter_spans_for_viewer(
-                audit.get("spans") or [], viewer_user_id=viewer_id, is_manager=False,
-            ),
-        }
-    return {**row, "messages": turns, "assets": assets, "audit": audit, "view_scope": "own"}
+    return {
+        **row,
+        "audits": audits,
+        "own_span_seqs": ticket_permissions.own_span_seqs(row["messages"], viewer_id),
+        "view_scope": "full" if is_manager else "own",
+    }
 
 
 def my_ticket_contributions(request: Request):
-    """TA-12: an agent's own contribution rolled up across every ticket
-    they've touched — never another agent's turns or scores, even on a
-    thread shared with them. An org owner gets the same shape, scoped to
-    their own turns too — "manager" only changes what a single ticket's
-    GET returns, not what "mine" means here."""
+    """TA-12/TA-30: an agent's own contribution rolled up across every
+    ticket they've touched — the full thread for each (own turns
+    highlighted via own_span_seqs, never isolated), but only their own
+    scorecard, never a teammate's. An org owner/manager gets the same
+    shape, scoped to their own turns too — "manager" only changes what a
+    single ticket's GET returns, not what "mine" means here."""
     org_id = auth.org_id_from_request(request)
     viewer_id = auth.user_id_from_request(request)
     tickets = []
@@ -198,22 +191,16 @@ def my_ticket_contributions(request: Request):
         row = ticket_ingest.get_ticket(ticket_id, org_id)
         if not row:
             continue
-        turns = ticket_permissions.filter_turns_for_viewer(
-            row["messages"], viewer_user_id=viewer_id, is_manager=False,
+        own_audits = ticket_permissions.filter_audits_for_viewer(
+            row["audits"], viewer_user_id=viewer_id, is_manager=False,
         )
-        if not turns:
-            continue
-        findings = None
-        if row["audit"] is not None:
-            findings = ticket_permissions.filter_findings_for_viewer(
-                row["audit"].get("findings") or [], viewer_user_id=viewer_id, is_manager=False,
-            )
         tickets.append({
             "ticket_id": row["id"],
             "status": row["status"],
             "created_at": row["created_at"],
-            "turns": turns,
-            "findings": findings,
+            "turns": row["messages"],
+            "own_span_seqs": ticket_permissions.own_span_seqs(row["messages"], viewer_id),
+            "findings": own_audits[0]["findings"] if own_audits else None,
         })
     return {"tickets": tickets}
 

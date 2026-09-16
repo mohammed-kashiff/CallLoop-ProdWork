@@ -2208,6 +2208,35 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   color: var(--teal);
 }
 
+.ticket-turn.is-own-turn {
+  border-color: var(--teal);
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.agent-scorecard {
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-scorecard:last-of-type {
+  border-bottom: none;
+}
+
+.agent-scorecard-score {
+  font-family: var(--mono);
+  font-weight: 750;
+  font-size: 1.4rem;
+  line-height: 1;
+  margin: 0;
+}
+
+.agent-scorecard-score span {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--muted-fg);
+}
+
 .ticket-turn p {
   margin: 0;
   line-height: 1.5;

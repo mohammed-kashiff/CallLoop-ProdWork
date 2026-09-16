@@ -4,10 +4,11 @@ import { apiFetch, readError } from '../lib/api'
 import { TicketEvidence } from '../components/TicketEvidence'
 import { capFirst } from '../lib/format'
 
-// TA-12 (PRD §7): an agent's own contribution rolled up across every
-// ticket they've touched — never another agent's turns or scores, even
-// on a thread they share. The backend does all the filtering; this page
-// just renders what GET /api/tickets/mine already scoped down.
+// TA-12/TA-21/TA-30 (PRD §7): an agent's own scorecard rolled up across
+// every ticket they've touched — never a teammate's individual score, even
+// on a thread they share. Unlike the old behavior, the full thread comes
+// back for every ticket (TA-30): own_span_seqs marks which turns are the
+// viewer's own to highlight, rather than the backend hiding the rest.
 
 type OwnTurn = {
   seq: number
@@ -30,6 +31,7 @@ type OwnTicketContribution = {
   status: string
   created_at: string | null
   turns: OwnTurn[]
+  own_span_seqs: number[]
   findings: OwnFinding[] | null
 }
 
@@ -79,8 +81,9 @@ export function MyTicketContributions() {
       </header>
 
       <p className="scaffold-banner">
-        Scaffolding — your own contribution across every ticket you've touched, never another
-        agent's turns or scores even on a shared thread (TA-12).
+        Your own scorecard across every ticket you've touched — never a teammate's individual
+        score, even on a shared thread. The full thread is shown for each ticket; your own turns
+        are highlighted.
       </p>
 
       {loading ? <p className="panel-lede">Loading…</p> : null}
@@ -106,7 +109,15 @@ export function MyTicketContributions() {
           </p>
           <ul className="ticket-thread">
             {t.turns.map((m) => (
-              <li key={m.seq} className={`ticket-turn is-${m.speaker}`}>
+              <li
+                key={m.seq}
+                className={[
+                  `ticket-turn is-${m.speaker}`,
+                  t.own_span_seqs.includes(m.seq) ? 'is-own-turn' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
                 <span className="ticket-turn-speaker">
                   {capFirst(m.speaker)}
                   {m.display_name ? ` (${m.display_name})` : ''}

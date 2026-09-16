@@ -163,7 +163,7 @@ def test_run_ticket_wave_excludes_a_note_from_a_customer_facing_only_dimension()
     """The note's own text must never reach Claude's prompt for a
     customer_facing_only dimension — proven by having the stub Claude
     fail the test if the note's text is anywhere in what it receives."""
-    from backend.ticket_scoring import run_ticket_wave
+    from backend.ticket_scoring import agent_spans, run_ticket_wave_for_agent
 
     captured_prompts = []
 
@@ -176,13 +176,17 @@ def test_run_ticket_wave_excludes_a_note_from_a_customer_facing_only_dimension()
 
     dims = [{"id": "tone", "name": "Tone", "weight": 15,
              "question": "Was the tone professional?", "customer_facing_only": True}]
-    run_ticket_wave(TURNS_WITH_A_NOTE, dims, call_claude_fn=_claude)
+    run_ticket_wave_for_agent(
+        TURNS_WITH_A_NOTE, dims,
+        target_agent_user_id="agent-a", spans=agent_spans(TURNS_WITH_A_NOTE),
+        call_claude_fn=_claude,
+    )
     assert len(captured_prompts) == 1
     assert "Refund approved per policy" not in captured_prompts[0]
 
 
 def test_run_ticket_wave_includes_a_note_for_a_dimension_without_the_flag():
-    from backend.ticket_scoring import run_ticket_wave
+    from backend.ticket_scoring import agent_spans, run_ticket_wave_for_agent
 
     captured_prompts = []
 
@@ -196,7 +200,11 @@ def test_run_ticket_wave_includes_a_note_for_a_dimension_without_the_flag():
 
     dims = [{"id": "ownership", "name": "Ownership", "weight": 15,
              "question": "Was ownership clear across the thread?"}]
-    findings = run_ticket_wave(TURNS_WITH_A_NOTE, dims, call_claude_fn=_claude)
+    findings = run_ticket_wave_for_agent(
+        TURNS_WITH_A_NOTE, dims,
+        target_agent_user_id="agent-a", spans=agent_spans(TURNS_WITH_A_NOTE),
+        call_claude_fn=_claude,
+    )
     assert "Refund approved per policy" in captured_prompts[0]
     assert findings[0]["evidence_verified"] is True
 
@@ -253,35 +261,27 @@ def test_agent_spans_treat_null_agent_user_id_as_one_identity():
     assert spans[0]["turn_count"] == 2
 
 
-def test_primary_owner_is_the_resolving_agent_when_that_turn_has_an_id():
-    from backend.ticket_scoring import primary_owner
+def test_resolved_agent_ids_lists_distinct_real_agents_in_order():
+    from backend.ticket_scoring import resolved_agent_ids
 
-    assert primary_owner(TURNS) == "agent-b"
-
-
-def test_primary_owner_falls_back_to_most_turns_when_resolver_has_no_id():
-    from backend.ticket_scoring import primary_owner
-
-    turns = [
-        {"seq": 0, "speaker": "agent", "agent_user_id": "agent-a", "text": "a1"},
-        {"seq": 1, "speaker": "agent", "agent_user_id": "agent-a", "text": "a2"},
-        {"seq": 2, "speaker": "agent", "agent_user_id": None, "text": "closing"},
-    ]
-    assert primary_owner(turns) == "agent-a"
+    assert resolved_agent_ids(TURNS) == ["agent-a", "agent-b"]
 
 
-def test_primary_owner_is_none_when_every_agent_turn_is_unresolved():
-    from backend.ticket_scoring import primary_owner
+def test_resolved_agent_ids_excludes_unresolved_turns():
+    from backend.ticket_scoring import resolved_agent_ids
 
     turns = [
-        {"seq": 0, "speaker": "customer", "agent_user_id": None, "text": "hi"},
-        {"seq": 1, "speaker": "agent", "agent_user_id": None, "text": "hello"},
+        {"seq": 0, "speaker": "agent", "agent_user_id": None, "text": "hi"},
+        {"seq": 1, "speaker": "agent", "agent_user_id": "agent-a", "text": "hello"},
     ]
-    assert primary_owner(turns) is None
+    assert resolved_agent_ids(turns) == ["agent-a"]
 
 
-def test_finding_is_attributed_to_the_span_that_owns_the_evidence_seq():
-    from backend.ticket_scoring import score_ticket
+def test_score_ticket_per_agent_gives_each_agent_their_own_independent_finding():
+    """TA-21/TA-25's whole point: agent-a and agent-b each get their own
+    Claude call for the SAME dimension, not one shared verdict
+    post-hoc-attributed by evidence location."""
+    from backend.ticket_scoring import score_ticket_per_agent
 
     dims = [
         {"id": "resolution", "name": "Resolution", "weight": 50,
@@ -289,32 +289,68 @@ def test_finding_is_attributed_to_the_span_that_owns_the_evidence_seq():
         {"id": "tone", "name": "Tone", "weight": 50,
          "question": "Was the agent professional?"},
     ]
-    calls = {
-        "Was the issue resolved?": _claude_for(
-            "I've restarted the payment worker and the 504 is gone now", 3,
-        ),
-        "Was the agent professional?": _claude_for(
-            "I can help with that", 1,
-        ),
-    }
 
     def _dispatch(prompt: str) -> str:
-        for question, fn in calls.items():
-            if question in prompt:
-                return fn(prompt)
-        raise AssertionError(f"unexpected prompt: {prompt[:80]}")
+        if "agent under review" not in prompt:
+            raise AssertionError("per-agent prompt must mark who's under review")
+        if "Was the issue resolved?" in prompt:
+            return json.dumps({
+                "verdict": "pass", "reasoning": "resolved it",
+                "evidence_quote": "I've restarted the payment worker and the 504 is gone now",
+                "evidence_seq": 3,
+            })
+        return json.dumps({
+            "verdict": "pass", "reasoning": "professional tone",
+            "evidence_quote": "I can help with that", "evidence_seq": 1,
+        })
 
-    result = score_ticket(TURNS, dims, call_claude_fn=_dispatch)
-    assert result["primary_owner"] == "agent-b"
-    by_id = {f["id"]: f for f in result["findings"]}
-    assert by_id["resolution"]["attributed_to"] == "agent-b"
-    assert by_id["tone"]["attributed_to"] == "agent-a"
-    assert by_id["resolution"]["evidence_verified"] is True
-    assert result["score"] == 100.0
+    results = score_ticket_per_agent(TURNS, dims, call_claude_fn=_dispatch)
+    by_agent = {r["agent_user_id"]: r for r in results}
+    assert set(by_agent) == {"agent-a", "agent-b"}
+    # Each agent gets BOTH dimensions independently scored — four Claude
+    # calls total, not two shared ones.
+    assert {f["id"] for f in by_agent["agent-a"]["findings"]} == {"resolution", "tone"}
+    assert {f["id"] for f in by_agent["agent-b"]["findings"]} == {"resolution", "tone"}
+
+
+def test_evidence_from_a_different_agents_span_is_downgraded_not_credited():
+    """The root bug TA-21 exists to fix, proven directly: if the model
+    cites a teammate's turn as evidence, that must never be accepted as
+    this agent's own contribution."""
+    from backend.ticket_scoring import agent_spans, evaluate_criterion_for_agent
+
+    spans = agent_spans(TURNS)
+    # Ask about agent-a, but the stub always cites agent-b's seq 3 turn.
+    result = evaluate_criterion_for_agent(
+        "Did the agent resolve the issue?",
+        TURNS,
+        target_agent_user_id="agent-a",
+        spans=spans,
+        call_claude_fn=_claude_for(
+            "I've restarted the payment worker and the 504 is gone now", 3,
+        ),
+    )
+    assert result["verdict"] == "error"
+    assert result["evidence_verified"] is False
+
+
+def test_evidence_within_the_target_agents_own_span_is_accepted():
+    from backend.ticket_scoring import agent_spans, evaluate_criterion_for_agent
+
+    spans = agent_spans(TURNS)
+    result = evaluate_criterion_for_agent(
+        "Was the agent professional?",
+        TURNS,
+        target_agent_user_id="agent-a",
+        spans=spans,
+        call_claude_fn=_claude_for("I can help with that", 1),
+    )
+    assert result["verdict"] == "pass"
+    assert result["evidence_verified"] is True
 
 
 def test_score_renormalises_when_a_dimension_errors():
-    from backend.ticket_scoring import score_ticket
+    from backend.ticket_scoring import score_ticket_for_agent
 
     dims = [
         {"id": "ok", "question": "Q1", "weight": 40},
@@ -331,13 +367,15 @@ def test_score_renormalises_when_a_dimension_errors():
             })
         return "not json at all"
 
-    result = score_ticket(TURNS, dims, call_claude_fn=_dispatch)
+    result = score_ticket_for_agent(
+        TURNS, dims, target_agent_user_id="agent-a", call_claude_fn=_dispatch,
+    )
     by_id = {f["id"]: f for f in result["findings"]}
     assert by_id["bad"]["verdict"] == "error"
     assert result["score"] == 100.0  # only the passing 40-weight dim counts
 
 
-def test_score_ticket_does_not_call_run_v8_wave(monkeypatch):
+def test_score_ticket_per_agent_does_not_call_run_v8_wave(monkeypatch):
     """Own loop: even if qa_v8.run_v8_wave exists, TA-6 must not touch it."""
     from backend import ticket_scoring
 
@@ -346,8 +384,13 @@ def test_score_ticket_does_not_call_run_v8_wave(monkeypatch):
 
     monkeypatch.setattr("backend.qa_v8.run_v8_wave", _forbidden, raising=False)
     dims = [{"id": "x", "question": "Did the agent help?", "weight": 10}]
-    result = ticket_scoring.score_ticket(
+    results = ticket_scoring.score_ticket_per_agent(
         TURNS, dims,
+        # seq 1 is agent-a's own turn — a real match only for agent-a's
+        # independent call; agent-b's call correctly downgrades it as
+        # foreign evidence, which is exactly what this fixture is for
+        # elsewhere. This test only cares that run_v8_wave was never hit.
         call_claude_fn=_claude_for("I can help with that", 1),
     )
-    assert result["findings"][0]["verdict"] == "pass"
+    by_agent = {r["agent_user_id"]: r for r in results}
+    assert by_agent["agent-a"]["findings"][0]["verdict"] == "pass"
