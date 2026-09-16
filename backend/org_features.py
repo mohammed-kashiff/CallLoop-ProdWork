@@ -40,6 +40,7 @@ from typing import Literal, TypedDict
 from fastapi import HTTPException
 
 from . import applog
+from . import audit_log
 from . import db
 from .org_ids import parse_org_id
 
@@ -220,6 +221,7 @@ def set_feature(
     if not actor or len(actor) > 254:
         raise HTTPException(status_code=400, detail="changed_by is required.")
     on = bool(enabled)
+    was_on = features_for_org(oid).get(key)
     with db.connection() as conn:
         db.apply_tenant_gucs(conn, org_id=oid)
         conn.execute(
@@ -246,6 +248,12 @@ def set_feature(
         feature_key=key,
         enabled=on,
         changed_by=actor,
+    )
+    audit_log.record(
+        oid, "org.feature_toggled",
+        target_type="feature", target_id=key,
+        before={"enabled": was_on}, after={"enabled": on},
+        actor_email=actor,
     )
     return features_for_org(oid)
 

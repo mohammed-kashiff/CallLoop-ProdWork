@@ -409,3 +409,55 @@ def test_set_feature_requires_changed_by(monkeypatch):
             raise AssertionError("expected HTTPException")
     assert conn.history == []
     assert conn.inserts == []
+
+
+def test_set_feature_writes_an_audit_log_row_live():
+    """AC-66: a flag toggle is a real state-changing action, not just a
+    trial-run switch — worth the same durable audit_log row role changes
+    get, alongside (not instead of) the existing org_features_history
+    table."""
+    import uuid
+
+    import pytest
+    from dotenv import load_dotenv
+
+    from backend.db_url import database_url, psycopg_url
+    from backend.paths import ENV_FILE
+
+    load_dotenv(ENV_FILE)
+    raw = database_url()
+    if not raw:
+        pytest.skip("DATABASE_URL not set")
+    import psycopg
+    from psycopg.rows import dict_row
+
+    admin = psycopg.connect(psycopg_url(raw), row_factory=dict_row, prepare_threshold=0)
+    exists = admin.execute("SELECT to_regclass('public.audit_log') AS t").fetchone()
+    if not exists or not exists["t"]:
+        admin.close()
+        pytest.skip("0040_audit_log not applied")
+
+    org_id = str(uuid.uuid4())
+    try:
+        admin.execute("INSERT INTO orgs (id, name) VALUES (%s, %s)", (org_id, "org-features-live-test"))
+        admin.commit()
+
+        set_feature(org_id, "enable_ticket_rescoring", True, changed_by="owner@example.com")
+
+        row = admin.execute(
+            "SELECT action, target_id, before, after, actor_email FROM audit_log WHERE org_id = %s",
+            (org_id,),
+        ).fetchone()
+        assert row is not None
+        assert row["action"] == "org.feature_toggled"
+        assert row["target_id"] == "enable_ticket_rescoring"
+        assert row["before"] == {"enabled": False}
+        assert row["after"] == {"enabled": True}
+        assert row["actor_email"] == "owner@example.com"
+    finally:
+        admin.execute("DELETE FROM audit_log WHERE org_id = %s", (org_id,))
+        admin.execute("DELETE FROM org_features WHERE org_id = %s", (org_id,))
+        admin.execute("DELETE FROM org_features_history WHERE org_id = %s", (org_id,))
+        admin.execute("DELETE FROM orgs WHERE id = %s", (org_id,))
+        admin.commit()
+        admin.close()

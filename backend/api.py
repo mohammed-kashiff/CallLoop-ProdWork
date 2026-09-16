@@ -78,7 +78,14 @@ from . import ticket_agent_identity_aliases_api
 from . import ticket_api
 from . import ticket_score_api
 from . import transcribe
-from .org_ids import integration_org_id, org_scope, parse_org_id
+from .org_ids import (
+    bound_actor_email,
+    bound_actor_ip,
+    bound_user_id,
+    integration_org_id,
+    org_scope,
+    parse_org_id,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -151,6 +158,26 @@ def _pyai_me_clear() -> None:
         _pyai_me_cache["status"] = 0
 
 
+def _actor_fields(request: Request) -> dict:
+    """AC-64: who made this request — None for unauthenticated/public paths.
+
+    log_http is the OUTERMOST middleware (Starlette's add_middleware()
+    inserts at index 0, so registration order ends up reversed — the last
+    middleware registered, log_http via @app.middleware, wraps everything
+    else). That means by the time log_http's code runs after `await
+    call_next(request)` returns, JwtAuthMiddleware's own `finally` block
+    has already reset its contextvars — reading org_ids.bound_user_id()
+    etc. here would always see None. request.state, set by JwtAuthMiddleware
+    earlier in this same request's lifecycle, persists on the same Request
+    object regardless — that's what this reads instead.
+    """
+    return {
+        "actor_id": getattr(request.state, "user_id", None),
+        "actor_email": getattr(request.state, "email", None),
+        "ip_address": request.client.host if request.client else None,
+    }
+
+
 @app.middleware("http")
 async def log_http(request: Request, call_next):
     started = time.perf_counter()
@@ -166,6 +193,7 @@ async def log_http(request: Request, call_next):
             path=request.url.path,
             duration_ms=round(duration_ms, 1),
             error=err,
+            **_actor_fields(request),
         )
         error_notify.notify_http_error(
             method=request.method,
@@ -185,6 +213,7 @@ async def log_http(request: Request, call_next):
         "path": request.url.path,
         "status": status,
         "duration_ms": round(duration_ms, 1),
+        **_actor_fields(request),
     }
     if status >= 400:
         applog.event(log, "http_error", level=logging.ERROR, **fields)

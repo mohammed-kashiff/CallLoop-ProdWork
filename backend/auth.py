@@ -26,9 +26,13 @@ from .config import cors_origins
 from .org_ids import (
     DEFAULT_ORG_ID,
     DEFAULT_RUBRIC_ID,
+    bind_actor_email,
+    bind_actor_ip,
     bind_org_id,
     bind_user_id,
     parse_org_id,
+    reset_actor_email,
+    reset_actor_ip,
     reset_org_id,
     reset_user_id,
 )
@@ -437,6 +441,12 @@ class JwtAuthMiddleware:
             await response(scope, receive, send)
             return
         user_token = bind_user_id(sub)
+        # AC-64: actor identity foundation — email + IP bound alongside
+        # user_id on this same request-scoped mechanism, so every
+        # http_request/http_error log line (api.py's log_http) and every
+        # audit_log write answers "who" for free, no per-endpoint change.
+        actor_email_token = bind_actor_email(email_s)
+        actor_ip_token = bind_actor_ip(request.client.host if request.client else None)
         org_token = None
         try:
             membership = ensure_membership(sub, email_s, first_name, last_name)
@@ -450,6 +460,8 @@ class JwtAuthMiddleware:
         finally:
             if org_token is not None:
                 reset_org_id(org_token)
+            reset_actor_ip(actor_ip_token)
+            reset_actor_email(actor_email_token)
             reset_user_id(user_token)
 
 

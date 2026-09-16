@@ -19,6 +19,7 @@ import logging
 from fastapi import HTTPException
 
 from . import applog
+from . import audit_log
 from . import db
 from .org_ids import org_scope, parse_org_id
 
@@ -114,5 +115,11 @@ def set_member_role(
         log, "org_member_role_changed",
         org_id=oid, target_user_id=target, previous_role=current_role,
         new_role=role, changed_by=actor,
+    )
+    audit_log.record(
+        oid, "member.role_changed",
+        target_type="org_member", target_id=target,
+        before={"role": current_role}, after={"role": role},
+        actor_email=actor,
     )
     return {"org_id": oid, "user_id": target, "role": role, "changed": True}

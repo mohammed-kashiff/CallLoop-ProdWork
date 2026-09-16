@@ -57,6 +57,41 @@ def reset_user_id(token: Token) -> None:
     _USER_ID.reset(token)
 
 
+# AC-64: the actor half of the audit-trail foundation. bound_user_id() above
+# is already the actor's id — these two add the rest of "who did this" onto
+# the same request-scoped mechanism, bound alongside user_id in auth.py's
+# JwtAuthMiddleware and read back into every http_request/http_error log
+# line in api.py's log_http middleware. None for any unauthenticated or
+# background-job context (a poller, a webhook) — not an error, just nothing
+# to attach.
+_ACTOR_EMAIL: ContextVar[str | None] = ContextVar("callproof_actor_email", default=None)
+_ACTOR_IP: ContextVar[str | None] = ContextVar("callproof_actor_ip", default=None)
+
+
+def bound_actor_email() -> str | None:
+    return _ACTOR_EMAIL.get()
+
+
+def bind_actor_email(email: str | None) -> Token:
+    return _ACTOR_EMAIL.set((email or "").strip() or None)
+
+
+def reset_actor_email(token: Token) -> None:
+    _ACTOR_EMAIL.reset(token)
+
+
+def bound_actor_ip() -> str | None:
+    return _ACTOR_IP.get()
+
+
+def bind_actor_ip(ip_address: str | None) -> Token:
+    return _ACTOR_IP.set((ip_address or "").strip() or None)
+
+
+def reset_actor_ip(token: Token) -> None:
+    _ACTOR_IP.reset(token)
+
+
 def bind_org_id(org_id: str) -> Token:
     parsed = parse_org_id(org_id)
     if not parsed:

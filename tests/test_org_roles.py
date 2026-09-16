@@ -112,7 +112,23 @@ def test_promote_then_demote_a_member_round_trips_live():
         )
         assert demoted["role"] == "member"
         assert demoted["changed"] is True
+
+        # AC-66: both the promote and the demote wrote a durable audit_log
+        # row, not just the org_member_role_changed log line.
+        rows = admin.execute(
+            "SELECT action, target_id, before, after, actor_email FROM audit_log "
+            "WHERE org_id = %s ORDER BY created_at",
+            (org_id,),
+        ).fetchall()
+        assert [r["action"] for r in rows] == ["member.role_changed", "member.role_changed"]
+        assert rows[0]["before"] == {"role": "member"}
+        assert rows[0]["after"] == {"role": "manager"}
+        assert rows[1]["before"] == {"role": "manager"}
+        assert rows[1]["after"] == {"role": "member"}
+        assert all(r["target_id"] == member_id for r in rows)
+        assert all(r["actor_email"] == "owner@example.com" for r in rows)
     finally:
+        admin.execute("DELETE FROM audit_log WHERE org_id = %s", (org_id,))
         admin.execute("DELETE FROM org_members WHERE org_id = %s", (org_id,))
         admin.execute("DELETE FROM orgs WHERE id = %s", (org_id,))
         admin.commit()
