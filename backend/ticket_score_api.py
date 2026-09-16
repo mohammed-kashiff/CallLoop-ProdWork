@@ -36,6 +36,8 @@ from __future__ import annotations
 import logging
 import uuid
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
@@ -312,6 +314,60 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
     )
 
 
+_BULK_AUDIT_MAX_PER_CALL = 50  # stays under the 60/300s ticket_score rate limit
+_BULK_AUDIT_WORKERS = 5  # modest — each ticket can be several real Claude calls
+
+
+def audit_all_tickets_route(request: Request):
+    """Owner/manager only: score every ready, not-yet-audited ticket in one
+    go, from the Audits page's "Audit all" button. Reuses score_ticket_route
+    per ticket (same rate limit, same per-agent skip-if-already-scored
+    logic) rather than duplicating its scoring/persistence logic — a ticket
+    a teammate already fully scored costs nothing extra here.
+
+    Capped at _BULK_AUDIT_MAX_PER_CALL per call to stay under AC-72's
+    60-per-5-minutes rate limit; any remainder is reported back so the
+    frontend can offer "click again" rather than silently dropping work."""
+    auth.require_owner_or_manager(request)
+    org_id = auth.org_id_from_request(request)
+    tickets = ticket_ingest.list_tickets(org_id)
+    candidates = [t for t in tickets if t.get("status") == "ready" and not t.get("has_audit")]
+    batch = candidates[:_BULK_AUDIT_MAX_PER_CALL]
+    remaining = max(0, len(candidates) - len(batch))
+
+    def _score_one(ticket_id: str) -> dict:
+        try:
+            score_ticket_route(request, ticket_id, refresh=False)
+            return {"ticket_id": ticket_id, "status": "scored"}
+        except HTTPException as e:
+            return {
+                "ticket_id": ticket_id, "status": "error",
+                "error": e.detail, "status_code": e.status_code,
+            }
+
+    results: list[dict] = []
+    if batch:
+        with ThreadPoolExecutor(max_workers=min(_BULK_AUDIT_WORKERS, len(batch))) as pool:
+            futs = {pool.submit(_score_one, t["id"]): t["id"] for t in batch}
+            for fut in as_completed(futs):
+                results.append(fut.result())
+
+    scored = sum(1 for r in results if r["status"] == "scored")
+    errors = [r for r in results if r["status"] == "error"]
+    applog.event(
+        log, "ticket_audit_all",
+        org_id=org_id, candidates=len(candidates), attempted=len(batch),
+        scored=scored, errors=len(errors), remaining=remaining,
+    )
+    return {
+        "candidates": len(candidates),
+        "attempted": len(batch),
+        "scored": scored,
+        "errors": errors,
+        "remaining": remaining,
+    }
+
+
 def register(app) -> None:
     app.add_api_route("/api/tickets/rubric", ticket_rubric_route, methods=["GET"])
     app.add_api_route(
@@ -332,4 +388,7 @@ def register(app) -> None:
     )
     app.add_api_route(
         "/api/tickets/{ticket_id}/score", score_ticket_route, methods=["POST"],
+    )
+    app.add_api_route(
+        "/api/tickets/audit-all", audit_all_tickets_route, methods=["POST"],
     )

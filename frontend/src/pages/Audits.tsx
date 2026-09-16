@@ -49,9 +49,17 @@ function churnChip(risk: string | null | undefined): { text: string; className: 
   }
 }
 
+type AuditAllResult = {
+  candidates: number
+  attempted: number
+  scored: number
+  errors: { ticket_id: string; error: string; status_code: number }[]
+  remaining: number
+}
+
 export function Audits() {
   const navigate = useNavigate()
-  const { features } = useAuth()
+  const { features, isOwnerOrManager } = useAuth()
   const ticketAuditEnabled = flagEnabled(features, 'show_ticket_audit_nav')
 
   const [engine, setEngine] = useState<Engine>('calls')
@@ -70,6 +78,40 @@ export function Audits() {
   const [ticketsError, setTicketsError] = useState<string | null>(null)
   const [ticketPage, setTicketPage] = useState(1)
   const [ticketPageSize, setTicketPageSize] = useState<(typeof PAGE_SIZES)[number]>(10)
+  const [auditingAll, setAuditingAll] = useState(false)
+  const [auditAllResult, setAuditAllResult] = useState<AuditAllResult | null>(null)
+  const [auditAllError, setAuditAllError] = useState<string | null>(null)
+
+  const reloadTickets = () => {
+    setTicketsLoading(true)
+    apiFetch('/api/tickets')
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await readError(r, 'Could not load tickets.'))
+        return r.json() as Promise<{ tickets: TicketListItem[] }>
+      })
+      .then((data) => setTickets(data.tickets || []))
+      .catch((e: unknown) => {
+        setTicketsError(e instanceof Error ? e.message : 'Could not load tickets.')
+      })
+      .finally(() => setTicketsLoading(false))
+  }
+
+  const runAuditAll = async () => {
+    setAuditingAll(true)
+    setAuditAllError(null)
+    setAuditAllResult(null)
+    try {
+      const r = await apiFetch('/api/tickets/audit-all', { method: 'POST' })
+      if (!r.ok) throw new Error(await readError(r, 'Could not audit tickets.'))
+      const data = (await r.json()) as AuditAllResult
+      setAuditAllResult(data)
+      reloadTickets()
+    } catch (e: unknown) {
+      setAuditAllError(e instanceof Error ? e.message : 'Could not audit tickets.')
+    } finally {
+      setAuditingAll(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -123,6 +165,11 @@ export function Audits() {
       cancelled = true
     }
   }, [ticketAuditEnabled])
+
+  const unscoredTicketCount = useMemo(
+    () => tickets.filter((t) => t.status === 'ready' && !t.has_audit).length,
+    [tickets],
+  )
 
   const filtered = useMemo(() => {
     if (flagFilter === 'flagged') return calls.filter((c) => c.flagged)
@@ -367,6 +414,36 @@ export function Audits() {
               {ticketsError}
             </p>
           ) : null}
+
+          {isOwnerOrManager && !ticketsLoading && !ticketsError ? (
+            <div className="audit-toolbar">
+              <button
+                type="button"
+                className="ghost-btn"
+                disabled={auditingAll || unscoredTicketCount === 0}
+                onClick={() => void runAuditAll()}
+              >
+                {auditingAll
+                  ? 'Auditing…'
+                  : unscoredTicketCount === 0
+                    ? 'All tickets audited'
+                    : `Audit all (${unscoredTicketCount} unaudited)`}
+              </button>
+              {auditAllResult ? (
+                <p className="review-pager-status">
+                  Scored {auditAllResult.scored} of {auditAllResult.attempted}
+                  {auditAllResult.errors.length ? `, ${auditAllResult.errors.length} skipped (needs agent mapping or failed)` : ''}
+                  {auditAllResult.remaining ? ` — ${auditAllResult.remaining} more left, click again to continue` : ''}
+                </p>
+              ) : null}
+              {auditAllError ? (
+                <p className="upload-error" role="alert">
+                  {auditAllError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           {ticketsLoading ? <p className="panel-lede">Loading audits…</p> : null}
 
           {!ticketsLoading && !ticketsError ? (
