@@ -378,6 +378,41 @@ def test_get_ticket_sql_filters_ticket_and_org(monkeypatch):
     assert sql.count("%s") == 2
 
 
+def test_get_ticket_attaches_in12_summary(auth_client, monkeypatch):
+    tid = str(uuid.uuid4())
+    agent = str(uuid.uuid4())
+
+    def fake_get(ticket_id, org_id):
+        return {
+            "id": tid,
+            "source": "pdf_upload",
+            "status": "ready",
+            "created_at": "2026-09-05T00:00:00+00:00",
+            "messages": [],
+            "assets": [],
+            "audits": [{
+                "agent_user_id": agent,
+                "display_name": "Ada",
+                "score": 80,
+                "findings": [
+                    {"id": "tone", "name": "Tone", "verdict": "pass", "weight": 17,
+                     "reasoning": "Calm throughout."},
+                    {"id": "diag", "name": "Problem Diagnosis", "verdict": "fail", "weight": 22,
+                     "reasoning": "Missed the root cause."},
+                ],
+                "spans": [],
+            }],
+        }
+
+    monkeypatch.setattr("backend.ticket_api.ticket_ingest.get_ticket", fake_get)
+    r = auth_client.get(f"/api/tickets/{tid}")
+    assert r.status_code == 200
+    audit = r.json()["audits"][0]
+    assert audit["top_strength"]["id"] == "tone"
+    assert audit["top_gap"]["id"] == "diag"
+    assert "Tone" in audit["audit_summary"]
+
+
 def test_org_b_cannot_get_org_a_ticket_via_api(monkeypatch):
     from fastapi.testclient import TestClient
 

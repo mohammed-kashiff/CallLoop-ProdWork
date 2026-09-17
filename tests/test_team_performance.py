@@ -54,6 +54,19 @@ class _FakeConn:
         self.call_weeks = [
             {"week": date(2026, 9, 14), "avg_score": 60.0, "n": 3},
         ]
+        self.ticket_total = 10
+        self.call_total = 6
+        self.call_findings = [
+            {
+                "agent_user_id": AGENT_A,
+                "findings": {
+                    "findings": [
+                        {"id": "greeting", "name": "Greeting", "verdict": "pass", "weight": 10},
+                        {"id": "hold", "name": "Hold Protocol", "verdict": "fail", "weight": 15},
+                    ]
+                },
+            },
+        ]
         self.ticket_findings = [
             {
                 "agent_user_id": AGENT_A,
@@ -105,11 +118,20 @@ class _FakeConn:
                 rows = [r for r in rows if str(r.get("agent_user_id")) == uid]
             return _Result(rows)
         if "INNER JOIN LATEST" in norm:
-            rows = list(self.call_weeks if "DATE_TRUNC" in norm else self.call_avgs)
+            if "FINDINGS" in norm:
+                rows = list(self.call_findings)
+            elif "DATE_TRUNC" in norm:
+                rows = list(self.call_weeks)
+            else:
+                rows = list(self.call_avgs)
             if "AND C.AGENT_USER_ID = %S" in norm:
                 uid = str(args[-1])
                 rows = [r for r in rows if r.get("agent_user_id") and str(r["agent_user_id"]) == uid]
             return _Result(rows)
+        if "FROM TICKETS" in norm:
+            return _Result([{"n": self.ticket_total}])
+        if "FROM CALLS" in norm:
+            return _Result([{"n": self.call_total}])
         return _Result([])
 
 
@@ -175,6 +197,10 @@ def test_manager_snapshot_includes_team_unassigned_and_ticket_highlights(monkeyp
     assert ada["tickets"]["avg_score"] == 90.0
     assert ada["top_strength"]["id"] == "tone"
     assert ada["top_gap"]["id"] == "diag"
+    assert ada["call_top_strength"]["id"] == "greeting"
+    assert ada["call_top_gap"]["id"] == "hold"
+    assert body["org"]["tickets"]["total"] == 10
+    assert body["org"]["calls"]["total"] == 6
     unassigned = next(a for a in body["agents"] if a["user_id"] is None)
     assert unassigned["calls"]["count"] == 2
     assert unassigned["top_strength"] is None
@@ -219,7 +245,7 @@ def test_http_owner_sees_team_member_sees_own(monkeypatch):
         return {
             "view_scope": "team" if is_manager else "own",
             "days": days,
-            "org": {"tickets": {"avg_score": 80.0, "count": 1}, "calls": {"avg_score": None, "count": 0}},
+            "org": {"tickets": {"avg_score": 80.0, "count": 1, "total": 2}, "calls": {"avg_score": None, "count": 0, "total": 0}},
             "weekly": [],
             "agents": [{
                 "user_id": viewer_user_id,
@@ -229,6 +255,8 @@ def test_http_owner_sees_team_member_sees_own(monkeypatch):
                 "calls": {"avg_score": None, "count": 0},
                 "top_strength": None,
                 "top_gap": None,
+                "call_top_strength": None,
+                "call_top_gap": None,
             }],
         }
 

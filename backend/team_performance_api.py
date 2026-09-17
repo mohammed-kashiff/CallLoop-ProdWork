@@ -1,8 +1,9 @@
 """HTTP surface for the Team Performance Dashboard.
 
 GET /api/team-performance — org-scoped rollup. Owner/Manager see the
-whole team; a member sees only their own row. No call-side Top
-Strength/Gap (that module does not exist).
+whole team; a member sees only their own row. Ticket and call Top
+Strength/Gap are the mode of ticket_audit_summary pickers across the
+window. Coverage is scored vs total in the window.
 """
 
 from __future__ import annotations

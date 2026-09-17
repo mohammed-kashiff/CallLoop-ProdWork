@@ -84,13 +84,7 @@ def _with_summary(agent_result: dict) -> dict:
     """IN-12: audit_summary/top_strength/top_gap computed from this one
     agent's own findings only — never persisted (ticket_audit_summary.py's
     own docstring), never mixed with another agent's scoring output."""
-    findings = agent_result.get("findings") or []
-    return {
-        **agent_result,
-        "top_strength": ticket_audit_summary.top_strength(findings),
-        "top_gap": ticket_audit_summary.top_gap(findings),
-        "audit_summary": ticket_audit_summary.generate_audit_summary(findings),
-    }
+    return ticket_audit_summary.enrich(agent_result)
 
 
 def _payload(

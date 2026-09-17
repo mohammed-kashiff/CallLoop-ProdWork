@@ -3,8 +3,10 @@
 Org-scoped, RLS-respecting SQL — no background job, no Redis. Ticket
 scores come from ticket_audits (one row per agent, TA-28). Call scores
 come from the latest audits row per call, joined to calls.agent_user_id
-(IN-22). Call-side Top Strength/Gap is intentionally not computed here
-(ticket_audit_summary.py has no call equivalent).
+(IN-22). Ticket and call Top Strength/Gap are the mode of
+ticket_audit_summary.top_strength/top_gap across that agent's stored
+findings in the window (call findings share the same verdict/weight/name
+shape).
 
 Owner/Manager see every teammate. A member sees only their own row.
 org_id is the JWT tenant; never a query param.
@@ -254,6 +256,92 @@ def _ticket_highlights(
     return out
 
 
+def _call_highlights(
+    conn, org_id: str, days: int, *, only_user_id: str | None,
+) -> dict[str, dict]:
+    sql = """
+        WITH latest AS (
+            SELECT DISTINCT ON (call_id) call_id, org_id, findings, created_at
+            FROM audits
+            WHERE org_id = %s AND score IS NOT NULL
+            ORDER BY call_id, created_at DESC
+        )
+        SELECT c.agent_user_id, latest.findings
+        FROM calls c
+        INNER JOIN latest ON latest.call_id = c.id AND latest.org_id = c.org_id
+        WHERE c.org_id = %s
+          AND c.deleted_at IS NULL
+          AND latest.created_at >= now() - (%s * INTERVAL '1 day')
+    """
+    params: list = [org_id, org_id, days]
+    if only_user_id:
+        sql += " AND c.agent_user_id = %s"
+        params.append(only_user_id)
+    rows = conn.execute(sql, params).fetchall()
+    by_agent: dict[str, list[dict]] = {}
+    for r in rows:
+        uid = parse_org_id(r.get("agent_user_id"))
+        if not uid:
+            continue
+        by_agent.setdefault(uid, []).append(dict(r))
+    out: dict[str, dict] = {}
+    for uid, items in by_agent.items():
+        out[uid] = {
+            "top_strength": _mode_highlight(items, ticket_audit_summary.top_strength),
+            "top_gap": _mode_highlight(items, ticket_audit_summary.top_gap),
+        }
+    return out
+
+
+def _count(conn, sql: str, params: list) -> int:
+    row = conn.execute(sql, params).fetchone()
+    if not row:
+        return 0
+    return _int(row.get("n"))
+
+
+def _ticket_total(conn, org_id: str, days: int, *, only_user_id: str | None) -> int:
+    if only_user_id:
+        return _count(
+            conn,
+            """
+            SELECT COUNT(DISTINCT t.id)::int AS n
+            FROM tickets t
+            INNER JOIN ticket_messages m
+              ON m.ticket_id = t.id AND m.org_id = t.org_id
+            WHERE t.org_id = %s
+              AND t.created_at >= now() - (%s * INTERVAL '1 day')
+              AND m.agent_user_id = %s
+            """,
+            [org_id, days, only_user_id],
+        )
+    return _count(
+        conn,
+        """
+        SELECT COUNT(*)::int AS n
+        FROM tickets
+        WHERE org_id = %s
+          AND created_at >= now() - (%s * INTERVAL '1 day')
+        """,
+        [org_id, days],
+    )
+
+
+def _call_total(conn, org_id: str, days: int, *, only_user_id: str | None) -> int:
+    sql = """
+        SELECT COUNT(*)::int AS n
+        FROM calls
+        WHERE org_id = %s
+          AND deleted_at IS NULL
+          AND created_at >= now() - (%s * INTERVAL '1 day')
+    """
+    params: list = [org_id, days]
+    if only_user_id:
+        sql += " AND agent_user_id = %s"
+        params.append(only_user_id)
+    return _count(conn, sql, params)
+
+
 def _org_totals(parts: list[dict]) -> dict:
     n = 0
     weighted = 0.0
@@ -313,6 +401,9 @@ def snapshot(
             t_weeks = _ticket_weeks(conn, oid, n, only_user_id=only)
             c_weeks = _call_weeks(conn, oid, n, only_user_id=only)
             highlights = _ticket_highlights(conn, oid, n, only_user_id=only)
+            call_highlights = _call_highlights(conn, oid, n, only_user_id=only)
+            ticket_total = _ticket_total(conn, oid, n, only_user_id=only)
+            call_total = _call_total(conn, oid, n, only_user_id=only)
 
     agents = []
     seen: set[str] = set()
@@ -322,6 +413,7 @@ def snapshot(
         t = tickets.get(uid) or {"avg_score": None, "count": 0}
         c = calls.get(uid) or {"avg_score": None, "count": 0}
         h = highlights.get(uid) or {}
+        ch = call_highlights.get(uid) or {}
         agents.append({
             "user_id": uid,
             "display_name": m["display_name"],
@@ -330,6 +422,8 @@ def snapshot(
             "calls": c,
             "top_strength": h.get("top_strength"),
             "top_gap": h.get("top_gap"),
+            "call_top_strength": ch.get("top_strength"),
+            "call_top_gap": ch.get("top_gap"),
         })
     if is_manager and _UNASSIGNED in calls:
         c = calls[_UNASSIGNED]
@@ -341,14 +435,17 @@ def snapshot(
             "calls": c,
             "top_strength": None,
             "top_gap": None,
+            "call_top_strength": None,
+            "call_top_gap": None,
         })
     # A scored agent who left the org still has audits — keep the row,
     # without inventing a roster identity beyond the UUID.
-    leftover = (set(tickets) | set(calls) | set(highlights)) - seen - {_UNASSIGNED}
+    leftover = (set(tickets) | set(calls) | set(highlights) | set(call_highlights)) - seen - {_UNASSIGNED}
     for uid in leftover:
         t = tickets.get(uid) or {"avg_score": None, "count": 0}
         c = calls.get(uid) or {"avg_score": None, "count": 0}
         h = highlights.get(uid) or {}
+        ch = call_highlights.get(uid) or {}
         agents.append({
             "user_id": uid,
             "display_name": "Former teammate",
@@ -357,16 +454,22 @@ def snapshot(
             "calls": c,
             "top_strength": h.get("top_strength"),
             "top_gap": h.get("top_gap"),
+            "call_top_strength": ch.get("top_strength"),
+            "call_top_gap": ch.get("top_gap"),
         })
 
     ticket_parts = [a["tickets"] for a in agents]
     call_parts = [a["calls"] for a in agents]
+    t_org = _org_totals(ticket_parts)
+    c_org = _org_totals(call_parts)
+    t_org["total"] = ticket_total
+    c_org["total"] = call_total
     return {
         "view_scope": "team" if is_manager else "own",
         "days": n,
         "org": {
-            "tickets": _org_totals(ticket_parts),
-            "calls": _org_totals(call_parts),
+            "tickets": t_org,
+            "calls": c_org,
         },
         "weekly": _merge_weeks(t_weeks, c_weeks),
         "agents": agents,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, readError, trackEvent } from '../lib/api'
+import { AuditSummaryTiles } from '../components/AuditSummaryTiles'
 import { TicketEvidence } from '../components/TicketEvidence'
 import { capFirst } from '../lib/format'
 import { useAuth } from '../context/AuthContext'
@@ -71,6 +72,9 @@ type PerAgentAudit = {
   updated_at: string | null
   findings: TicketFinding[]
   spans: TicketSpan[]
+  top_strength?: { id?: string | null; name?: string | null } | null
+  top_gap?: { id?: string | null; name?: string | null } | null
+  audit_summary?: string | null
 }
 
 // The shape POST /score returns — response_timeliness/top_strength/top_gap
@@ -82,6 +86,9 @@ type ScoreRouteAgent = {
   score: number
   findings: TicketFinding[]
   spans: TicketSpan[]
+  top_strength?: { id?: string | null; name?: string | null } | null
+  top_gap?: { id?: string | null; name?: string | null } | null
+  audit_summary?: string | null
 }
 
 type ScoreRouteResponse = {
@@ -655,6 +662,9 @@ export function TicketAudit() {
           updated_at: null,
           findings: a.findings,
           spans: a.spans,
+          top_strength: a.top_strength,
+          top_gap: a.top_gap,
+          audit_summary: a.audit_summary,
         }))
         return { ...prev, audits, view_scope: data.view_scope }
       })
@@ -790,6 +800,11 @@ export function TicketAudit() {
                             <span>/100</span>
                           </p>
                         </div>
+                        <AuditSummaryTiles
+                          summary={audit.audit_summary}
+                          strength={audit.top_strength}
+                          gap={audit.top_gap}
+                        />
                         <ul className="criteria-list">
                           {audit.findings.map((f) => {
                             const turn =

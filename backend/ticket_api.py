@@ -26,6 +26,7 @@ from . import product_events
 from . import rate_limit
 from . import sentry_report
 from . import ticket_image_store
+from . import ticket_audit_summary
 from . import ticket_ingest
 from . import ticket_permissions
 
@@ -172,9 +173,12 @@ def get_ticket(request: Request, ticket_id: str):
 
     is_manager = auth.is_owner_or_manager(request)
     viewer_id = auth.user_id_from_request(request)
-    audits = ticket_permissions.filter_audits_for_viewer(
-        row["audits"], viewer_user_id=viewer_id, is_manager=is_manager,
-    )
+    audits = [
+        ticket_audit_summary.enrich(a)
+        for a in ticket_permissions.filter_audits_for_viewer(
+            row["audits"], viewer_user_id=viewer_id, is_manager=is_manager,
+        )
+    ]
     intercom_url = None
     if row["source"] == "intercom_api" and row.get("external_id"):
         try:
@@ -215,13 +219,17 @@ def my_ticket_contributions(request: Request):
         own_audits = ticket_permissions.filter_audits_for_viewer(
             row["audits"], viewer_user_id=viewer_id, is_manager=False,
         )
+        own = ticket_audit_summary.enrich(own_audits[0]) if own_audits else None
         tickets.append({
             "ticket_id": row["id"],
             "status": row["status"],
             "created_at": row["created_at"],
             "turns": row["messages"],
             "own_span_seqs": ticket_permissions.own_span_seqs(row["messages"], viewer_id),
-            "findings": own_audits[0]["findings"] if own_audits else None,
+            "findings": own["findings"] if own else None,
+            "top_strength": own["top_strength"] if own else None,
+            "top_gap": own["top_gap"] if own else None,
+            "audit_summary": own["audit_summary"] if own else None,
         })
     return {"tickets": tickets}
 

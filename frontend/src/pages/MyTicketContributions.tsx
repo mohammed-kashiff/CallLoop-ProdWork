@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch, readError } from '../lib/api'
+import { AuditSummaryTiles } from '../components/AuditSummaryTiles'
 import { TicketEvidence } from '../components/TicketEvidence'
 import { capFirst } from '../lib/format'
 
@@ -35,6 +36,9 @@ type OwnTicketContribution = {
   turns: OwnTurn[]
   own_span_seqs: number[]
   findings: OwnFinding[] | null
+  top_strength?: { id?: string | null; name?: string | null } | null
+  top_gap?: { id?: string | null; name?: string | null } | null
+  audit_summary?: string | null
 }
 
 function verdictSlug(verdict: string): string {
@@ -135,7 +139,13 @@ export function MyTicketContributions() {
             ))}
           </ul>
           {t.findings && t.findings.length > 0 ? (
-            <ul className="criteria-list">
+            <>
+              <AuditSummaryTiles
+                summary={t.audit_summary}
+                strength={t.top_strength}
+                gap={t.top_gap}
+              />
+              <ul className="criteria-list">
               {t.findings.map((f) => (
                 <li key={f.id} className="criterion">
                   <div className="criterion-top">
@@ -156,7 +166,8 @@ export function MyTicketContributions() {
                   />
                 </li>
               ))}
-            </ul>
+              </ul>
+            </>
           ) : (
             <p className="panel-lede">Not scored yet, or none of the scored criteria were yours.</p>
           )}

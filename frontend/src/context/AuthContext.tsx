@@ -28,6 +28,7 @@ type AuthContextValue = {
   // that narrow grant, not a general "is this person important" flag.
   // Every other owner-only gate stays role === 'owner' explicitly.
   isOwnerOrManager: boolean
+  userId: string | null
   firstName: string | null
   lastName: string | null
   features: FeatureMap
@@ -154,6 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       orgName,
       role,
       isOwnerOrManager: role === 'owner' || role === 'manager',
+      userId: session?.user?.id ?? null,
       firstName,
       lastName,
       features,

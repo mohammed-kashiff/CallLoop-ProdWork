@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { JustCallAgentIdentityMapping } from '../components/JustCallAgentIdentityMapping'
 import { SketchWallpaper } from '../components/SketchWallpaper'
 import { useAudit } from '../context/AuditContext'
 import { apiFetch, readError } from '../lib/api'
@@ -69,6 +70,12 @@ export function Integrations() {
       setError(e instanceof Error ? e.message : 'Could not load Intercom status.'),
     )
   }, [loadIntercom])
+
+  useEffect(() => {
+    const id = window.location.hash.replace('#', '')
+    if (!id) return
+    document.getElementById(id)?.scrollIntoView()
+  }, [])
 
   useEffect(() => {
     const flag = searchParams.get('intercom')
@@ -365,6 +372,8 @@ export function Integrations() {
           </div>
         </div>
       </section>
+
+      <JustCallAgentIdentityMapping />
 
       {calls.length === 0 ? (
         <div className="empty-card is-pulse">

@@ -23,6 +23,14 @@ FINDINGS = [
 ]
 
 
+def test_enrich_attaches_strength_gap_and_summary():
+    out = m.enrich({"score": 80, "findings": FINDINGS})
+    assert out["score"] == 80
+    assert out["top_strength"]["id"] == "diagnostic_reasoning"
+    assert out["top_gap"]["id"] == "investigation_rigor"
+    assert "Tone" in out["audit_summary"] or "Diagnostic" in out["audit_summary"]
+
+
 def test_top_strength_picks_the_highest_weighted_pass():
     result = m.top_strength(FINDINGS)
     assert result["id"] == "diagnostic_reasoning"  # weight 20 > tone's 15

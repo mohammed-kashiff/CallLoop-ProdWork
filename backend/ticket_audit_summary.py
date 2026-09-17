@@ -90,3 +90,21 @@ def generate_audit_summary(findings: list[dict]) -> str:
     if gap:
         parts.append(f"Needs improvement on {gap['name']}: {_clean(gap['reasoning'])}")
     return ". ".join(parts) + "."
+
+
+def enrich(result: dict) -> dict:
+    """Attach top_strength / top_gap / audit_summary computed from this
+    one result's own findings list. Deterministic, never persisted.
+    Callers pass already-viewer-filtered findings (GET ticket, GET mine,
+    POST score, and call scorecards that share the same verdict/weight
+    shape)."""
+    findings = result.get("findings")
+    if not isinstance(findings, list):
+        findings = []
+    findings = [x for x in findings if isinstance(x, dict)]
+    return {
+        **result,
+        "top_strength": top_strength(findings),
+        "top_gap": top_gap(findings),
+        "audit_summary": generate_audit_summary(findings),
+    }
