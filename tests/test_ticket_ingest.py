@@ -261,9 +261,9 @@ def test_insert_ticket_messages_writes_one_row_per_turn_in_order(monkeypatch):
     with _fake_db(monkeypatch, conn):
         ticket_ingest.insert_ticket_messages("t1", ORG_A, turns)
     assert conn.messages == [
-        ("t1", ORG_A, 0, None, "customer", "hi", None, "Kevin", False),
-        ("t1", ORG_A, 1, "u1", "agent", "hello", None, "Kashif", False),
-        ("t1", ORG_A, 2, None, "bot", "beep", None, "Welma Bot", False),
+        ("t1", ORG_A, 0, None, "customer", "hi", None, "Kevin", False, False),
+        ("t1", ORG_A, 1, "u1", "agent", "hello", None, "Kashif", False, False),
+        ("t1", ORG_A, 2, None, "bot", "beep", None, "Welma Bot", False, False),
     ]
 
 
@@ -285,7 +285,7 @@ def test_insert_ticket_messages_writes_is_internal_from_internal_contribution(mo
     conn = _FakeConn()
     with _fake_db(monkeypatch, conn):
         ticket_ingest.insert_ticket_messages("t1", ORG_A, turns)
-    assert [row[-1] for row in conn.messages] == [False, True, False]
+    assert [row[-2] for row in conn.messages] == [False, True, False]
 
 
 def test_insert_ticket_messages_persists_speaker_display_name_for_every_role(monkeypatch):
@@ -305,7 +305,33 @@ def test_insert_ticket_messages_persists_speaker_display_name_for_every_role(mon
     conn = _FakeConn()
     with _fake_db(monkeypatch, conn):
         ticket_ingest.insert_ticket_messages("t1", ORG_A, turns)
-    assert [row[-2] for row in conn.messages] == ["Kevin", "Welma Bot", None]  # speaker_display_name
+    assert [row[-3] for row in conn.messages] == ["Kevin", "Welma Bot", None]  # speaker_display_name
+
+
+def test_insert_ticket_messages_writes_is_image_description_from_is_image(monkeypatch):
+    """Found live: a customer's uploaded screenshot gets a Claude-vision
+    description (interleave_images/_attachment_image_turns, both set
+    is_image=True) stored as that turn's text with no marker distinguishing
+    it from something the customer actually typed — a real ticket scored
+    an agent down for not engaging with "technical details... noted in
+    the screenshot" that were never the customer's own words. Persisted
+    here so ticket_scoring.py can label it for the model and the frontend
+    can render it distinctly. A turn with no is_image key at all (every
+    turn before this fix, and every non-image turn) defaults False."""
+    from backend import ticket_ingest
+
+    turns = [
+        {"seq": 0, "speaker": "customer", "speaker_name": "Kevin", "agent_user_id": None,
+         "text": "What is this page?"},
+        {"seq": 1, "speaker": "customer", "speaker_name": "Kevin", "agent_user_id": None,
+         "text": "This screenshot shows a product UI...", "is_image": True},
+        {"seq": 2, "speaker": "agent", "speaker_name": "Kashif", "agent_user_id": "u1",
+         "text": "no key at all"},
+    ]
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ticket_ingest.insert_ticket_messages("t1", ORG_A, turns)
+    assert [row[-1] for row in conn.messages] == [False, True, False]
 
 
 def test_insert_ticket_messages_is_a_noop_for_no_turns(monkeypatch):

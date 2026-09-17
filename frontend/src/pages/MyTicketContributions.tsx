@@ -17,6 +17,7 @@ type OwnTurn = {
   text: string
   display_name: string | null
   has_image: boolean
+  is_image_description: boolean
 }
 
 type OwnFinding = {
@@ -134,7 +135,10 @@ export function MyTicketContributions() {
                   {capFirst(m.speaker)}
                   {m.display_name ? ` (${m.display_name})` : ''}
                 </span>
-                <p>{m.text}</p>
+                {m.is_image_description ? (
+                  <span className="ticket-internal-badge is-generated">AI-generated image description</span>
+                ) : null}
+                <p className={m.is_image_description ? 'is-generated-description' : undefined}>{m.text}</p>
               </li>
             ))}
           </ul>

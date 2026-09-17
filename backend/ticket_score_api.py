@@ -232,6 +232,7 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
             "text": m["text"],
             "agent_user_id": m["agent_user_id"],
             "sent_at": m.get("sent_at"),
+            "is_image_description": m.get("is_image_description", False),
         }
         for m in ticket["messages"]
     ]

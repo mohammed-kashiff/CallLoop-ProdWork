@@ -196,6 +196,15 @@ def insert_ticket_messages(ticket_id: str, org_id: str, turns: list[dict]) -> No
     customer-facing (see intercom_ingest._is_internal_note). Defaults
     False for any turn that doesn't carry the key at all, e.g. every
     PDF-sourced turn, which has no such concept.
+
+    is_image_description — found live (a real customer screenshot's
+    Claude-vision description read back as if the customer had typed
+    that analytical paragraph themselves): a turn built by
+    interleave_images()/intercom_ingest._attachment_image_turns() sets
+    is_image=True and its "text" is a generated description of the
+    attached image, not the speaker's own words. Persisted here so
+    ticket_scoring.py can label it for the model and the frontend can
+    render it distinctly, instead of neither ever being able to tell.
     """
     if not turns:
         return
@@ -207,13 +216,14 @@ def insert_ticket_messages(ticket_id: str, org_id: str, turns: list[dict]) -> No
                     """
                     INSERT INTO ticket_messages
                         (ticket_id, org_id, seq, agent_user_id, speaker, text, sent_at,
-                         speaker_display_name, is_internal)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         speaker_display_name, is_internal, is_image_description)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         ticket_id, org_id, t["seq"], t["agent_user_id"],
                         t["speaker"], t["text"], t.get("sent_at"), display_name,
                         bool(t.get("internal_contribution", False)),
+                        bool(t.get("is_image", False)),
                     ),
                 )
 
@@ -451,7 +461,7 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
             messages = conn.execute(
                 """
                 SELECT seq, speaker, text, agent_user_id, sent_at, is_internal,
-                       speaker_display_name
+                       speaker_display_name, is_image_description
                 FROM ticket_messages
                 WHERE ticket_id = %s AND org_id = %s
                 ORDER BY seq
@@ -520,6 +530,7 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
                 "sent_at": _iso(m["sent_at"]),
                 "has_image": int(m["seq"]) in asset_seqs,
                 "is_internal": bool(m["is_internal"]),
+                "is_image_description": bool(m["is_image_description"]),
             }
             for m in messages
         ],
