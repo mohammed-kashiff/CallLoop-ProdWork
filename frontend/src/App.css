@@ -2225,6 +2225,14 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   line-height: 1.35;
 }
 
+.ticket-id-code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.95em;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  padding: 0.05em 0.35em;
+}
+
 .ticket-metadata-facts,
 .ticket-tags {
   display: flex;

@@ -753,7 +753,9 @@ def test_get_ticket_display_name_prefers_a_resolved_agents_real_name_live():
             {"seq": 3, "speaker": "agent", "speaker_name": "noname@call-loop.com",
              "agent_user_id": nameless_agent, "text": "Resolved but no name on file"},
         ]
-        ticket_id = ticket_ingest.create_ticket(org_id, source="intercom_api")
+        ticket_id = ticket_ingest.create_ticket(
+            org_id, source="intercom_api", external_id="conversation:987654321",
+        )
         ticket_ingest.insert_ticket_messages(ticket_id, org_id, turns)
         ticket_ingest.set_ticket_status(ticket_id, org_id, "ready")
 
@@ -763,6 +765,10 @@ def test_get_ticket_display_name_prefers_a_resolved_agents_real_name_live():
         assert by_seq[1]["display_name"] == "Sushil Lulla"
         assert by_seq[2]["display_name"] == "unmapped@call-loop.com"
         assert by_seq[3]["display_name"] == "noname@call-loop.com"
+        # Ticket Audit's header shows Intercom's own id (stripped of our
+        # kind: prefix, see intercomIdFromExternalId in TicketAudit.tsx) so
+        # a manager can paste it straight into Intercom's own search.
+        assert result["external_id"] == "conversation:987654321"
     finally:
         admin.execute("DELETE FROM ticket_messages WHERE org_id = %s", (org_id,))
         admin.execute("DELETE FROM tickets WHERE org_id = %s", (org_id,))

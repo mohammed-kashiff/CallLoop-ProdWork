@@ -440,7 +440,7 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
             ticket = conn.execute(
                 """
                 SELECT id, source, status, created_at, subject, provider_status,
-                       provider_created_at, closed_at, tags
+                       provider_created_at, closed_at, tags, external_id
                 FROM tickets
                 WHERE id = %s AND org_id = %s
                 """,
@@ -497,6 +497,7 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
         "source": ticket["source"],
         "status": ticket["status"],
         "created_at": _iso(ticket["created_at"]),
+        "external_id": ticket["external_id"],
         "subject": ticket["subject"],
         "provider_status": ticket["provider_status"],
         "provider_created_at": _iso(ticket["provider_created_at"]),

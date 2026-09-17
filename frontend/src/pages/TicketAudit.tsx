@@ -94,6 +94,7 @@ type TicketDetail = {
   source: string
   status: string
   created_at: string | null
+  external_id: string | null
   subject: string | null
   provider_status: string | null
   provider_created_at: string | null
@@ -506,6 +507,15 @@ function verdictLabel(verdict: string): string {
   return verdict.toUpperCase()
 }
 
+function intercomIdFromExternalId(externalId: string | null): string | null {
+  if (!externalId) return null
+  // Stored as "conversation:<id>", "ticket:<id>", or "group:<id>" (IN-5/IN-8)
+  // — strip our own namespacing prefix so what's shown is exactly what
+  // Intercom itself would display, safe to paste straight into their search.
+  const idx = externalId.indexOf(':')
+  return idx === -1 ? externalId : externalId.slice(idx + 1)
+}
+
 function formatTicketDate(value: string | null): string | null {
   if (!value) return null
   const date = new Date(value)
@@ -846,7 +856,17 @@ export function TicketAudit() {
             <section className="ticket-metadata" aria-labelledby="ticket-thread-title">
               <div className="ticket-metadata-main">
                 <p className="ticket-metadata-source">{sourceLabel(ticket.source)}</p>
-                <h2 id="ticket-thread-title">{ticket.subject || `Ticket #${ticket.id.slice(0, 8)}`}</h2>
+                <h2 id="ticket-thread-title">
+                  {ticket.subject ? (
+                    ticket.subject
+                  ) : intercomIdFromExternalId(ticket.external_id) ? (
+                    <>
+                      Ticket <code className="ticket-id-code">{intercomIdFromExternalId(ticket.external_id)}</code>
+                    </>
+                  ) : (
+                    `Ticket #${ticket.id.slice(0, 8)}`
+                  )}
+                </h2>
                 <div className="ticket-metadata-facts">
                   <span className={`ticket-status is-${ticket.provider_status || ticket.status}`}>
                     {capFirst(ticket.provider_status || ticket.status)}
