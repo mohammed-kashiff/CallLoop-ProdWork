@@ -19,7 +19,6 @@ type TicketMessage = {
   sent_at: string | null
   has_image: boolean
   is_internal: boolean
-  is_image_description: boolean
 }
 
 type TicketAsset = {
@@ -952,14 +951,7 @@ export function TicketAudit() {
                       ) : null}
                     </div>
                     {m.is_internal ? <span className="ticket-internal-badge">Internal note</span> : null}
-                    {m.is_image_description ? (
-                      <span className="ticket-internal-badge is-generated">AI-generated image description</span>
-                    ) : null}
-                    {m.text ? (
-                      <p className={m.is_image_description ? 'is-generated-description' : undefined}>
-                        {m.text}
-                      </p>
-                    ) : null}
+                    {m.text ? <p>{m.text}</p> : null}
                     {m.has_image ? (
                       assetUrls[m.seq] ? (
                         <figure className="ticket-turn-attachment">

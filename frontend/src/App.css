@@ -2387,16 +2387,6 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   background: color-mix(in srgb, var(--blue) 10%, transparent);
 }
 
-.ticket-internal-badge.is-generated {
-  color: var(--muted-fg);
-  background: var(--fill-muted);
-}
-
-p.is-generated-description {
-  color: var(--muted-fg);
-  font-style: italic;
-}
-
 .ticket-turn.is-own-turn .ticket-turn-content {
   border-color: var(--teal);
   box-shadow: inset 3px 0 0 var(--teal);

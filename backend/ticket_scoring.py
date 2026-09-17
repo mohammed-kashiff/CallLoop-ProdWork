@@ -81,38 +81,19 @@ _FOREIGN_EVIDENCE_REASONING = (
     "agent's own contribution — discarded rather than credited to the wrong person."
 )
 
-_IMAGE_DESCRIPTION_TAG = (
-    "AI-GENERATED DESCRIPTION OF AN ATTACHED IMAGE — NOT THE {speaker_upper}'S OWN WORDS"
-)
-
-
-def _turn_tag(t: dict, speaker: str) -> str | None:
-    """Found live: a customer's uploaded screenshot gets a Claude-vision
-    description (IN-11) stored as that turn's text so the model has
-    something to read — but with no marker, the model (and a human
-    reading the transcript) can't tell it from something the customer
-    actually typed. A real ticket scored "needs improvement on Diagnostic
-    Reasoning" for not engaging with "technical details... noted in the
-    screenshot" that were never the customer's own words at all — the
-    model treated its own generated caption as customer testimony. This
-    tag is the fix at the prompt boundary; is_image_description (TA-5/
-    IN-11, persisted 2026-09-17) is the fix at the data boundary."""
-    if t.get("is_image_description"):
-        return _IMAGE_DESCRIPTION_TAG.format(speaker_upper=speaker.upper())
-    return None
-
 
 def format_turns(turns: list[dict]) -> str:
     """Sequenced text the shared primitives already know how to judge.
+
     One line per turn, speaker-labeled, no timestamps — tickets are async
-    and have no call clock."""
+    and have no call clock. Image-description turns look like every other
+    line because they already are text by the time they get here.
+    """
     lines = []
     for t in sorted(turns, key=lambda row: row["seq"]):
         text = (t.get("text") or "").replace("\r\n", "\n").replace("\n", " ").strip()
         speaker = t.get("speaker") or "unknown"
-        tag = _turn_tag(t, speaker)
-        label = f"{speaker} — {tag}" if tag else speaker
-        lines.append(f'[seq {t["seq"]}] ({label}) {text}')
+        lines.append(f'[seq {t["seq"]}] ({speaker}) {text}')
     return "\n".join(lines)
 
 
@@ -132,14 +113,9 @@ def format_turns_for_agent(turns: list[dict], target_agent_user_id: str) -> str:
                 if str(t.get("agent_user_id") or "") == str(target_agent_user_id)
                 else _OTHER_TEAMMATE
             )
-            tag = _turn_tag(t, "agent")
-            if tag:
-                label = f"{label} — {tag}"
             lines.append(f'[seq {t["seq"]}] (agent — {label}) {text}')
         else:
-            tag = _turn_tag(t, speaker)
-            label = f"{speaker} — {tag}" if tag else speaker
-            lines.append(f'[seq {t["seq"]}] ({label}) {text}')
+            lines.append(f'[seq {t["seq"]}] ({speaker}) {text}')
     return "\n".join(lines)
 
 

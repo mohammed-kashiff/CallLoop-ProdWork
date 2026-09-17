@@ -109,54 +109,6 @@ def test_image_description_turn_is_just_another_line_of_sequenced_text():
     assert result["evidence_seq"] == 2
 
 
-def test_format_turns_tags_an_image_description_turn():
-    """Found live: a real ticket's customer turn was a Claude-vision
-    description of an uploaded screenshot (IN-11), with nothing telling
-    the model it wasn't the customer's own words — it scored the agent
-    down for not engaging with "technical details... noted in the
-    screenshot" that the customer never actually said. is_image_description
-    must be visible in the formatted prompt text, not just in the DB."""
-    from backend.ticket_scoring import format_turns
-
-    turns = [
-        TURNS[0],
-        {"seq": 1, "speaker": "customer", "agent_user_id": None,
-         "text": "This screenshot shows a product UI with a table of tickets.",
-         "is_image_description": True},
-    ]
-    out = format_turns(turns)
-    lines = out.split("\n")
-    assert "(customer)" in lines[0]
-    assert "AI-GENERATED DESCRIPTION" in lines[1]
-    assert "NOT THE CUSTOMER'S OWN WORDS" in lines[1]
-    assert "This screenshot shows a product UI" in lines[1]
-
-
-def test_format_turns_does_not_tag_a_normal_turn():
-    from backend.ticket_scoring import format_turns
-
-    out = format_turns(TURNS[:2])
-    assert "AI-GENERATED" not in out
-
-
-def test_format_turns_for_agent_tags_an_image_description_turn_from_the_agent():
-    """An agent can attach a screenshot too — same generated-description
-    risk, same fix, regardless of which side uploaded the image."""
-    from backend.ticket_scoring import format_turns_for_agent
-
-    turns = [
-        TURNS[0],
-        {"seq": 1, "speaker": "agent", "agent_user_id": "agent-a",
-         "text": "Screenshot shows the deploy log with no errors.",
-         "is_image_description": True},
-    ]
-    out = format_turns_for_agent(turns, "agent-a")
-    lines = out.split("\n")
-    assert "agent under review" in lines[1]
-    assert "AI-GENERATED DESCRIPTION" in lines[1]
-    assert "NOT THE AGENT'S OWN WORDS" in lines[1]
-
-
 def test_unverified_quote_keeps_claimed_seq_but_marks_unverified():
     from backend.ticket_scoring import evaluate_criterion
 
