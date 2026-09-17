@@ -50,7 +50,7 @@ For each item below: query the DB directly with `psql "$DATABASE_URL"` or hit th
 
 ## 7 — audit_summary reflects CallLoop's own scoring, not Intercom's recap
 
-- **Not rendered anywhere in the manager UI** — `top_strength`/`top_gap`/`audit_summary` are computed fresh on every `POST /api/tickets/<id>/score` call and returned in that JSON response, but never persisted to `ticket_audits` and never read by the frontend. Verify via the raw response: open browser devtools → Network tab while loading the ticket (the page itself calls this endpoint), or `curl -X POST .../api/tickets/<id>/score` directly, and read the `audit_summary` field by eye — it should read as an evaluative sentence about strengths/gaps, not a paraphrase of the conversation itself.
+- `top_strength` / `top_gap` / `audit_summary` are computed fresh from CallLoop findings (never persisted, never Intercom's `conversation_summary` or PyAI Recap). They render on Ticket Audit and My contributions (`AuditSummaryTiles`), and Team Performance rolls them up as the mode across the window. Verify in the manager UI on `/ticket-audit/<id>`: the summary sentence should be evaluative about strengths/gaps, not a paraphrase of the conversation itself.
 
 ## 8 — Manager view indistinguishable from a PDF-sourced audit
 

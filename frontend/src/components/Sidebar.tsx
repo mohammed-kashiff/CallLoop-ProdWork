@@ -13,7 +13,7 @@ const LOOP_NAV = [
   { to: '/feedbacks', label: 'Feedbacks', end: false, icon: 'feedbacks' },
   { to: '/churn-risk', label: 'Churn Risk', end: false, icon: 'churn' },
   { to: '/integrations', label: 'Integrations', end: false, icon: 'integrations' },
-  { to: '/training', label: 'Training', end: false, icon: 'training', soon: true },
+  { to: '/training', label: 'Training', end: false, icon: 'training' },
 ] as const
 
 type NavIconName =

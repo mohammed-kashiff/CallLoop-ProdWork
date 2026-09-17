@@ -3,7 +3,8 @@
 GET /api/team-performance — org-scoped rollup. Owner/Manager see the
 whole team; a member sees only their own row. Ticket and call Top
 Strength/Gap are the mode of ticket_audit_summary pickers across the
-window. Coverage is scored vs total in the window.
+window. Coverage is scored vs total in the window. heatmap.tickets /
+heatmap.calls are per-dimension pass rates (pass / pass+partial+fail).
 """
 
 from __future__ import annotations

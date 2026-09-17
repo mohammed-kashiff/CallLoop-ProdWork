@@ -82,6 +82,7 @@ from . import ticket_agent_identity_aliases_api
 from . import ticket_api
 from . import team_performance_api
 from . import ticket_score_api
+from . import training_api
 from . import transcribe
 from .org_ids import (
     bound_actor_email,
@@ -126,6 +127,7 @@ ticket_agent_identity_aliases_api.register(app)
 call_agent_identity_aliases_api.register(app)
 ticket_score_api.register(app)
 team_performance_api.register(app)
+training_api.register(app)
 ticket_api.register(app)
 
 

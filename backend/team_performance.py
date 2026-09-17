@@ -6,7 +6,8 @@ come from the latest audits row per call, joined to calls.agent_user_id
 (IN-22). Ticket and call Top Strength/Gap are the mode of
 ticket_audit_summary.top_strength/top_gap across that agent's stored
 findings in the window (call findings share the same verdict/weight/name
-shape).
+shape). Per-dimension pass-rate heatmaps unnest only id/name/verdict
+from those same JSONB blobs.
 
 Owner/Manager see every teammate. A member sees only their own row.
 org_id is the JWT tenant; never a query param.
@@ -26,6 +27,29 @@ from .org_ids import org_scope, parse_org_id
 _DAYS_DEFAULT = 30
 _DAYS_MAX = 365
 _UNASSIGNED = "__unassigned__"
+_TICKET_SKIP_DIMS = frozenset({"response_timeliness"})
+_TICKET_DIMS = (
+    ("problem_diagnosis", "Problem Diagnosis"),
+    ("resolution_correctness", "Resolution Correctness"),
+    ("communication_clarity", "Communication Clarity"),
+    ("tone_and_empathy", "Tone & Empathy"),
+    ("ownership_and_handoff_quality", "Ownership & Handoff Quality"),
+)
+_CALL_DIMS = (
+    ("resolution_effectiveness", "Resolution Effectiveness"),
+    ("ownership_next_steps", "Ownership & Next Steps"),
+    ("active_listening", "Active Listening"),
+    ("tone_empathy_professionalism", "Tone, Empathy & Professionalism"),
+)
+# Nested scorecard `{findings: [...]}` or a rare raw array — never the
+# surrounding spans/reasoning blob.
+_FINDINGS_ARRAY_SQL = """
+CASE
+  WHEN jsonb_typeof({alias}.findings) = 'array' THEN {alias}.findings
+  WHEN jsonb_typeof({alias}.findings->'findings') = 'array' THEN {alias}.findings->'findings'
+  ELSE '[]'::jsonb
+END
+"""
 
 
 def clamp_days(raw: object) -> int:
@@ -293,6 +317,127 @@ def _call_highlights(
     return out
 
 
+def _heatmap_rate(pass_n: int, n: int) -> float | None:
+    if n <= 0:
+        return None
+    return round(pass_n / n, 4)
+
+
+def _assemble_heatmap(
+    rows: list[dict],
+    agent_ids: list[str],
+    canonical: tuple[tuple[str, str], ...],
+    *,
+    skip_ids: frozenset[str] = frozenset(),
+) -> dict:
+    names = {dim_id: dim_name for dim_id, dim_name in canonical}
+    by_agent: dict[str, dict[str, dict]] = {}
+    extras: list[str] = []
+    for r in rows:
+        uid = parse_org_id(r.get("agent_user_id"))
+        if not uid:
+            continue
+        dim_id = str(r.get("dim_id") or "").strip()
+        if not dim_id or dim_id in skip_ids:
+            continue
+        dim_name = str(r.get("dim_name") or "").strip() or dim_id
+        if dim_id not in names:
+            extras.append(dim_id)
+        names.setdefault(dim_id, dim_name)
+        pass_n = _int(r.get("pass_n"))
+        n = _int(r.get("n"))
+        by_agent.setdefault(uid, {})[dim_id] = {
+            "id": dim_id,
+            "name": names[dim_id],
+            "pass": pass_n,
+            "n": n,
+            "rate": _heatmap_rate(pass_n, n),
+        }
+    ordered = [dim_id for dim_id, _ in canonical]
+    for dim_id in extras:
+        if dim_id not in ordered:
+            ordered.append(dim_id)
+    dimensions = [{"id": dim_id, "name": names[dim_id]} for dim_id in ordered]
+    out_rows = []
+    for uid in agent_ids:
+        slot = by_agent.get(uid) or {}
+        cells = []
+        for dim in dimensions:
+            cell = slot.get(dim["id"])
+            cells.append(
+                cell
+                or {
+                    "id": dim["id"],
+                    "name": dim["name"],
+                    "pass": 0,
+                    "n": 0,
+                    "rate": None,
+                }
+            )
+        out_rows.append({"user_id": uid, "cells": cells})
+    return {"dimensions": dimensions, "rows": out_rows}
+
+
+def _ticket_heatmap_counts(
+    conn, org_id: str, days: int, *, only_user_id: str | None,
+) -> list[dict]:
+    findings = _FINDINGS_ARRAY_SQL.format(alias="ta")
+    sql = f"""
+        SELECT ta.agent_user_id,
+               f->>'id' AS dim_id,
+               COALESCE(NULLIF(f->>'name', ''), f->>'id') AS dim_name,
+               COUNT(*) FILTER (WHERE f->>'verdict' = 'pass')::int AS pass_n,
+               COUNT(*)::int AS n
+        FROM ticket_audits ta
+        CROSS JOIN LATERAL jsonb_array_elements({findings}) AS f
+        WHERE ta.org_id = %s
+          AND ta.created_at >= now() - (%s * INTERVAL '1 day')
+          AND COALESCE(f->>'id', '') <> ''
+          AND COALESCE(f->>'id', '') <> 'response_timeliness'
+          AND f->>'verdict' IN ('pass', 'partial', 'fail')
+    """
+    params: list = [org_id, days]
+    if only_user_id:
+        sql += " AND ta.agent_user_id = %s"
+        params.append(only_user_id)
+    sql += " GROUP BY 1, 2, 3"
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def _call_heatmap_counts(
+    conn, org_id: str, days: int, *, only_user_id: str | None,
+) -> list[dict]:
+    findings = _FINDINGS_ARRAY_SQL.format(alias="latest")
+    sql = f"""
+        WITH latest AS (
+            SELECT DISTINCT ON (call_id) call_id, org_id, findings, created_at
+            FROM audits
+            WHERE org_id = %s AND score IS NOT NULL
+            ORDER BY call_id, created_at DESC
+        )
+        SELECT c.agent_user_id,
+               f->>'id' AS dim_id,
+               COALESCE(NULLIF(f->>'name', ''), f->>'id') AS dim_name,
+               COUNT(*) FILTER (WHERE f->>'verdict' = 'pass')::int AS pass_n,
+               COUNT(*)::int AS n
+        FROM calls c
+        INNER JOIN latest ON latest.call_id = c.id AND latest.org_id = c.org_id
+        CROSS JOIN LATERAL jsonb_array_elements({findings}) AS f
+        WHERE c.org_id = %s
+          AND c.deleted_at IS NULL
+          AND c.agent_user_id IS NOT NULL
+          AND latest.created_at >= now() - (%s * INTERVAL '1 day')
+          AND COALESCE(f->>'id', '') <> ''
+          AND f->>'verdict' IN ('pass', 'partial', 'fail')
+    """
+    params: list = [org_id, org_id, days]
+    if only_user_id:
+        sql += " AND c.agent_user_id = %s"
+        params.append(only_user_id)
+    sql += " GROUP BY 1, 2, 3"
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
 def _count(conn, sql: str, params: list) -> int:
     row = conn.execute(sql, params).fetchone()
     if not row:
@@ -402,6 +547,8 @@ def snapshot(
             c_weeks = _call_weeks(conn, oid, n, only_user_id=only)
             highlights = _ticket_highlights(conn, oid, n, only_user_id=only)
             call_highlights = _call_highlights(conn, oid, n, only_user_id=only)
+            ticket_hm = _ticket_heatmap_counts(conn, oid, n, only_user_id=only)
+            call_hm = _call_heatmap_counts(conn, oid, n, only_user_id=only)
             ticket_total = _ticket_total(conn, oid, n, only_user_id=only)
             call_total = _call_total(conn, oid, n, only_user_id=only)
 
@@ -440,7 +587,10 @@ def snapshot(
         })
     # A scored agent who left the org still has audits — keep the row,
     # without inventing a roster identity beyond the UUID.
-    leftover = (set(tickets) | set(calls) | set(highlights) | set(call_highlights)) - seen - {_UNASSIGNED}
+    leftover = (
+        set(tickets) | set(calls) | set(highlights) | set(call_highlights)
+        | {parse_org_id(r.get("agent_user_id")) for r in ticket_hm + call_hm}
+    ) - seen - {_UNASSIGNED, None}
     for uid in leftover:
         t = tickets.get(uid) or {"avg_score": None, "count": 0}
         c = calls.get(uid) or {"avg_score": None, "count": 0}
@@ -464,6 +614,7 @@ def snapshot(
     c_org = _org_totals(call_parts)
     t_org["total"] = ticket_total
     c_org["total"] = call_total
+    heatmap_ids = [a["user_id"] for a in agents if a.get("user_id")]
     return {
         "view_scope": "team" if is_manager else "own",
         "days": n,
@@ -473,4 +624,10 @@ def snapshot(
         },
         "weekly": _merge_weeks(t_weeks, c_weeks),
         "agents": agents,
+        "heatmap": {
+            "tickets": _assemble_heatmap(
+                ticket_hm, heatmap_ids, _TICKET_DIMS, skip_ids=_TICKET_SKIP_DIMS,
+            ),
+            "calls": _assemble_heatmap(call_hm, heatmap_ids, _CALL_DIMS),
+        },
     }

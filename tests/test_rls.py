@@ -81,6 +81,8 @@ def test_api_handlers_do_not_bypass_rls():
         "pyai_usage.py",
         "team_performance.py",
         "team_performance_api.py",
+        "training.py",
+        "training_api.py",
     ):
         text = (ROOT / "backend" / name).read_text(encoding="utf-8")
         assert "bypass_rls=True" not in text, name

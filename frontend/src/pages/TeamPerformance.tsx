@@ -33,6 +33,19 @@ type AgentRow = {
   call_top_gap: Highlight
 }
 
+type HeatmapCell = {
+  id: string
+  name: string
+  pass: number
+  n: number
+  rate: number | null
+}
+
+type HeatmapGrid = {
+  dimensions: Array<{ id: string; name: string }>
+  rows: Array<{ user_id: string; cells: HeatmapCell[] }>
+}
+
 type Snapshot = {
   view_scope: 'team' | 'own'
   days: number
@@ -48,6 +61,10 @@ type Snapshot = {
     call_count: number
   }>
   agents: AgentRow[]
+  heatmap?: {
+    tickets: HeatmapGrid
+    calls: HeatmapGrid
+  }
 }
 
 function fmtScore(n: number | null | undefined): string {
@@ -78,6 +95,16 @@ function coverageHint(count: number, total: number): string {
   return `${count} scored`
 }
 
+function heatmapTone(rate: number | null): 'default' | 'good' | 'warn' | 'bad' {
+  if (rate == null) return 'default'
+  return scoreTone(rate * 100)
+}
+
+function fmtPassRate(cell: HeatmapCell): string {
+  if (cell.n <= 0) return '—'
+  return `${cell.pass}/${cell.n}`
+}
+
 function cmpNum(a: number | null, b: number | null, dir: SortDir): number {
   const av = a == null ? -1 : a
   const bv = b == null ? -1 : b
@@ -92,6 +119,7 @@ export function TeamPerformance() {
   const [error, setError] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [heatChannel, setHeatChannel] = useState<'tickets' | 'calls'>('tickets')
 
   useEffect(() => {
     let cancelled = false
@@ -150,6 +178,14 @@ export function TeamPerformance() {
   const ticketAvg = data?.org.tickets.avg_score ?? null
   const callAvg = data?.org.calls.avg_score ?? null
   const unassigned = data?.agents.find((a) => a.user_id == null)
+  const namesById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const row of data?.agents || []) {
+      if (row.user_id) map.set(row.user_id, row.display_name)
+    }
+    return map
+  }, [data])
+  const heat = heatChannel === 'tickets' ? data?.heatmap?.tickets : data?.heatmap?.calls
   const colCount = teamView ? 10 : 9
 
   return (
@@ -255,6 +291,80 @@ export function TeamPerformance() {
                     />
                   </LineChart>
                 </ResponsiveContainer>
+              </div>
+            )}
+          </section>
+
+          <section className="team-perf-panel" aria-label="Dimension pass rates">
+            <div className="team-perf-heat-head">
+              <h2>Dimension pass rates</h2>
+              <div className="audit-filters" role="group" aria-label="Heatmap channel">
+                <button
+                  type="button"
+                  className={['ghost-btn', heatChannel === 'tickets' ? 'is-current' : ''].filter(Boolean).join(' ')}
+                  aria-pressed={heatChannel === 'tickets'}
+                  onClick={() => setHeatChannel('tickets')}
+                >
+                  Tickets
+                </button>
+                <button
+                  type="button"
+                  className={['ghost-btn', heatChannel === 'calls' ? 'is-current' : ''].filter(Boolean).join(' ')}
+                  aria-pressed={heatChannel === 'calls'}
+                  onClick={() => setHeatChannel('calls')}
+                >
+                  Calls
+                </button>
+              </div>
+            </div>
+            <p className="panel-lede">
+              Pass count over scored findings in this window. Partial and fail sit in the
+              denominator. Click a cell with scores to open Training for that gap.
+            </p>
+            {!heat || heat.dimensions.length === 0 ? (
+              <p className="empty-copy">No scored dimensions in this window yet.</p>
+            ) : (
+              <div className="admin-table-wrap">
+                <table className="admin-table team-perf-heat">
+                  <thead>
+                    <tr>
+                      <th>Agent</th>
+                      {heat.dimensions.map((dim) => (
+                        <th key={dim.id}>{dim.name}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {heat.rows.length === 0 ? (
+                      <tr>
+                        <td colSpan={heat.dimensions.length + 1}>No teammates in this window.</td>
+                      </tr>
+                    ) : (
+                      heat.rows.map((row) => (
+                        <tr key={row.user_id}>
+                          <td>{namesById.get(row.user_id) || 'Former teammate'}</td>
+                          {row.cells.map((cell) => {
+                            const tone = heatmapTone(cell.rate)
+                            const channel = heatChannel === 'tickets' ? 'ticket' : 'call'
+                            const canPractice = cell.n > 0 && Boolean(row.user_id)
+                            const href = `/training?channel=${channel}&dim=${encodeURIComponent(cell.id)}&agent=${encodeURIComponent(row.user_id)}&days=${days}`
+                            return (
+                              <td key={cell.id} className={`team-perf-heat-cell tone-${tone}`}>
+                                {canPractice ? (
+                                  <Link to={href} title={`${cell.name}: ${fmtPassRate(cell)}`}>
+                                    {fmtPassRate(cell)}
+                                  </Link>
+                                ) : (
+                                  fmtPassRate(cell)
+                                )}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             )}
           </section>

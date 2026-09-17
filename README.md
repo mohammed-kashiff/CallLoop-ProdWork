@@ -21,7 +21,7 @@ This working tree is **callproof `v2testing-ui-final`** (same codebase when thos
 - **Estimate** approximate PyAI + Claude spend (tunable rates; not an invoice)
 
 UI brand in this branch: **Call Loop v3** (React + TypeScript + Vite).  
-**Training** in the sidebar is a placeholder (“Coming soon”) — not wired yet.
+**Training** uses stored Top Gap findings (Listen / Drill / Recap) — not a new LLM.
 
 ---
 
@@ -486,7 +486,7 @@ Structured `applog.event()` lines still rotate in `logs/callproof.log`. When `BE
 4. Open a scorecard after audit completes  
 5. **Integrations** lists JustCall-sourced evaluations (after keys + sync)  
 6. Logs: `logs/callproof.log`  
-7. Expect **Training** to say Coming soon — that is normal
+7. **Training** shows Listen / Drill / Recap from that window's Top Gap (empty if nothing failed)
 
 ---
 
