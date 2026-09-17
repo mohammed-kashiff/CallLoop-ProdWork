@@ -396,6 +396,25 @@ def _iso(value):
     return value
 
 
+def list_ready_ticket_ids_in_range(org_id: str, from_date, to_date) -> list[str]:
+    """Ticket ids for a bulk re-score backfill (IN-27's own follow-on
+    tool, generalized): every ready ticket in this org whose created_at
+    falls in [from_date, to_date], oldest first — so a long-running job
+    reports steady, predictable progress rather than an arbitrary order."""
+    with org_scope(org_id):
+        with db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id FROM tickets
+                WHERE org_id = %s AND status = 'ready'
+                  AND created_at >= %s AND created_at <= %s
+                ORDER BY created_at
+                """,
+                (org_id, from_date, to_date),
+            ).fetchall()
+    return [str(r["id"]) for r in rows]
+
+
 def list_tickets(org_id: str) -> list[dict]:
     """Org-scoped ticket library rows. No message bodies."""
     with org_scope(org_id):
