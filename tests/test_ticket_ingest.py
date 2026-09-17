@@ -39,6 +39,7 @@ class _FakeConn:
         self.status_updates: list[tuple] = []
         self.provider_stats_updates: list[tuple] = []
         self.provider_extra_updates: list[tuple] = []
+        self.display_metadata_updates: list[tuple] = []
 
     def execute(self, sql, params=None):
         norm = " ".join(str(sql).split()).upper()
@@ -71,6 +72,14 @@ class _FakeConn:
         if norm.startswith("UPDATE TICKETS SET PROVIDER_EXTRA"):
             extra, ticket_id, org_id = params
             self.provider_extra_updates.append((ticket_id, extra.obj if hasattr(extra, "obj") else extra))
+            return _Result([])
+        if "SET SUBJECT" in norm and "PROVIDER_STATUS" in norm:
+            subject, provider_status, provider_created_at, closed_at, tags, ticket_id, org_id = params
+            self.display_metadata_updates.append((
+                ticket_id, org_id, subject, provider_status,
+                provider_created_at, closed_at,
+                tags.obj if hasattr(tags, "obj") else tags,
+            ))
             return _Result([])
         if norm.startswith("INSERT INTO TICKET_MESSAGE_ASSETS"):
             self.assets.append(params)
@@ -206,6 +215,38 @@ def test_set_ticket_provider_extra_is_a_noop_for_none(monkeypatch):
 
     # No _fake_db patching — if this hit the DB layer, it would raise.
     ticket_ingest.set_ticket_provider_extra("t1", ORG_A, None)
+
+
+def test_set_ticket_display_metadata_sanitizes_and_scopes_the_write(monkeypatch):
+    from datetime import datetime, timezone
+
+    from backend import ticket_ingest
+
+    created = datetime(2026, 9, 16, tzinfo=timezone.utc)
+    closed = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ticket_ingest.set_ticket_display_metadata(
+            "t1",
+            ORG_A,
+            subject="  Login is broken  ",
+            provider_status="closed",
+            provider_created_at=created,
+            closed_at=closed,
+            tags=["Bug", " Bug ", "", "Priority" * 20],
+        )
+    assert len(conn.display_metadata_updates) == 1
+    ticket_id, org_id, subject, status, created_at, closed_at, tags = conn.display_metadata_updates[0]
+    assert ticket_id == "t1"
+    assert org_id == ORG_A
+    assert subject == "Login is broken"
+    assert status == "closed"
+    assert created_at == created
+    assert closed_at == closed
+    assert tags[0] == "Bug"
+    assert tags[1].startswith("Priority")
+    assert len(tags[1]) == 100
+    assert tags.count("Bug") == 1
 
 
 def test_insert_ticket_messages_writes_one_row_per_turn_in_order(monkeypatch):

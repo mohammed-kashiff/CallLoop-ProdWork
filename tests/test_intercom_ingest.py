@@ -21,6 +21,10 @@ def _no_agent_identity_resolution_by_default(monkeypatch):
         intercom_ingest.ticket_agent_identity_aliases, "resolve_agent_user_ids",
         lambda *a, **k: {},
     )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "set_ticket_display_metadata",
+        lambda *a, **k: None,
+    )
 
 
 # ── _html_to_text ────────────────────────────────────────────────────────────
@@ -28,6 +32,29 @@ def _no_agent_identity_resolution_by_default(monkeypatch):
 
 def test_html_to_text_strips_tags():
     assert intercom_ingest._html_to_text("<p>Hey there!</p>") == "Hey there!"
+
+
+def test_display_metadata_extracts_intercom_header_fields():
+    obj = {
+        "source": {"subject": "Login is broken"},
+        "state": "closed",
+        "created_at": 1788900000,
+        "closed_at": 1788900200,
+        "tags": {"tags": [{"name": "Bug"}, {"name": "Priority"}]},
+    }
+    result = intercom_ingest._display_metadata("conversation", obj)
+    assert result["subject"] == "Login is broken"
+    assert result["provider_status"] == "closed"
+    assert result["provider_created_at"].timestamp() == 1788900000
+    assert result["closed_at"].timestamp() == 1788900200
+    assert result["tags"] == ["Bug", "Priority"]
+
+
+def test_display_metadata_uses_ticket_default_title():
+    result = intercom_ingest._display_metadata(
+        "ticket", {"ticket_attributes": {"_default_title_": "Dashboard is buggy"}},
+    )
+    assert result["subject"] == "Dashboard is buggy"
 
 
 def test_html_to_text_converts_block_tags_to_newlines():
@@ -579,6 +606,42 @@ def test_ingest_intercom_conversation_happy_path_writes_turns_and_marks_ready(mo
     assert statuses == ["processing", "ready"]
     assert inserted["ticket_id"] == "new-ticket-id"
     assert len(inserted["turns"]) == 3
+
+
+def test_ingest_intercom_conversation_stores_display_metadata(monkeypatch):
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: "new-ticket-id",
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "set_ticket_status", lambda *a, **k: None)
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "insert_ticket_messages", lambda *a, **k: None)
+    convo = {
+        **REAL_SHAPED_CONVERSATION,
+        "source": {**REAL_SHAPED_CONVERSATION["source"], "subject": "Login is broken"},
+        "state": "closed",
+        "closed_at": 1788900200,
+        "tags": {"tags": [{"name": "Bug"}]},
+    }
+    monkeypatch.setattr(intercom_ingest.intercom_client, "get_conversation", lambda *a, **k: convo)
+    captured = {}
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "set_ticket_display_metadata",
+        lambda ticket_id, org_id, **meta: captured.update(ticket_id=ticket_id, org_id=org_id, **meta),
+    )
+    intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
+    assert captured["ticket_id"] == "new-ticket-id"
+    assert captured["org_id"] == "org-1"
+    assert captured["subject"] == "Login is broken"
+    assert captured["provider_status"] == "closed"
+    assert captured["tags"] == ["Bug"]
 
 
 def test_ingest_intercom_conversation_stores_an_attachment_as_a_viewable_asset(monkeypatch):

@@ -2199,31 +2199,155 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.65rem;
+  gap: 1rem;
+}
+
+.ticket-metadata {
+  margin-bottom: 1.25rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--fill-muted);
+}
+
+.ticket-metadata-source {
+  margin: 0 0 0.2rem;
+  color: var(--muted-fg);
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.ticket-metadata h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.35;
+}
+
+.ticket-metadata-facts,
+.ticket-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.8rem;
+}
+
+.ticket-metadata-facts {
+  margin-top: 0.65rem;
+  color: var(--muted-fg);
+  font-size: 0.78rem;
+}
+
+.ticket-status,
+.ticket-tags li,
+.ticket-internal-badge {
+  border-radius: 999px;
+  padding: 0.22rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.ticket-status {
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+}
+
+.ticket-tags {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+.ticket-tags li {
+  color: var(--muted-fg);
+  background: var(--control-bg);
+  border: 1px solid var(--line);
 }
 
 .ticket-turn {
-  padding: 0.6rem 0.8rem;
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  gap: 0.7rem;
+  align-items: start;
+}
+
+.ticket-turn-avatar {
+  width: 2.25rem;
+  height: 2.25rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--muted-fg);
+  background: var(--fill-muted);
+  border: 1px solid var(--line);
+}
+
+.ticket-turn-avatar svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ticket-turn.is-agent .ticket-turn-avatar {
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 10%, var(--fill-muted));
+}
+
+.ticket-turn.is-bot .ticket-turn-avatar {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--fill-muted));
+}
+
+.ticket-turn-content {
+  min-width: 0;
+  padding: 0.7rem 0.85rem;
   border-radius: var(--radius);
   background: var(--control-bg);
   border: 1px solid var(--border);
 }
 
+.ticket-turn-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
 .ticket-turn-speaker {
-  display: block;
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  color: var(--fg);
+}
+
+.ticket-turn-role {
+  margin-left: 0.4rem;
   color: var(--muted-fg);
-  margin-bottom: 0.25rem;
+  font-size: 0.65rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.ticket-turn.is-agent .ticket-turn-speaker {
-  color: var(--teal);
+.ticket-turn-heading time {
+  flex: none;
+  color: var(--muted-fg);
+  font-size: 0.68rem;
 }
 
-.ticket-turn.is-own-turn {
+.ticket-internal-badge {
+  display: inline-block;
+  margin-bottom: 0.45rem;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+}
+
+.ticket-turn.is-own-turn .ticket-turn-content {
   border-color: var(--teal);
   box-shadow: inset 3px 0 0 var(--teal);
 }
@@ -2252,16 +2376,47 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   color: var(--muted-fg);
 }
 
-.ticket-turn p {
+.ticket-turn-content > p {
   margin: 0;
   line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.ticket-turn-image {
+.ticket-turn-attachment {
+  width: min(100%, 34rem);
+  margin: 0.7rem 0 0;
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--fill-muted);
+}
+
+.ticket-turn-attachment a,
+.ticket-turn-attachment img {
   display: block;
+}
+
+.ticket-turn-attachment img {
+  width: auto;
+  height: auto;
   max-width: 100%;
-  border-radius: calc(var(--radius) - 2px);
-  margin: 0.35rem 0;
+  max-height: 30rem;
+  object-fit: contain;
+  border-radius: calc(var(--radius) - 3px);
+}
+
+.ticket-turn-attachment figcaption {
+  padding: 0.4rem 0.25rem 0.1rem;
+  color: var(--muted-fg);
+  font-size: 0.7rem;
+}
+
+.ticket-turn-attachment.is-loading {
+  padding: 1.5rem;
+  color: var(--muted-fg);
+  font-size: 0.75rem;
+  text-align: center;
 }
 
 .timestamp-btn {

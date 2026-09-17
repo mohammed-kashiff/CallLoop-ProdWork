@@ -103,6 +103,47 @@ def set_ticket_status(ticket_id: str, org_id: str, status: str) -> None:
             )
 
 
+def set_ticket_display_metadata(
+    ticket_id: str,
+    org_id: str,
+    *,
+    subject: str | None = None,
+    provider_status: str | None = None,
+    provider_created_at=None,
+    closed_at=None,
+    tags: list[str] | None = None,
+) -> None:
+    """Persist bounded, presentation-only metadata from the ticket provider."""
+    clean_subject = " ".join((subject or "").split()).strip()[:500] or None
+    clean_status = " ".join((provider_status or "").split()).strip()[:50] or None
+    clean_tags = []
+    for tag in tags or []:
+        value = " ".join(str(tag).split()).strip()[:100]
+        if value and value not in clean_tags:
+            clean_tags.append(value)
+        if len(clean_tags) >= 50:
+            break
+    with org_scope(org_id):
+        with db.connection() as conn:
+            conn.execute(
+                """
+                UPDATE tickets
+                SET subject = %s, provider_status = %s, provider_created_at = %s,
+                    closed_at = %s, tags = %s
+                WHERE id = %s AND org_id = %s
+                """,
+                (
+                    clean_subject,
+                    clean_status,
+                    provider_created_at,
+                    closed_at,
+                    Json(clean_tags) if clean_tags else None,
+                    ticket_id,
+                    org_id,
+                ),
+            )
+
+
 def set_ticket_provider_stats(ticket_id: str, org_id: str, stats: dict | None) -> None:
     """Store a provider's raw per-ticket statistics object (IN-7) — e.g.
     Intercom's `statistics` field (first-response time, resolution time).
@@ -398,7 +439,8 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
         with db.connection() as conn:
             ticket = conn.execute(
                 """
-                SELECT id, source, status, created_at
+                SELECT id, source, status, created_at, subject, provider_status,
+                       provider_created_at, closed_at, tags
                 FROM tickets
                 WHERE id = %s AND org_id = %s
                 """,
@@ -455,6 +497,11 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
         "source": ticket["source"],
         "status": ticket["status"],
         "created_at": _iso(ticket["created_at"]),
+        "subject": ticket["subject"],
+        "provider_status": ticket["provider_status"],
+        "provider_created_at": _iso(ticket["provider_created_at"]),
+        "closed_at": _iso(ticket["closed_at"]),
+        "tags": ticket["tags"] if isinstance(ticket["tags"], list) else [],
         "messages": [
             {
                 "seq": int(m["seq"]),

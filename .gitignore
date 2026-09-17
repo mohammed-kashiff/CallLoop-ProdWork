@@ -1,6 +1,8 @@
 # secrets & environment — never commit. Copy .env.example → .env locally.
 .env
 .env.*
+# any *.env drop-in (e.g. an exported CallLoop-ProdWork.env), not just .env
+*.env
 !.env.example
 frontend/.env
 !frontend/.env.example

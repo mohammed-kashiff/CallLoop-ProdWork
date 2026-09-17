@@ -173,6 +173,34 @@ def _sent_at(unix_ts) -> datetime | None:
         return None
 
 
+def _display_metadata(kind: str, obj: dict) -> dict:
+    """Extract the small provider metadata subset used by the ticket header."""
+    attrs = obj.get("ticket_attributes") if isinstance(obj.get("ticket_attributes"), dict) else {}
+    source = obj.get("source") if isinstance(obj.get("source"), dict) else {}
+    subject = (
+        attrs.get("_default_title_")
+        if kind == "ticket"
+        else source.get("subject") or obj.get("title")
+    )
+    raw_tags = obj.get("tags")
+    if isinstance(raw_tags, dict):
+        raw_tags = raw_tags.get("tags") or raw_tags.get("data")
+    tags = []
+    if isinstance(raw_tags, list):
+        for item in raw_tags:
+            name = item.get("name") if isinstance(item, dict) else item
+            if isinstance(name, str) and name.strip():
+                tags.append(name)
+    stats = obj.get("statistics") if isinstance(obj.get("statistics"), dict) else {}
+    return {
+        "subject": subject if isinstance(subject, str) else None,
+        "provider_status": obj.get("state") if isinstance(obj.get("state"), str) else None,
+        "provider_created_at": _sent_at(obj.get("created_at")),
+        "closed_at": _sent_at(obj.get("closed_at") or stats.get("last_close_at")),
+        "tags": tags,
+    }
+
+
 def _is_internal_note(part_type: str) -> bool:
     """IN-9: Intercom's part_type isn't a documented closed enum (its own
     OpenAPI spec types it as a bare string, no enum list) — the one
@@ -561,6 +589,9 @@ def _ingest_intercom_object(org_id: str, kind: str, obj_id: str) -> str:
         turns = _merge_turns([_normalize_member(k, o) for k, _, o in members])
         _resolve_agent_identities(org_id, turns)
         ticket_ingest.insert_ticket_messages(ticket_id, org_id, turns)
+        ticket_ingest.set_ticket_display_metadata(
+            ticket_id, org_id, **_display_metadata(kind, seed_obj),
+        )
         # IN-11: store each attachment-derived image turn as a viewable
         # asset — same shape ingest_ticket_pdf() already writes for a
         # PDF's embedded screenshots (ticket_message_assets keyed on

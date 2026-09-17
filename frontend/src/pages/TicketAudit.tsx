@@ -17,6 +17,7 @@ type TicketMessage = {
   display_name: string | null
   sent_at: string | null
   has_image: boolean
+  is_internal: boolean
 }
 
 type TicketAsset = {
@@ -93,6 +94,11 @@ type TicketDetail = {
   source: string
   status: string
   created_at: string | null
+  subject: string | null
+  provider_status: string | null
+  provider_created_at: string | null
+  closed_at: string | null
+  tags?: string[]
   messages: TicketMessage[]
   assets: TicketAsset[]
   audits: PerAgentAudit[]
@@ -500,6 +506,51 @@ function verdictLabel(verdict: string): string {
   return verdict.toUpperCase()
 }
 
+function formatTicketDate(value: string | null): string | null {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date)
+}
+
+function sourceLabel(source: string): string {
+  if (source === 'intercom_api') return 'Intercom'
+  if (source === 'pdf_upload') return 'PDF upload'
+  return source
+    .split('_')
+    .filter(Boolean)
+    .map(capFirst)
+    .join(' ')
+}
+
+function SpeakerIcon({ speaker }: { speaker: string }) {
+  if (speaker === 'bot') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="5" y="7" width="14" height="11" rx="3" />
+        <path d="M12 3v4M8.5 12h.01M15.5 12h.01M9 15h6" />
+      </svg>
+    )
+  }
+  if (speaker === 'agent') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="8" r="3.5" />
+        <path d="M5.5 20c.7-4 2.9-6 6.5-6s5.8 2 6.5 6M18 8.5h2v5h-2M6 8.5H4v5h2" />
+      </svg>
+    )
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4.5 21c.7-4.5 3.2-7 7.5-7s6.8 2.5 7.5 7" />
+    </svg>
+  )
+}
+
 export function TicketAudit() {
   const { ticketId } = useParams()
   const navigate = useNavigate()
@@ -622,6 +673,7 @@ export function TicketAudit() {
   }, [ticket, loadAssetUrl])
 
   const messagesBySeq = new Map((ticket?.messages || []).map((m) => [m.seq, m]))
+  const assetsBySeq = new Map((ticket?.assets || []).map((asset) => [asset.seq, asset]))
 
   return (
     <>
@@ -791,7 +843,32 @@ export function TicketAudit() {
             </section>
           </div>
           <div className="eval-pane is-transcript">
-            <h2 className="panel-title">Ticket thread</h2>
+            <section className="ticket-metadata" aria-labelledby="ticket-thread-title">
+              <div className="ticket-metadata-main">
+                <p className="ticket-metadata-source">{sourceLabel(ticket.source)}</p>
+                <h2 id="ticket-thread-title">{ticket.subject || `Ticket #${ticket.id.slice(0, 8)}`}</h2>
+                <div className="ticket-metadata-facts">
+                  <span className={`ticket-status is-${ticket.provider_status || ticket.status}`}>
+                    {capFirst(ticket.provider_status || ticket.status)}
+                  </span>
+                  {formatTicketDate(ticket.provider_created_at || ticket.created_at) ? (
+                    <span>
+                      Created {formatTicketDate(ticket.provider_created_at || ticket.created_at)}
+                    </span>
+                  ) : null}
+                  {formatTicketDate(ticket.closed_at) ? (
+                    <span>Closed {formatTicketDate(ticket.closed_at)}</span>
+                  ) : null}
+                </div>
+              </div>
+              {(ticket.tags ?? []).length > 0 ? (
+                <ul className="ticket-tags" aria-label="Ticket tags">
+                  {(ticket.tags ?? []).map((tag) => (
+                    <li key={tag}>{tag}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
             {/* TA-30: the full thread, always, for every viewer — only
                 which agent's scorecard(s) are visible is access-controlled
                 (above). own_span_seqs highlights the viewer's own turns
@@ -807,14 +884,40 @@ export function TicketAudit() {
                     .filter(Boolean)
                     .join(' ')}
                 >
-                  <span className="ticket-turn-speaker">
-                    {capFirst(m.speaker)}
-                    {m.display_name ? ` (${m.display_name})` : ''}
+                  <span className="ticket-turn-avatar">
+                    <SpeakerIcon speaker={m.speaker} />
                   </span>
-                  {m.has_image && assetUrls[m.seq] ? (
-                    <img className="ticket-turn-image" src={assetUrls[m.seq]} alt="Screenshot" />
-                  ) : null}
-                  <p>{m.text}</p>
+                  <div className="ticket-turn-content">
+                    <div className="ticket-turn-heading">
+                      <span className="ticket-turn-speaker">
+                        {m.display_name || capFirst(m.speaker)}
+                        <span className="ticket-turn-role">{capFirst(m.speaker)}</span>
+                      </span>
+                      {formatTicketDate(m.sent_at) ? (
+                        <time dateTime={m.sent_at || undefined}>{formatTicketDate(m.sent_at)}</time>
+                      ) : null}
+                    </div>
+                    {m.is_internal ? <span className="ticket-internal-badge">Internal note</span> : null}
+                    {m.text ? <p>{m.text}</p> : null}
+                    {m.has_image ? (
+                      assetUrls[m.seq] ? (
+                        <figure className="ticket-turn-attachment">
+                          <a href={assetUrls[m.seq]} target="_blank" rel="noopener noreferrer">
+                            <img
+                              src={assetUrls[m.seq]}
+                              alt={`Attachment from ${m.display_name || m.speaker}`}
+                              width={assetsBySeq.get(m.seq)?.width}
+                              height={assetsBySeq.get(m.seq)?.height}
+                              loading="lazy"
+                            />
+                          </a>
+                          <figcaption>Image attachment</figcaption>
+                        </figure>
+                      ) : (
+                        <div className="ticket-turn-attachment is-loading">Loading image…</div>
+                      )
+                    ) : null}
+                  </div>
                 </li>
               ))}
             </ul>
