@@ -50,7 +50,6 @@ from . import ticket_audit_store
 from . import ticket_audit_summary
 from . import ticket_ingest
 from . import ticket_permissions
-from . import ticket_rescore_jobs
 from . import ticket_rubric
 from . import ticket_rubric_builder
 from . import ticket_scoring
@@ -364,42 +363,6 @@ def audit_all_tickets_route(request: Request):
     }
 
 
-class StartTicketRescoreBackfillBody(BaseModel):
-    from_date: str
-    to_date: str
-
-
-def start_ticket_rescore_backfill_route(
-    request: Request, org_id: str, body: StartTicketRescoreBackfillBody,
-):
-    """Platform-admin only, internal tool (IN-27's own follow-on): re-score
-    every resolved agent on every ready ticket in this org whose
-    created_at falls in [from_date, to_date], overwriting whatever is
-    stored. For the CallLoop team to correct a known scoring bug's
-    already-caused damage after the fact — independent of, and never
-    touching, this org's own enable_ticket_rescoring setting."""
-    auth.require_platform_admin(request)
-    requested_by = getattr(request.state, "user_id", None)
-    try:
-        job = ticket_rescore_jobs.start_backfill(
-            org_id, body.from_date, body.to_date, requested_by=requested_by,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
-    except RuntimeError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
-    return job
-
-
-def get_ticket_rescore_backfill_route(request: Request, job_id: str):
-    """Platform-admin only: poll a backfill job's progress and ETA."""
-    auth.require_platform_admin(request)
-    job = ticket_rescore_jobs.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="No backfill job with that id.")
-    return job
-
-
 def register(app) -> None:
     app.add_api_route("/api/tickets/rubric", ticket_rubric_route, methods=["GET"])
     app.add_api_route(
@@ -423,12 +386,4 @@ def register(app) -> None:
     )
     app.add_api_route(
         "/api/tickets/audit-all", audit_all_tickets_route, methods=["POST"],
-    )
-    app.add_api_route(
-        "/api/admin/orgs/{org_id}/ticket-rescore-jobs",
-        start_ticket_rescore_backfill_route, methods=["POST"],
-    )
-    app.add_api_route(
-        "/api/admin/ticket-rescore-jobs/{job_id}",
-        get_ticket_rescore_backfill_route, methods=["GET"],
     )
