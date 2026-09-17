@@ -401,6 +401,30 @@ def normalize_ticket(ticket: dict) -> list[dict]:
     return turns
 
 
+def thread_url(workspace_id: str | None, external_id: str | None) -> str | None:
+    """Deep link back to this ticket's real thread in Intercom's own inbox
+    — "open in Intercom" from the Ticket Audit header. Confirmed URL shapes
+    (Intercom community, checked directly rather than guessed):
+      conversation: https://app.intercom.com/a/inbox/{workspace_id}/inbox/shared/all/conversation/{id}
+      ticket:       https://app.intercom.com/a/inbox/{workspace_id}/tickets/{id}
+    external_id is namespaced kind:id (see _external_id/_group_key above).
+    A "group:" id (IN-8's merged-conversation-and-ticket case) doesn't say
+    which kind won the merge, so there's no way to pick the right template
+    without guessing — returns None rather than risk a broken link."""
+    wid = (workspace_id or "").strip()
+    ext = (external_id or "").strip()
+    if not wid or not ext or ":" not in ext:
+        return None
+    kind, _, raw_id = ext.partition(":")
+    if not raw_id:
+        return None
+    if kind == "conversation":
+        return f"https://app.intercom.com/a/inbox/{wid}/inbox/shared/all/conversation/{raw_id}"
+    if kind == "ticket":
+        return f"https://app.intercom.com/a/inbox/{wid}/tickets/{raw_id}"
+    return None
+
+
 def _external_id(kind: str, raw_id: str) -> str:
     """Namespaced so a conversation and a ticket sharing the same raw
     Intercom id (their id-spaces aren't documented as distinct) can never

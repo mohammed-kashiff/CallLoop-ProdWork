@@ -241,6 +241,67 @@ def test_get_ticket_returns_turns_and_image_flags(auth_client, monkeypatch):
     assert body["own_span_seqs"] == []
 
 
+def test_get_ticket_includes_intercom_url_for_an_intercom_ticket(auth_client, monkeypatch):
+    tid = str(uuid.uuid4())
+    monkeypatch.setattr(
+        "backend.ticket_api.ticket_ingest.get_ticket",
+        lambda ticket_id, org_id: {
+            "id": tid, "source": "intercom_api", "status": "ready",
+            "created_at": "2026-09-16T00:00:00+00:00",
+            "external_id": "conversation:215475956850871",
+            "messages": [], "assets": [], "audits": [],
+        },
+    )
+    monkeypatch.setattr(
+        "backend.ticket_api.org_vault.get_external_account_id",
+        lambda org_id, provider: "o36ety8e",
+    )
+    r = auth_client.get(f"/api/tickets/{tid}")
+    assert r.status_code == 200
+    assert r.json()["intercom_url"] == (
+        "https://app.intercom.com/a/inbox/o36ety8e/inbox/shared/all/conversation/215475956850871"
+    )
+
+
+def test_get_ticket_intercom_url_is_none_when_the_workspace_lookup_fails(auth_client, monkeypatch):
+    """A "open in Intercom" link is a convenience, not core to the ticket
+    view — a Vault lookup failure must not turn into a 500 for the whole
+    ticket detail page."""
+    tid = str(uuid.uuid4())
+    monkeypatch.setattr(
+        "backend.ticket_api.ticket_ingest.get_ticket",
+        lambda ticket_id, org_id: {
+            "id": tid, "source": "intercom_api", "status": "ready",
+            "created_at": "2026-09-16T00:00:00+00:00",
+            "external_id": "conversation:1",
+            "messages": [], "assets": [], "audits": [],
+        },
+    )
+
+    def _boom(org_id, provider):
+        raise RuntimeError("vault unreachable")
+
+    monkeypatch.setattr("backend.ticket_api.org_vault.get_external_account_id", _boom)
+    r = auth_client.get(f"/api/tickets/{tid}")
+    assert r.status_code == 200
+    assert r.json()["intercom_url"] is None
+
+
+def test_get_ticket_intercom_url_is_none_for_a_pdf_ticket(auth_client, monkeypatch):
+    tid = str(uuid.uuid4())
+    monkeypatch.setattr(
+        "backend.ticket_api.ticket_ingest.get_ticket",
+        lambda ticket_id, org_id: {
+            "id": tid, "source": "pdf_upload", "status": "ready",
+            "created_at": "2026-09-16T00:00:00+00:00",
+            "messages": [], "assets": [], "audits": [],
+        },
+    )
+    r = auth_client.get(f"/api/tickets/{tid}")
+    assert r.status_code == 200
+    assert r.json()["intercom_url"] is None
+
+
 def test_asset_signed_url_404_when_row_missing(auth_client, monkeypatch):
     monkeypatch.setattr("backend.ticket_api.ticket_ingest.ticket_asset_meta", lambda *a, **k: None)
     r = auth_client.get(f"/api/tickets/{uuid.uuid4()}/assets/0")

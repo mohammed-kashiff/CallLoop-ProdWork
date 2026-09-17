@@ -2225,6 +2225,38 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   line-height: 1.35;
 }
 
+.ticket-metadata-title-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+}
+
+.ticket-intercom-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--teal);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.ticket-intercom-link:hover {
+  text-decoration: underline;
+}
+
+.ticket-intercom-link svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .ticket-id-code {
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 0.95em;

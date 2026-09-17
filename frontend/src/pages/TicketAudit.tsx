@@ -95,6 +95,7 @@ type TicketDetail = {
   status: string
   created_at: string | null
   external_id: string | null
+  intercom_url: string | null
   subject: string | null
   provider_status: string | null
   provider_created_at: string | null
@@ -856,17 +857,34 @@ export function TicketAudit() {
             <section className="ticket-metadata" aria-labelledby="ticket-thread-title">
               <div className="ticket-metadata-main">
                 <p className="ticket-metadata-source">{sourceLabel(ticket.source)}</p>
-                <h2 id="ticket-thread-title">
-                  {ticket.subject ? (
-                    ticket.subject
-                  ) : intercomIdFromExternalId(ticket.external_id) ? (
-                    <>
-                      Ticket <code className="ticket-id-code">{intercomIdFromExternalId(ticket.external_id)}</code>
-                    </>
-                  ) : (
-                    `Ticket #${ticket.id.slice(0, 8)}`
-                  )}
-                </h2>
+                <div className="ticket-metadata-title-row">
+                  <h2 id="ticket-thread-title">
+                    {ticket.subject ? (
+                      ticket.subject
+                    ) : intercomIdFromExternalId(ticket.external_id) ? (
+                      <>
+                        Ticket <code className="ticket-id-code">{intercomIdFromExternalId(ticket.external_id)}</code>
+                      </>
+                    ) : (
+                      `Ticket #${ticket.id.slice(0, 8)}`
+                    )}
+                  </h2>
+                  {ticket.intercom_url ? (
+                    <a
+                      className="ticket-intercom-link"
+                      href={ticket.intercom_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open this thread in Intercom"
+                      aria-label="Open this thread in Intercom"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M14 4h6v6M20 4l-8 8M9 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3" />
+                      </svg>
+                      Open in Intercom
+                    </a>
+                  ) : null}
+                </div>
                 <div className="ticket-metadata-facts">
                   <span className={`ticket-status is-${ticket.provider_status || ticket.status}`}>
                     {capFirst(ticket.provider_status || ticket.status)}

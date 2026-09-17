@@ -19,6 +19,9 @@ from fastapi import File, HTTPException, Request, UploadFile
 
 from . import applog
 from . import auth
+from . import intercom_ingest
+from . import intercom_oauth
+from . import org_vault
 from . import product_events
 from . import rate_limit
 from . import sentry_report
@@ -172,11 +175,26 @@ def get_ticket(request: Request, ticket_id: str):
     audits = ticket_permissions.filter_audits_for_viewer(
         row["audits"], viewer_user_id=viewer_id, is_manager=is_manager,
     )
+    intercom_url = None
+    if row["source"] == "intercom_api" and row.get("external_id"):
+        try:
+            workspace_id = org_vault.get_external_account_id(org_id, intercom_oauth.PROVIDER)
+        except Exception as e:  # noqa: BLE001
+            # "Open in Intercom" is a convenience link, not core to the
+            # ticket view — never let a lookup failure here break the rest
+            # of the response.
+            applog.event(
+                log, "intercom_thread_url_lookup_failed", level=logging.WARNING,
+                ticket_id=tid, error=applog.safe_exception_text(e),
+            )
+            workspace_id = None
+        intercom_url = intercom_ingest.thread_url(workspace_id, row.get("external_id"))
     return {
         **row,
         "audits": audits,
         "own_span_seqs": ticket_permissions.own_span_seqs(row["messages"], viewer_id),
         "view_scope": "full" if is_manager else "own",
+        "intercom_url": intercom_url,
     }
 
 

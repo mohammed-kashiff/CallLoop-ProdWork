@@ -279,6 +279,32 @@ def credential_status(org_id: str, provider: str) -> dict:
     }
 
 
+def get_external_account_id(org_id: str, provider: str) -> str | None:
+    """This org's stored provider-side account/workspace id (Intercom's
+    `app_id`/workspace id) — the reverse of find_org_id_by_external_account.
+    Non-secret (org_credentials, not the encrypted Vault payload), so this
+    is a plain RLS-scoped read, same shape as credential_status(). Used to
+    build a deep link back to the provider's own UI (e.g. a ticket's
+    "open in Intercom" link)."""
+    oid = parse_org_id(org_id)
+    if not oid:
+        raise ValueError("invalid org_id")
+    _assert_org_context(oid)
+    prov = _validate_provider(provider)
+    with db.connection() as conn:
+        row = conn.execute(
+            """
+            SELECT external_account_id FROM org_credentials
+            WHERE org_id = %s AND provider = %s
+            """,
+            (oid, prov),
+        ).fetchone()
+    if not row:
+        return None
+    ext = row.get("external_account_id")
+    return ext if isinstance(ext, str) and ext else None
+
+
 def list_org_ids_for_provider(provider: str) -> list[str]:
     """Org ids that have a credential in Vault for `provider`. Poller-style
     callers only; no secrets returned."""

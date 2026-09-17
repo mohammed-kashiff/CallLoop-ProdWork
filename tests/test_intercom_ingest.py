@@ -34,6 +34,32 @@ def test_html_to_text_strips_tags():
     assert intercom_ingest._html_to_text("<p>Hey there!</p>") == "Hey there!"
 
 
+def test_thread_url_for_a_standalone_conversation():
+    assert intercom_ingest.thread_url("o36ety8e", "conversation:215475956850871") == (
+        "https://app.intercom.com/a/inbox/o36ety8e/inbox/shared/all/conversation/215475956850871"
+    )
+
+
+def test_thread_url_for_a_standalone_ticket():
+    assert intercom_ingest.thread_url("o36ety8e", "ticket:987") == (
+        "https://app.intercom.com/a/inbox/o36ety8e/tickets/987"
+    )
+
+
+def test_thread_url_is_none_for_a_group_case():
+    """IN-8's merged case doesn't say whether the winning member was a
+    conversation or a ticket — no safe template to pick, so no link rather
+    than a guess that might be wrong."""
+    assert intercom_ingest.thread_url("o36ety8e", "group:555") is None
+
+
+def test_thread_url_is_none_without_a_workspace_id_or_external_id():
+    assert intercom_ingest.thread_url(None, "conversation:1") is None
+    assert intercom_ingest.thread_url("", "conversation:1") is None
+    assert intercom_ingest.thread_url("o36ety8e", None) is None
+    assert intercom_ingest.thread_url("o36ety8e", "not-namespaced") is None
+
+
 def test_display_metadata_extracts_intercom_header_fields():
     obj = {
         "source": {"subject": "Login is broken"},

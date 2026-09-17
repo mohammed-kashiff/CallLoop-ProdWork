@@ -10,6 +10,7 @@ from backend.org_vault import (
     delete_credential,
     delete_justcall,
     find_org_id_by_external_account,
+    get_external_account_id,
     load_credential,
     load_justcall,
     put_credential,
@@ -174,6 +175,56 @@ def test_find_org_id_by_external_account_returns_org_id_via_stub(monkeypatch):
 
     monkeypatch.setattr(ov.db, "connection", lambda **kw: _FakeConn())
     assert find_org_id_by_external_account("intercom", "app_abc123") == DEFAULT_ORG_ID
+
+
+def test_get_external_account_id_returns_none_when_not_connected(monkeypatch):
+    class _Result:
+        def fetchone(self):
+            return None
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, params=None):
+            norm = " ".join(str(sql).split()).upper()
+            assert norm.startswith("SELECT EXTERNAL_ACCOUNT_ID FROM ORG_CREDENTIALS")
+            assert params == (DEFAULT_ORG_ID, "intercom")
+            return _Result()
+
+    from backend import org_vault as ov
+
+    monkeypatch.setattr(ov.db, "connection", lambda **kw: _FakeConn())
+    assert get_external_account_id(DEFAULT_ORG_ID, "intercom") is None
+
+
+def test_get_external_account_id_returns_the_stored_workspace_id(monkeypatch):
+    class _Result:
+        def fetchone(self):
+            return {"external_account_id": "o36ety8e"}
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, params=None):
+            return _Result()
+
+    from backend import org_vault as ov
+
+    monkeypatch.setattr(ov.db, "connection", lambda **kw: _FakeConn())
+    assert get_external_account_id(DEFAULT_ORG_ID, "intercom") == "o36ety8e"
+
+
+def test_get_external_account_id_validates_org_id_before_any_db_call():
+    with pytest.raises(ValueError, match="invalid org_id"):
+        get_external_account_id("not-a-uuid", "intercom")
 
 
 def test_put_credential_sql_includes_external_account_id_column():
