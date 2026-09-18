@@ -654,6 +654,51 @@ def test_webhook_ignores_unhandled_topics(monkeypatch):
     assert r.json()["accepted"] is False
 
 
+def test_webhook_app_uninstalled_removes_the_stored_credential(monkeypatch):
+    """A customer can uninstall from Intercom's own side, not just via
+    CallLoop's Disconnect button — this must not leave a stale token the
+    poller keeps failing against forever."""
+    from backend.api import app
+
+    store = _stub_vault(monkeypatch)
+    store[(DEFAULT_ORG_ID, "intercom")] = {
+        "data": {"access_token": "tok"}, "suffix": "tok1", "external_account_id": "ws_abc",
+    }
+    raw, sig = _signed(monkeypatch, {"topic": "app.uninstalled", "app_id": "ws_abc", "data": {}})
+    monkeypatch.setattr(
+        "backend.org_vault.find_org_id_by_external_account",
+        lambda provider, app_id: DEFAULT_ORG_ID if app_id == "ws_abc" else None,
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/api/integrations/intercom/webhook", content=raw, headers={"X-Hub-Signature": sig},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["accepted"] is True
+    assert body["removed"] is True
+    assert (DEFAULT_ORG_ID, "intercom") not in store
+
+
+def test_webhook_app_uninstalled_with_no_stored_credential_is_a_no_op(monkeypatch):
+    from backend.api import app
+
+    _stub_vault(monkeypatch)
+    raw, sig = _signed(monkeypatch, {"topic": "app.uninstalled", "app_id": "ws_abc", "data": {}})
+    monkeypatch.setattr(
+        "backend.org_vault.find_org_id_by_external_account",
+        lambda provider, app_id: DEFAULT_ORG_ID if app_id == "ws_abc" else None,
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/api/integrations/intercom/webhook", content=raw, headers={"X-Hub-Signature": sig},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["accepted"] is True
+    assert body["removed"] is False
+
+
 # ── _sync_intercom_recent (IN-6 polling backstop) ────────────────────────────
 
 

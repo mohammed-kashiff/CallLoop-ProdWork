@@ -3425,6 +3425,29 @@ async def intercom_webhook(request: Request):
         )
         return {"ok": True, "queued": ticket_id}
 
+    if topic == "app.uninstalled":
+        # A customer can remove the app from Intercom's own side (app
+        # store / workspace settings), not just via CallLoop's Disconnect
+        # button — without this, that org's stored token goes stale and
+        # the poller would just keep failing against it indefinitely.
+        # Needs an explicit org_scope() like intercom_callback: this route
+        # is public (no JWT), so nothing else has bound RLS context yet.
+        try:
+            with org_scope(org_id):
+                removed = org_vault.delete_credential(org_id, intercom_oauth.PROVIDER)
+        except org_vault.VaultUnavailable:
+            removed = False
+        except org_vault.VaultError:
+            applog.event(
+                log, "intercom_webhook",
+                accepted=False, org_id=org_id, topic=topic, reason="vault_error",
+            )
+            return {"ok": True, "accepted": False}
+        applog.event(
+            log, "intercom_uninstalled", org_id=org_id, removed=removed,
+        )
+        return {"ok": True, "accepted": True, "removed": removed}
+
     applog.event(
         log, "intercom_webhook",
         accepted=False, org_id=org_id, topic=topic, reason="unhandled_topic",

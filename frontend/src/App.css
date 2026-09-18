@@ -1702,6 +1702,61 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   line-height: 1.6;
 }
 
+.legal-page {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 4rem;
+  color: var(--ink);
+}
+
+.legal-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+
+.legal-page-updated {
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+.legal-page h1 {
+  margin-bottom: 0.4rem;
+}
+
+.legal-page section {
+  margin-top: 2rem;
+}
+
+.legal-page h2 {
+  font-size: 1.05rem;
+  margin-bottom: 0.5rem;
+}
+
+.legal-page p,
+.legal-page li {
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+
+.legal-page ul {
+  padding-left: 1.2rem;
+  margin-top: 0.5rem;
+}
+
+.legal-page li {
+  margin-bottom: 0.5rem;
+}
+
+.legal-page li strong {
+  color: var(--ink);
+}
+
+.legal-page a {
+  color: var(--ink);
+}
+
 .section-kicker {
   font-size: 0.75rem;
   font-weight: 650;
@@ -3569,6 +3624,12 @@ html[data-color-mode='dark'] .claude-cord-plug {
 .auth-card h1 {
   margin: 0.2rem 0 0;
   font-size: 1.4rem;
+}
+
+.auth-footer-link {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
 }
 
 .auth-lead,

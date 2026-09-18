@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Navigate, useLocation } from 'react-router-dom'
+import { Link, Navigate, useLocation } from 'react-router-dom'
 import { BrandLogo } from '../components/BrandLogo'
 import { useAuth } from '../context/AuthContext'
 import { useColorMode } from '../context/ColorMode'
@@ -208,6 +208,9 @@ export function Login() {
           </button>
         )}
       </div>
+      <Link to="/privacy" className="auth-footer-link">
+        Privacy Policy
+      </Link>
     </div>
   )
 }

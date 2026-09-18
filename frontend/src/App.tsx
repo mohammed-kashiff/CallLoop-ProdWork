@@ -23,6 +23,7 @@ import { KpiTargets } from './pages/KpiTargets'
 import { Login } from './pages/Login'
 import { Neighbourhood } from './pages/Neighbourhood'
 import { PlatformAdmins } from './pages/PlatformAdmins'
+import { Privacy } from './pages/Privacy'
 import { Profile } from './pages/Profile'
 import { ResetPassword } from './pages/ResetPassword'
 import { RubricBuilder } from './pages/RubricBuilder'
@@ -58,6 +59,7 @@ function App() {
             <Routes>
               <Route path="login" element={<Login />} />
               <Route path="reset-password" element={<ResetPassword />} />
+              <Route path="privacy" element={<Privacy />} />
               <Route element={<RequireAuth />}>
                 <Route element={<AuthedShell />}>
                   <Route element={<AppLayout />}>
