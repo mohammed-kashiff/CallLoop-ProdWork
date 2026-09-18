@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   CartesianGrid,
@@ -18,6 +18,7 @@ import { roleTagLabel } from '../lib/roles'
 type Days = 7 | 30 | 90
 type SortKey = 'name' | 'ticket_avg' | 'call_avg'
 type SortDir = 'asc' | 'desc'
+type KpiChannel = 'tickets' | 'calls'
 
 type Highlight = { id?: string | null; name?: string | null } | null
 
@@ -39,6 +40,8 @@ type HeatmapCell = {
   pass: number
   n: number
   rate: number | null
+  target?: number | null
+  met?: boolean | null
 }
 
 type HeatmapGrid = {
@@ -50,8 +53,8 @@ type Snapshot = {
   view_scope: 'team' | 'own'
   days: number
   org: {
-    tickets: { avg_score: number | null; count: number; total: number }
-    calls: { avg_score: number | null; count: number; total: number }
+    tickets: { avg_score: number | null; count: number; total: number; target?: number | null }
+    calls: { avg_score: number | null; count: number; total: number; target?: number | null }
   }
   weekly: Array<{
     week: string
@@ -67,6 +70,19 @@ type Snapshot = {
   }
 }
 
+type KpiOverride = { user_id: string; display_name: string; target: number }
+type KpiDim = {
+  id: string
+  name: string
+  org_target: number | null
+  overrides: KpiOverride[]
+}
+type KpiCatalog = {
+  tickets: { dimensions: KpiDim[] }
+  calls: { dimensions: KpiDim[] }
+  roster: Array<{ user_id: string; display_name: string }>
+}
+
 function fmtScore(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(Number(n))) return '—'
   return Number(n).toFixed(1)
@@ -78,31 +94,51 @@ function fmtWeek(raw: string): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+function fmtTarget(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1)
+}
+
 function highlightName(h: Highlight): string {
   const name = (h?.name || '').trim()
   return name || '—'
 }
 
-function scoreTone(n: number | null): 'default' | 'good' | 'warn' | 'bad' {
+function scoreTone(n: number | null, target?: number | null): 'default' | 'good' | 'warn' | 'bad' {
   if (n == null) return 'default'
+  if (target != null && Number.isFinite(target)) {
+    if (n >= target) return 'good'
+    if (n >= Math.max(0, target - 20)) return 'warn'
+    return 'bad'
+  }
   if (n >= 80) return 'good'
   if (n >= 60) return 'warn'
   return 'bad'
 }
 
-function coverageHint(count: number, total: number): string {
-  if (total > 0) return `${count} scored / ${total}`
-  return `${count} scored`
+function coverageHint(count: number, total: number, target?: number | null): string {
+  const cov = total > 0 ? `${count} scored / ${total}` : `${count} scored`
+  if (target == null || !Number.isFinite(target)) return cov
+  return `${cov} · target ${fmtTarget(target)}`
 }
 
-function heatmapTone(rate: number | null): 'default' | 'good' | 'warn' | 'bad' {
-  if (rate == null) return 'default'
-  return scoreTone(rate * 100)
+function heatmapTone(cell: HeatmapCell): 'default' | 'good' | 'warn' | 'bad' {
+  if (cell.rate == null) return 'default'
+  return scoreTone(cell.rate * 100, cell.target)
 }
 
 function fmtPassRate(cell: HeatmapCell): string {
   if (cell.n <= 0) return '—'
   return `${cell.pass}/${cell.n}`
+}
+
+function heatmapTitle(cell: HeatmapCell): string {
+  const base = `${cell.name}: ${fmtPassRate(cell)}`
+  if (cell.target == null || !Number.isFinite(cell.target)) return base
+  return `${base} (target ${fmtTarget(cell.target)})`
+}
+
+function putChannel(channel: KpiChannel): 'ticket' | 'call' {
+  return channel === 'tickets' ? 'ticket' : 'call'
 }
 
 function cmpNum(a: number | null, b: number | null, dir: SortDir): number {
@@ -111,25 +147,251 @@ function cmpNum(a: number | null, b: number | null, dir: SortDir): number {
   return dir === 'asc' ? av - bv : bv - av
 }
 
+function TargetInput({
+  value,
+  onSave,
+  ariaLabel,
+  placeholder,
+}: {
+  value: number | null
+  onSave: (next: number | null) => Promise<void>
+  ariaLabel: string
+  placeholder?: string
+}) {
+  const [draft, setDraft] = useState(value == null ? '' : String(value))
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    setDraft(value == null ? '' : String(value))
+  }, [value])
+
+  const commit = async () => {
+    const trimmed = draft.trim()
+    const next = trimmed === '' ? null : Number(trimmed)
+    if (next != null && (!Number.isFinite(next) || next < 0 || next > 100)) {
+      setDraft(value == null ? '' : String(value))
+      return
+    }
+    if (next === value || (next == null && value == null)) return
+    setBusy(true)
+    try {
+      await onSave(next)
+    } catch {
+      setDraft(value == null ? '' : String(value))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <input
+      type="number"
+      min={0}
+      max={100}
+      step={1}
+      className="team-perf-kpi-input"
+      value={draft}
+      disabled={busy}
+      aria-label={ariaLabel}
+      placeholder={placeholder || '—'}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => void commit()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          ;(e.currentTarget as HTMLInputElement).blur()
+        }
+      }}
+    />
+  )
+}
+
+function KpiPanel({
+  catalog,
+  canEdit,
+  userId,
+  onSave,
+  error,
+}: {
+  catalog: KpiCatalog
+  canEdit: boolean
+  userId: string | null
+  onSave: (channel: 'ticket' | 'call', dimensionId: string, agentUserId: string | null, target: number | null) => Promise<void>
+  error: string | null
+}) {
+  const [channel, setChannel] = useState<KpiChannel>('tickets')
+  const [openIds, setOpenIds] = useState<Set<string>>(new Set())
+  const dims = channel === 'tickets' ? catalog.tickets.dimensions : catalog.calls.dimensions
+  const roster = catalog.roster
+
+  const toggle = (id: string) => {
+    setOpenIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  return (
+    <section className="team-perf-panel" aria-label={canEdit ? 'Set KPIs' : 'Your KPI targets'}>
+      <div className="team-perf-heat-head">
+        <h2>{canEdit ? 'Set KPIs' : 'Your KPI targets'}</h2>
+        <div className="audit-filters" role="group" aria-label="KPI channel">
+          <button
+            type="button"
+            className={['ghost-btn', channel === 'tickets' ? 'is-current' : ''].filter(Boolean).join(' ')}
+            aria-pressed={channel === 'tickets'}
+            onClick={() => setChannel('tickets')}
+          >
+            Tickets
+          </button>
+          <button
+            type="button"
+            className={['ghost-btn', channel === 'calls' ? 'is-current' : ''].filter(Boolean).join(' ')}
+            aria-pressed={channel === 'calls'}
+            onClick={() => setChannel('calls')}
+          >
+            Calls
+          </button>
+        </div>
+      </div>
+      <p className="panel-lede">
+        {canEdit
+          ? 'Org default applies to everyone. Expand a criterion to set per-agent overrides. New rubric criteria show up here automatically.'
+          : 'Pass-rate target for each live criterion. An override you have been given beats the org default.'}
+      </p>
+      {error ? <p className="upload-error" role="alert">{error}</p> : null}
+      {dims.length === 0 ? (
+        <p className="empty-copy">No live criteria on the active rubric yet.</p>
+      ) : (
+        <div className="admin-table-wrap">
+          <table className="admin-table team-perf-kpi">
+            <thead>
+              <tr>
+                <th>Criterion</th>
+                <th>{canEdit ? 'Org target' : 'Target'}</th>
+                {canEdit ? <th>Agents</th> : <th>Source</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {dims.map((dim) => {
+                const mine = dim.overrides.find((o) => o.user_id === userId)
+                const effective = mine?.target ?? dim.org_target
+                const source = mine
+                  ? 'your target'
+                  : dim.org_target != null
+                    ? 'org default'
+                    : 'not set'
+                const open = openIds.has(dim.id)
+                return (
+                  <tr key={dim.id}>
+                    <td>{dim.name}</td>
+                    <td>
+                      {canEdit ? (
+                        <TargetInput
+                          value={dim.org_target}
+                          ariaLabel={`${dim.name} org target`}
+                          onSave={(next) => onSave(putChannel(channel), dim.id, null, next)}
+                        />
+                      ) : (
+                        effective == null ? '—' : fmtTarget(effective)
+                      )}
+                    </td>
+                    <td>
+                      {canEdit ? (
+                        <>
+                          <button
+                            type="button"
+                            className="team-perf-kpi-expand"
+                            aria-expanded={open}
+                            onClick={() => toggle(dim.id)}
+                          >
+                            {open ? 'Hide agents' : `Set per agent (${roster.length})`}
+                          </button>
+                          {open ? (
+                            <div className="team-perf-kpi-agents">
+                              {roster.length === 0 ? (
+                                <p className="empty-copy">No teammates to assign.</p>
+                              ) : (
+                                roster.map((m) => {
+                                  const ov = dim.overrides.find((o) => o.user_id === m.user_id)
+                                  return (
+                                    <div key={m.user_id} className="team-perf-kpi-agent">
+                                      <span>{m.display_name}</span>
+                                      <span className="team-perf-kpi-agent-ctrl">
+                                        {ov == null && dim.org_target != null ? (
+                                          <span className="team-perf-kpi-inherit">
+                                            inherits {fmtTarget(dim.org_target)}
+                                          </span>
+                                        ) : null}
+                                        <TargetInput
+                                          value={ov?.target ?? null}
+                                          placeholder={dim.org_target == null ? '—' : fmtTarget(dim.org_target)}
+                                          ariaLabel={`${dim.name} target for ${m.display_name}`}
+                                          onSave={(next) => onSave(putChannel(channel), dim.id, m.user_id, next)}
+                                        />
+                                      </span>
+                                    </div>
+                                  )
+                                })
+                              )}
+                            </div>
+                          ) : (
+                            <span className="team-perf-kpi-meta">
+                              {dim.overrides.length === 0
+                                ? 'org default'
+                                : `${dim.overrides.length} override${dim.overrides.length === 1 ? '' : 's'}`}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="team-perf-kpi-meta">{source}</span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
 export function TeamPerformance() {
   const { isOwnerOrManager, userId, role } = useAuth()
   const [days, setDays] = useState<Days>(30)
   const [data, setData] = useState<Snapshot | null>(null)
+  const [kpis, setKpis] = useState<KpiCatalog | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [kpiError, setKpiError] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
-  const [heatChannel, setHeatChannel] = useState<'tickets' | 'calls'>('tickets')
+  const [heatChannel, setHeatChannel] = useState<KpiChannel>('tickets')
+
+  const loadSnapshot = useCallback(() => {
+    return apiFetch(`/api/team-performance?days=${days}`).then(async (r) => {
+      if (!r.ok) throw new Error(await readError(r, 'Could not load team performance.'))
+      return r.json() as Promise<Snapshot>
+    })
+  }, [days])
+
+  const loadKpis = useCallback(() => {
+    return apiFetch('/api/performance-kpis').then(async (r) => {
+      if (!r.ok) throw new Error(await readError(r, 'Could not load KPI targets.'))
+      return r.json() as Promise<KpiCatalog>
+    })
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
-    apiFetch(`/api/team-performance?days=${days}`)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(await readError(r, 'Could not load team performance.'))
-        return r.json() as Promise<Snapshot>
-      })
+    setKpiError(null)
+    loadSnapshot()
       .then((body) => {
         if (!cancelled) setData(body)
       })
@@ -139,10 +401,47 @@ export function TeamPerformance() {
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
+    loadKpis()
+      .then((catalog) => {
+        if (!cancelled) setKpis(catalog)
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setKpiError(err.message || 'Could not load KPI targets.')
+      })
     return () => {
       cancelled = true
     }
-  }, [days])
+  }, [days, loadSnapshot, loadKpis])
+
+  const saveKpi = useCallback(
+    async (
+      channel: 'ticket' | 'call',
+      dimensionId: string,
+      agentUserId: string | null,
+      target: number | null,
+    ) => {
+      setKpiError(null)
+      const r = await apiFetch('/api/performance-kpis', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channel,
+          dimension_id: dimensionId,
+          agent_user_id: agentUserId,
+          target,
+        }),
+      })
+      if (!r.ok) {
+        const msg = await readError(r, 'Could not save KPI.')
+        setKpiError(msg)
+        throw new Error(msg)
+      }
+      const [catalog, snap] = await Promise.all([loadKpis(), loadSnapshot()])
+      setKpis(catalog)
+      setData(snap)
+    },
+    [loadKpis, loadSnapshot],
+  )
 
   const chartData = useMemo(
     () =>
@@ -177,6 +476,8 @@ export function TeamPerformance() {
   const title = teamView ? 'Team Performance' : 'My Performance'
   const ticketAvg = data?.org.tickets.avg_score ?? null
   const callAvg = data?.org.calls.avg_score ?? null
+  const ticketTarget = data?.org.tickets.target ?? null
+  const callTarget = data?.org.calls.target ?? null
   const unassigned = data?.agents.find((a) => a.user_id == null)
   const namesById = useMemo(() => {
     const map = new Map<string, string>()
@@ -222,14 +523,14 @@ export function TeamPerformance() {
             <KpiCard
               label="Ticket avg"
               value={fmtScore(ticketAvg)}
-              hint={coverageHint(data.org.tickets.count, data.org.tickets.total)}
-              tone={scoreTone(ticketAvg)}
+              hint={coverageHint(data.org.tickets.count, data.org.tickets.total, ticketTarget)}
+              tone={scoreTone(ticketAvg, ticketTarget)}
             />
             <KpiCard
               label="Call avg"
               value={fmtScore(callAvg)}
-              hint={coverageHint(data.org.calls.count, data.org.calls.total)}
-              tone={scoreTone(callAvg)}
+              hint={coverageHint(data.org.calls.count, data.org.calls.total, callTarget)}
+              tone={scoreTone(callAvg, callTarget)}
             />
             <KpiCard
               label="Ticket coverage"
@@ -256,6 +557,18 @@ export function TeamPerformance() {
                 <>have no teammate yet — ask the account owner to map JustCall agent emails.</>
               )}
             </p>
+          ) : null}
+
+          {kpis ? (
+            <KpiPanel
+              catalog={kpis}
+              canEdit={isOwnerOrManager}
+              userId={userId}
+              onSave={saveKpi}
+              error={kpiError}
+            />
+          ) : kpiError ? (
+            <p className="upload-error" role="alert">{kpiError}</p>
           ) : null}
 
           <section className="team-perf-panel" aria-label="Weekly average scores">
@@ -320,6 +633,7 @@ export function TeamPerformance() {
             <p className="panel-lede">
               Pass count over scored findings in this window. Partial and fail sit in the
               denominator. Click a cell with scores to open Training for that gap.
+              When a KPI is set, the cell colors against that target instead of 80 / 60.
             </p>
             {!heat || heat.dimensions.length === 0 ? (
               <p className="empty-copy">No scored dimensions in this window yet.</p>
@@ -344,14 +658,14 @@ export function TeamPerformance() {
                         <tr key={row.user_id}>
                           <td>{namesById.get(row.user_id) || 'Former teammate'}</td>
                           {row.cells.map((cell) => {
-                            const tone = heatmapTone(cell.rate)
+                            const tone = heatmapTone(cell)
                             const channel = heatChannel === 'tickets' ? 'ticket' : 'call'
                             const canPractice = cell.n > 0 && Boolean(row.user_id)
                             const href = `/training?channel=${channel}&dim=${encodeURIComponent(cell.id)}&agent=${encodeURIComponent(row.user_id)}&days=${days}`
                             return (
                               <td key={cell.id} className={`team-perf-heat-cell tone-${tone}`}>
                                 {canPractice ? (
-                                  <Link to={href} title={`${cell.name}: ${fmtPassRate(cell)}`}>
+                                  <Link to={href} title={heatmapTitle(cell)}>
                                     {fmtPassRate(cell)}
                                   </Link>
                                 ) : (

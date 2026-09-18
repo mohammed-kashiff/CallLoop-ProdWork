@@ -56,6 +56,7 @@ class _FakeConn:
         ]
         self.ticket_total = 10
         self.call_total = 6
+        self.kpi_rows = []
         self.ticket_heatmap = [
             {"agent_user_id": AGENT_A, "dim_id": "tone", "dim_name": "Tone & Empathy", "pass_n": 2, "n": 2},
             {"agent_user_id": AGENT_A, "dim_id": "diag", "dim_name": "Problem Diagnosis", "pass_n": 0, "n": 1},
@@ -120,6 +121,15 @@ class _FakeConn:
             if "AND TA.AGENT_USER_ID = %S" in norm or "AND C.AGENT_USER_ID = %S" in norm:
                 uid = str(args[-1])
                 rows = [r for r in rows if r.get("agent_user_id") and str(r["agent_user_id"]) == uid]
+            return _Result(rows)
+        if "FROM PERFORMANCE_KPIS" in norm:
+            rows = list(self.kpi_rows)
+            if "AGENT_USER_ID IS NULL OR AGENT_USER_ID = %S" in norm:
+                uid = str(args[-1])
+                rows = [
+                    r for r in rows
+                    if r.get("agent_user_id") is None or str(r.get("agent_user_id")) == uid
+                ]
             return _Result(rows)
         if "FROM ORG_MEMBERS" in norm:
             rows = list(self.members)
@@ -358,6 +368,32 @@ def test_heatmap_empty_window_has_canonical_dims_and_null_rates(monkeypatch):
     for row in body["heatmap"]["tickets"]["rows"]:
         assert row["user_id"] is not None
         assert all(c["n"] == 0 and c["rate"] is None for c in row["cells"])
+
+
+def test_heatmap_uses_agent_kpi_override(monkeypatch):
+    from backend.team_performance import snapshot
+
+    conn = _FakeConn()
+    conn.kpi_rows = [
+        {"channel": "ticket", "dimension_id": "diag", "agent_user_id": None, "target": 80},
+        {"channel": "ticket", "dimension_id": "diag", "agent_user_id": AGENT_A, "target": 50},
+        {"channel": "ticket", "dimension_id": "__overall__", "agent_user_id": None, "target": 75},
+    ]
+    _patch_db(monkeypatch, conn)
+    body = snapshot(
+        DEFAULT_ORG_ID,
+        viewer_user_id=AGENT_A,
+        is_manager=True,
+        days=30,
+    )
+    assert body["org"]["tickets"]["target"] == 75
+    ada = next(r for r in body["heatmap"]["tickets"]["rows"] if r["user_id"] == AGENT_A)
+    diag = next(c for c in ada["cells"] if c["id"] == "diag")
+    assert diag["target"] == 50
+    assert diag["met"] is False
+    grace = next(r for r in body["heatmap"]["tickets"]["rows"] if r["user_id"] == AGENT_B)
+    grace_diag = next(c for c in grace["cells"] if c["id"] == "diag")
+    assert grace_diag["target"] == 80
 
 
 def test_http_requires_auth():

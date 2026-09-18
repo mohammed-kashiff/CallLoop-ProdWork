@@ -526,13 +526,14 @@ def is_owner_or_manager(request: Request) -> bool:
     the ticket-audit team view (TA-12), the self-serve rubric builder
     (call and ticket), Team Performance dashboard team scope
     (`view_scope=team` on GET /api/team-performance — members still hit
-    the same route and only see their own row), and Training's teammate
+    the same route and only see their own row), Training's teammate
     picker (`?agent=` on GET /api/training — members always see
-    themselves). Every other owner-only gate in this codebase
-    (promote/demote, alias mapping, admin routes) intentionally still
-    calls is_org_owner()/require_owner() directly; re-pointing a gate to
-    this function is a deliberate, individually-reviewed decision
-    (AC-59), not a default."""
+    themselves), and writable KPI targets (`PUT /api/performance-kpis`).
+    Every other owner-only gate in this codebase (promote/demote, alias
+    mapping, admin routes) intentionally still calls
+    is_org_owner()/require_owner() directly; re-pointing a gate to this
+    function is a deliberate, individually-reviewed decision (AC-59),
+    not a default."""
     return is_org_owner(request) or is_org_manager(request)
 
 

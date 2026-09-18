@@ -52,6 +52,7 @@ EXPECTED_ROUTES = {
     "/api/tickets/{ticket_id}/score",
     "/api/team-performance",
     "/api/training",
+    "/api/performance-kpis",
     "/api/calls/{call_id}/agent",
     "/api/calls/agent-identity-aliases",
     "/api/calls/agent-identity-aliases/{provider}/{identifier}",

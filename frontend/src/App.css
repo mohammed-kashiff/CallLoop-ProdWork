@@ -5002,6 +5002,61 @@ html[data-color-mode='dark'] .cc-shell {
   font-weight: 650;
 }
 
+.team-perf-kpi td {
+  vertical-align: top;
+}
+
+.team-perf-kpi-input {
+  width: 4.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0.35rem 0.45rem;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.team-perf-kpi-expand {
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.team-perf-kpi-expand:hover {
+  text-decoration: underline;
+}
+
+.team-perf-kpi-agents {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+.team-perf-kpi-agent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.team-perf-kpi-agent-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.team-perf-kpi-inherit,
+.team-perf-kpi-meta {
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
 .train-focus-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));

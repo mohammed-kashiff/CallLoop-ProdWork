@@ -21,6 +21,7 @@ from datetime import date, datetime
 from typing import Any
 
 from . import db
+from . import performance_kpis
 from . import ticket_audit_summary
 from .org_ids import org_scope, parse_org_id
 
@@ -549,6 +550,7 @@ def snapshot(
             call_highlights = _call_highlights(conn, oid, n, only_user_id=only)
             ticket_hm = _ticket_heatmap_counts(conn, oid, n, only_user_id=only)
             call_hm = _call_heatmap_counts(conn, oid, n, only_user_id=only)
+            kpi_rows = performance_kpis.fetch_stored(conn, oid, only_agent_id=only)
             ticket_total = _ticket_total(conn, oid, n, only_user_id=only)
             call_total = _call_total(conn, oid, n, only_user_id=only)
 
@@ -614,7 +616,19 @@ def snapshot(
     c_org = _org_totals(call_parts)
     t_org["total"] = ticket_total
     c_org["total"] = call_total
+    t_org["target"] = performance_kpis.effective_target(
+        kpi_rows, "ticket", performance_kpis.OVERALL_ID, None,
+    )
+    c_org["target"] = performance_kpis.effective_target(
+        kpi_rows, "call", performance_kpis.OVERALL_ID, None,
+    )
     heatmap_ids = [a["user_id"] for a in agents if a.get("user_id")]
+    ticket_grid = _assemble_heatmap(
+        ticket_hm, heatmap_ids, _TICKET_DIMS, skip_ids=_TICKET_SKIP_DIMS,
+    )
+    call_grid = _assemble_heatmap(call_hm, heatmap_ids, _CALL_DIMS)
+    performance_kpis.apply_to_heatmap(ticket_grid, "ticket", kpi_rows)
+    performance_kpis.apply_to_heatmap(call_grid, "call", kpi_rows)
     return {
         "view_scope": "team" if is_manager else "own",
         "days": n,
@@ -625,9 +639,7 @@ def snapshot(
         "weekly": _merge_weeks(t_weeks, c_weeks),
         "agents": agents,
         "heatmap": {
-            "tickets": _assemble_heatmap(
-                ticket_hm, heatmap_ids, _TICKET_DIMS, skip_ids=_TICKET_SKIP_DIMS,
-            ),
-            "calls": _assemble_heatmap(call_hm, heatmap_ids, _CALL_DIMS),
+            "tickets": ticket_grid,
+            "calls": call_grid,
         },
     }
