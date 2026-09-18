@@ -224,6 +224,11 @@ p { margin: 0 0 1em; color: var(--muted); }
   padding: 1.1rem 1.5rem;
   box-shadow: 0 20px 45px -20px rgba(21,16,31,0.25);
   text-align: left;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.evidence-card.is-swapping {
+  opacity: 0;
+  transform: translateY(6px);
 }
 .evidence-icon {
   flex-shrink: 0;
@@ -237,6 +242,27 @@ p { margin: 0 0 1em; color: var(--muted); }
 .evidence-body { flex: 1; min-width: 0; }
 .evidence-title { font-weight: 700; color: var(--ink); margin: 0 0 0.2em; }
 .evidence-quote { color: var(--muted); font-style: italic; margin: 0; font-size: 0.9rem; }
+
+.evidence-dots {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.evidence-dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--line);
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.2s;
+}
+.evidence-dot.is-active {
+  background: var(--coral);
+  transform: scale(1.3);
+}
 
 /* ============ 2. Feature Switcher ============ */
 .switcher {
@@ -504,7 +530,7 @@ p { margin: 0 0 1em; color: var(--muted); }
   .tab-progress.is-running { animation: none; width: 0%; }
   .reveal.is-visible { animation: revealUp 0.3s ease forwards; }
   .float-card { animation: none; opacity: 1; transform: none; }
-  .btn, .trio-card, .integration-tile { transition: none; }
+  .btn, .trio-card, .integration-tile, .evidence-card { transition: none; }
 }
 
 /* ============ Mobile (PRD §5) ============ */
