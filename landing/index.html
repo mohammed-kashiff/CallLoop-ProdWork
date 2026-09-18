@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CallLoop — Every score, backed by proof.</title>
+  <meta name="description" content="CallLoop scores every call and every support ticket against a rubric your team defines — evidence-cited, per agent, every time. No black-box numbers." />
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <header class="nav">
+    <div class="nav-inner">
+      <a href="#" class="nav-logo">CallLoop<span class="dot">.</span></a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#product">Product</a>
+        <a href="#how-it-works">How it works</a>
+        <a href="#integrations">Integrations</a>
+      </nav>
+      <div class="nav-actions">
+        <a href="https://web.call-loop.com/login" class="btn btn-ghost">Login</a>
+        <a href="mailto:hello@call-loop.com?subject=Request%20a%20demo" class="btn btn-primary">Request a demo</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- 1. Hero -->
+    <section class="hero mesh-soft" aria-label="Introduction">
+      <div class="hero-inner">
+        <p class="eyebrow">Conversation &amp; Ticket QA</p>
+        <h1>Every score, backed<br />by proof.</h1>
+        <p class="hero-sub">
+          CallLoop scores every call and every support ticket against a rubric
+          your team defines — evidence-cited, per agent, every time. No
+          black-box numbers.
+        </p>
+        <div class="hero-ctas">
+          <a href="mailto:hello@call-loop.com?subject=Request%20a%20demo" class="btn btn-primary btn-lg">Request a demo</a>
+          <a href="#how-it-works" class="btn btn-outline btn-lg">See how scoring works</a>
+        </div>
+
+        <div class="float-card evidence-card">
+          <span class="evidence-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><rect x="9" y="4" width="6" height="16" rx="3" fill="white"/></svg>
+          </span>
+          <div class="evidence-body">
+            <p class="evidence-title">Resolution Correctness — verified</p>
+            <p class="evidence-quote">&ldquo;I&rsquo;ve processed yours as a one-time exception.&rdquo;</p>
+          </div>
+          <span class="chip chip-pass">PASS</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Feature Switcher -->
+    <section class="switcher" id="product" aria-label="Product">
+      <div class="switcher-inner">
+        <h2 class="reveal">One engine. Every part of the QA loop.</h2>
+
+        <div class="tabs" role="tablist" aria-label="Product areas">
+          <button class="tab is-active" role="tab" aria-selected="true" data-tab="ticket-audit" id="tab-ticket-audit" aria-controls="panel-ticket-audit">
+            <span class="tab-label">Ticket Audit</span>
+            <span class="tab-progress" aria-hidden="true"></span>
+          </button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="call-scoring" id="tab-call-scoring" aria-controls="panel-call-scoring">
+            <span class="tab-label">Call Scoring</span>
+            <span class="tab-progress" aria-hidden="true"></span>
+          </button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="team-performance" id="tab-team-performance" aria-controls="panel-team-performance">
+            <span class="tab-label">Team Performance</span>
+            <span class="tab-progress" aria-hidden="true"></span>
+          </button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="training" id="tab-training" aria-controls="panel-training">
+            <span class="tab-label">Training</span>
+            <span class="tab-progress" aria-hidden="true"></span>
+          </button>
+        </div>
+
+        <div class="tab-card reveal">
+
+          <article class="tab-panel is-active" id="panel-ticket-audit" role="tabpanel" aria-labelledby="tab-ticket-audit" data-panel="ticket-audit">
+            <div class="tab-panel-copy">
+              <p class="eyebrow">Ticket Audit</p>
+              <h3>Every agent on a ticket, scored on their own.</h3>
+              <p>A ticket that passed through three agents produces three
+                independent scorecards — every rubric parameter judged
+                against what that specific agent actually did, with the
+                exact quote it&rsquo;s based on.</p>
+              <a href="#integrations" class="text-link">See a real scorecard &rarr;</a>
+            </div>
+            <div class="tab-panel-visual mesh-soft">
+              <div class="finding-card">
+                <div class="finding-head">
+                  <span>Ownership &amp; Handoff</span>
+                  <span class="chip chip-gap">GAP</span>
+                </div>
+                <p class="finding-quote">&ldquo;Handed off with no context — the next agent asked the customer to repeat the issue.&rdquo;</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="tab-panel" id="panel-call-scoring" role="tabpanel" aria-labelledby="tab-call-scoring" data-panel="call-scoring" hidden>
+            <div class="tab-panel-copy">
+              <p class="eyebrow">Call Scoring</p>
+              <h3>Every call, transcribed and scored the same way.</h3>
+              <p>JustCall recordings are transcribed, diarized by speaker,
+                and scored against your rubric automatically — no manual
+                review queue, no sampling a handful of calls a month.</p>
+              <a href="#integrations" class="text-link">See how transcription works &rarr;</a>
+            </div>
+            <div class="tab-panel-visual mesh-soft">
+              <div class="finding-card">
+                <div class="finding-head">
+                  <span>Empathy Statement</span>
+                  <span class="chip chip-pass">PASS</span>
+                </div>
+                <p class="finding-quote">&ldquo;I completely understand how frustrating that must be for you.&rdquo;</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="tab-panel" id="panel-team-performance" role="tabpanel" aria-labelledby="tab-team-performance" data-panel="team-performance" hidden>
+            <div class="tab-panel-copy">
+              <p class="eyebrow">Team Performance</p>
+              <h3>See who&rsquo;s improving, and who&rsquo;s stuck.</h3>
+              <p>Every agent&rsquo;s ticket and call scores roll up into one
+                dashboard — weekly trend lines, pass rates per rubric
+                dimension, and exactly which criterion is dragging a score
+                down.</p>
+              <a href="#integrations" class="text-link">See a team dashboard &rarr;</a>
+            </div>
+            <div class="tab-panel-visual mesh-soft">
+              <div class="finding-card">
+                <div class="finding-head">
+                  <span>Response Timeliness</span>
+                  <span class="chip chip-pass">92% pass</span>
+                </div>
+                <p class="finding-quote">Trending up 6 points this week across the team.</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="tab-panel" id="panel-training" role="tabpanel" aria-labelledby="tab-training" data-panel="training" hidden>
+            <div class="tab-panel-copy">
+              <p class="eyebrow">Training</p>
+              <h3>Coaching pulled straight from real misses.</h3>
+              <p>Training drills are built from an agent&rsquo;s own failing
+                findings — the real ticket or call where they missed a
+                rubric point, never a generic script.</p>
+              <a href="#integrations" class="text-link">See a real drill &rarr;</a>
+            </div>
+            <div class="tab-panel-visual mesh-soft">
+              <div class="finding-card">
+                <div class="finding-head">
+                  <span>Diagnostic Reasoning</span>
+                  <span class="chip chip-gap">Drill assigned</span>
+                </div>
+                <p class="finding-quote">&ldquo;Didn&rsquo;t address the root cause the customer described.&rdquo;</p>
+              </div>
+            </div>
+          </article>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Differentiator Trio -->
+    <section class="trio" id="how-it-works" aria-label="Why CallLoop">
+      <div class="trio-inner mesh-band">
+        <h2 class="reveal">Built so a manager never has to take a score on faith.</h2>
+        <p class="trio-sub reveal">Three things every other QA tool skips.</p>
+
+        <div class="trio-cards">
+          <div class="trio-card reveal">
+            <span class="trio-num">01</span>
+            <h3>Evidence-cited, always</h3>
+            <p>Every pass or gap links to the exact line it came from — in
+              the real transcript or ticket thread, never a bare number.</p>
+          </div>
+          <div class="trio-card reveal">
+            <span class="trio-num">02</span>
+            <h3>Scored per agent</h3>
+            <p>A multi-agent case gets one independent scorecard per person
+              — never a shared or averaged score for work someone else did.</p>
+          </div>
+          <div class="trio-card reveal">
+            <span class="trio-num">03</span>
+            <h3>Your own rubric</h3>
+            <p>Build and version your own criteria for calls and tickets
+              separately — save a library, switch what&rsquo;s active, no
+              engineering ticket.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Integrations + Close -->
+    <section class="integrations" id="integrations" aria-label="Integrations">
+      <div class="integrations-inner">
+        <p class="eyebrow reveal">Connects to what you already use</p>
+        <h2 class="reveal">Two channels in, one scoring engine out.</h2>
+
+        <div class="integration-tiles">
+          <div class="integration-tile reveal">
+            <div class="integration-chip chip-justcall" aria-label="JustCall">
+              <img src="assets/justcall-logo.svg" alt="JustCall" width="96" height="18" />
+            </div>
+            <p class="integration-name">JustCall</p>
+            <p class="integration-desc">Call recordings, OAuth-connected</p>
+          </div>
+          <div class="integration-tile reveal">
+            <div class="integration-chip chip-intercom" aria-label="Intercom">
+              <svg viewBox="0 0 36 37" width="26" height="27" fill="none" aria-hidden="true"><path fill="white" d="M31.171 20.31c0 .321-.126.629-.35.856a1.19 1.19 0 0 1-1.694 0 1.22 1.22 0 0 1-.35-.856V9.5c0-.32.125-.629.35-.856a1.19 1.19 0 0 1 1.693 0c.225.227.351.535.351.856zm-.416 7.49c-.158.16-4.61 3.91-12.775 3.91S5.393 27.98 5.205 27.82a1.2 1.2 0 0 1-.414-.811 1.2 1.2 0 0 1 .276-.87 1.19 1.19 0 0 1 1.682-.13c.069.051 4.047 3.31 11.221 3.31s11.182-3.279 11.222-3.309a1.21 1.21 0 0 1 1.692.13 1.2 1.2 0 0 1-.119 1.67zM4.78 9.5c.017-.322.16-.624.398-.839a1.2 1.2 0 0 1 .868-.31c.296.016.574.143.783.355.208.213.331.495.345.794v10.79c0 .32-.126.629-.35.856a1.19 1.19 0 0 1-1.694 0 1.22 1.22 0 0 1-.35-.856zm6.006-2.4c.018-.322.161-.624.399-.839a1.2 1.2 0 0 1 .868-.31c.295.016.574.143.782.355.209.213.332.495.346.794v16c0 .321-.126.629-.35.856a1.19 1.19 0 0 1-1.694 0 1.22 1.22 0 0 1-.35-.856zm6.037-.6c0-.32.126-.629.35-.856a1.19 1.19 0 0 1 1.694 0c.224.227.35.535.35.856v17.4c0 .32-.126.629-.35.856a1.19 1.19 0 0 1-1.694 0 1.22 1.22 0 0 1-.35-.856zm5.937.6c0-.32.126-.629.35-.856a1.19 1.19 0 0 1 1.694 0c.224.227.35.535.35.856v16c0 .321-.126.629-.35.856a1.19 1.19 0 0 1-1.694 0 1.22 1.22 0 0 1-.35-.856zM31.497.5H4.502a4.4 4.4 0 0 0-1.716.334 4.5 4.5 0 0 0-1.458.972A4.561 4.561 0 0 0 0 5v27c.003.594.121 1.182.349 1.73.228.549.56 1.046.979 1.464s.913.748 1.458.972a4.4 4.4 0 0 0 1.716.334h26.995a4.4 4.4 0 0 0 1.715-.333 4.5 4.5 0 0 0 1.457-.97A4.557 4.557 0 0 0 36 32.01V5a4.56 4.56 0 0 0-1.324-3.19 4.5 4.5 0 0 0-1.455-.974A4.4 4.4 0 0 0 31.508.5"/></svg>
+            </div>
+            <p class="integration-name">Intercom</p>
+            <p class="integration-desc">Conversations &amp; Tickets, OAuth-connected</p>
+          </div>
+        </div>
+
+        <div class="cta-band mesh-band reveal">
+          <p>See your own calls and tickets scored — with the receipts.</p>
+          <a href="mailto:hello@call-loop.com?subject=Request%20a%20demo" class="btn btn-primary btn-lg">Request a demo</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <a href="#" class="nav-logo">CallLoop<span class="dot">.</span></a>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="#product">Product</a>
+        <a href="mailto:hello@call-loop.com?subject=Security%20question">Security</a>
+        <a href="https://web.call-loop.com/privacy">Privacy Policy</a>
+        <a href="mailto:hello@call-loop.com">Contact</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>

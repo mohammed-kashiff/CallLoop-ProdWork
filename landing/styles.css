@@ -1,0 +1,521 @@
+/* ============ Tokens (PRD §2) ============ */
+:root {
+  --ink: #15101F;
+  --muted: #6B6478;
+  --line: #E9E5F0;
+  --violet: #6C3AA8;
+  --coral: #D9684F;
+  --amber: #E39A4E;
+  --bg: #FAFAFD;
+
+  --soft-wash:
+    radial-gradient(circle at 20% 30%, rgba(108,58,168,0.16) 0%, transparent 46%),
+    radial-gradient(circle at 82% 20%, rgba(227,154,78,0.20) 0%, transparent 44%),
+    radial-gradient(circle at 55% 85%, rgba(217,104,79,0.16) 0%, transparent 50%),
+    #FDFCFB;
+
+  --band-wash:
+    radial-gradient(circle at 12% 25%, rgba(108,58,168,0.30) 0%, transparent 48%),
+    radial-gradient(circle at 88% 18%, rgba(227,154,78,0.34) 0%, transparent 46%),
+    radial-gradient(circle at 60% 90%, rgba(217,104,79,0.30) 0%, transparent 52%),
+    linear-gradient(135deg, #F3ECFB 0%, #FBE9E2 45%, #FCEFD9 100%);
+}
+
+/* ============ Reset & base ============ */
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 400;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+img { max-width: 100%; display: block; }
+a { color: inherit; text-decoration: none; }
+h1, h2, h3 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.5em;
+  color: var(--ink);
+}
+p { margin: 0 0 1em; color: var(--muted); }
+
+.eyebrow {
+  color: var(--coral);
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 0.75em;
+}
+
+/* ============ Buttons ============ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 100px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  padding: 0.7em 1.5em;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: color 0.2s, background-color 0.2s, border-color 0.2s, transform 0.2s;
+  white-space: nowrap;
+}
+.btn-primary {
+  background: var(--ink);
+  color: #fff;
+}
+.btn-primary:hover { transform: scale(1.03); }
+.btn-outline {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line);
+}
+.btn-outline:hover { background: rgba(21,16,31,0.04); }
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line);
+}
+.btn-ghost:hover { background: rgba(21,16,31,0.04); }
+.btn-lg { padding: 0.85em 1.9em; font-size: 1rem; }
+
+.text-link {
+  color: var(--ink);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color 0.2s;
+}
+.text-link:hover { color: var(--coral); }
+
+/* ============ Chips ============ */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 100px;
+  padding: 0.3em 0.9em;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.chip-pass { background: rgba(108,58,168,0.12); color: var(--violet); }
+.chip-gap { background: rgba(217,104,79,0.12); color: var(--coral); }
+
+/* ============ Nav ============ */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: rgba(250,250,253,0.85);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.nav-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 1.1rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+.nav-logo {
+  font-weight: 800;
+  font-size: 1.2rem;
+  letter-spacing: -0.02em;
+}
+.nav-logo .dot { color: var(--coral); }
+.nav-links {
+  display: flex;
+  gap: 2rem;
+  flex: 1;
+  justify-content: center;
+}
+.nav-links a {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.95rem;
+  transition: color 0.2s;
+}
+.nav-links a:hover { color: var(--ink); }
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* ============ Ambient gradient drift (PRD §4.3) ============ */
+.mesh-soft {
+  background: var(--soft-wash);
+  background-size: 160% 160%;
+  animation: meshDrift 22s ease-in-out infinite;
+}
+.mesh-band {
+  background: var(--band-wash);
+  background-size: 160% 160%;
+  animation: meshDrift 22s ease-in-out infinite;
+}
+
+@keyframes meshDrift {
+  0%   { background-position: 0% 0%; }
+  50%  { background-position: 100% 40%; }
+  100% { background-position: 0% 0%; }
+}
+
+/* ============ Scroll reveal (PRD §4.1) ============ */
+@keyframes revealUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.reveal { opacity: 0; }
+.reveal.is-visible {
+  animation: revealUp 0.6s cubic-bezier(0.16,1,0.3,1) forwards;
+}
+
+/* ============ 1. Hero ============ */
+.hero {
+  padding: 5rem 1.5rem 7rem;
+  text-align: center;
+}
+.hero-inner {
+  max-width: 900px;
+  margin: 0 auto;
+}
+.hero h1 {
+  font-size: clamp(2.6rem, 6vw, 4.2rem);
+  line-height: 1.05;
+}
+.hero-sub {
+  max-width: 640px;
+  margin: 1.5rem auto 2.5rem;
+  font-size: 1.15rem;
+  line-height: 1.6;
+}
+.hero-ctas {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 3.5rem;
+}
+
+/* Floating evidence card (PRD §4.4) */
+@keyframes popSettle {
+  from { opacity: 0; transform: translateY(28px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.float-card { animation: popSettle 0.7s cubic-bezier(0.16,1,0.3,1) 0.4s both; }
+
+.evidence-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  max-width: 780px;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 20px;
+  padding: 1.1rem 1.5rem;
+  box-shadow: 0 20px 45px -20px rgba(21,16,31,0.25);
+  text-align: left;
+}
+.evidence-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--violet), var(--coral));
+}
+.evidence-body { flex: 1; min-width: 0; }
+.evidence-title { font-weight: 700; color: var(--ink); margin: 0 0 0.2em; }
+.evidence-quote { color: var(--muted); font-style: italic; margin: 0; font-size: 0.9rem; }
+
+/* ============ 2. Feature Switcher ============ */
+.switcher {
+  padding: 6rem 1.5rem;
+  background: var(--bg);
+}
+.switcher-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.switcher h2 {
+  text-align: center;
+  font-size: clamp(2rem, 4vw, 2.7rem);
+  margin-bottom: 2.5rem;
+}
+
+.tabs {
+  display: flex;
+  justify-content: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 2.5rem;
+}
+.tab {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.95rem;
+  border-radius: 100px;
+  padding: 0.75em 1.4em;
+  cursor: pointer;
+  transition: color 0.2s, background-color 0.2s, border-color 0.2s;
+}
+.tab:hover { color: var(--ink); }
+.tab.is-active {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+}
+.tab-label { position: relative; z-index: 1; }
+.tab-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 0%;
+  background: var(--coral);
+}
+.tab.is-active .tab-progress.is-running {
+  animation: segment-progress 6s linear forwards;
+}
+@keyframes segment-progress {
+  from { width: 0%; }
+  to   { width: 100%; }
+}
+
+.tab-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 32px;
+  padding: 3rem;
+  overflow: hidden;
+}
+.tab-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3rem;
+  align-items: center;
+}
+.tab-panel[hidden] { display: none; }
+.tab-panel-copy h3 {
+  font-size: 1.8rem;
+  margin-bottom: 0.6em;
+}
+.tab-panel-visual {
+  border-radius: 24px;
+  padding: 2.5rem;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.finding-card {
+  background: #fff;
+  border-radius: 18px;
+  padding: 1.3rem 1.5rem;
+  box-shadow: 0 20px 40px -18px rgba(21,16,31,0.22);
+  width: 100%;
+  max-width: 360px;
+}
+.finding-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 700;
+  margin-bottom: 0.6em;
+  gap: 0.75rem;
+}
+.finding-quote {
+  font-style: italic;
+  color: var(--muted);
+  font-size: 0.92rem;
+  margin: 0;
+}
+
+/* ============ 3. Differentiator Trio ============ */
+.trio {
+  padding: 6rem 1.5rem;
+}
+.trio-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  border-radius: 32px;
+  padding: 4rem 3rem;
+}
+.trio h2 {
+  text-align: center;
+  font-size: clamp(2rem, 4vw, 2.6rem);
+  max-width: 760px;
+  margin: 0 auto 0.5em;
+}
+.trio-sub {
+  text-align: center;
+  font-size: 1.05rem;
+  margin-bottom: 3rem;
+}
+.trio-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+.trio-card {
+  background: rgba(255,255,255,0.72);
+  backdrop-filter: blur(6px);
+  border-radius: 24px;
+  padding: 2rem;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.trio-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 18px 40px -20px rgba(21,16,31,0.25);
+}
+.trio-num {
+  display: block;
+  color: var(--coral);
+  font-weight: 800;
+  font-size: 0.85rem;
+  margin-bottom: 0.75em;
+}
+.trio-card h3 { font-size: 1.2rem; margin-bottom: 0.5em; }
+.trio-card p { margin: 0; font-size: 0.95rem; }
+
+/* ============ 4. Integrations + Close ============ */
+.integrations {
+  padding: 6rem 1.5rem 5rem;
+}
+.integrations-inner {
+  max-width: 1000px;
+  margin: 0 auto;
+  text-align: center;
+}
+.integrations h2 {
+  font-size: clamp(1.9rem, 4vw, 2.4rem);
+  margin-bottom: 2.5rem;
+}
+
+.integration-tiles {
+  display: flex;
+  justify-content: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 3.5rem;
+}
+.integration-tile {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 2rem 2.5rem;
+  min-width: 220px;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.integration-tile:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 18px 40px -20px rgba(21,16,31,0.2);
+}
+.integration-chip {
+  width: 96px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1.2rem;
+}
+.chip-justcall { background: linear-gradient(135deg, var(--violet), #8B5BC4); }
+.chip-intercom {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--coral), var(--amber));
+}
+.integration-name { font-weight: 700; color: var(--ink); margin: 0 0 0.2em; }
+.integration-desc { font-size: 0.9rem; margin: 0; }
+
+.cta-band {
+  border-radius: 28px;
+  padding: 2.5rem 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  text-align: left;
+}
+.cta-band p {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 0;
+  max-width: 480px;
+}
+
+/* ============ Footer ============ */
+.footer {
+  border-top: 1px solid var(--line);
+  padding: 2rem 1.5rem;
+}
+.footer-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.footer-links {
+  display: flex;
+  gap: 1.75rem;
+  flex-wrap: wrap;
+}
+.footer-links a {
+  color: var(--muted);
+  font-size: 0.9rem;
+  transition: color 0.2s;
+}
+.footer-links a:hover { color: var(--ink); }
+
+/* ============ Reduced motion (PRD §4 / §6) ============ */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .mesh-soft, .mesh-band { animation: none; }
+  .tab-progress.is-running { animation: none; width: 0%; }
+  .reveal.is-visible { animation: revealUp 0.3s ease forwards; }
+  .float-card { animation: none; opacity: 1; transform: none; }
+  .btn, .trio-card, .integration-tile { transition: none; }
+}
+
+/* ============ Mobile (PRD §5) ============ */
+@media (max-width: 860px) {
+  .nav-links { display: none; }
+  .tab-panel { grid-template-columns: 1fr; }
+  .trio-cards { grid-template-columns: 1fr; }
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    justify-content: flex-start;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 0.5rem;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .hero-ctas { flex-direction: column; align-items: stretch; }
+  .hero-ctas .btn { width: 100%; }
+  .evidence-card { flex-wrap: wrap; }
+  .cta-band { flex-direction: column; align-items: flex-start; text-align: left; }
+  .trio-inner { padding: 3rem 1.5rem; }
+  .tab-card { padding: 1.75rem; }
+}
