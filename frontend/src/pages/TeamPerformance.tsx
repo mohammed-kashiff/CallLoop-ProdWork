@@ -134,7 +134,39 @@ function fmtPassRate(cell: HeatmapCell): string {
 function heatmapTitle(cell: HeatmapCell): string {
   const base = `${cell.name}: ${fmtPassRate(cell)}`
   if (cell.target == null || !Number.isFinite(cell.target)) return base
-  return `${base} (target ${fmtTarget(cell.target)})`
+  if (cell.met == null) return `${base} (target ${fmtTarget(cell.target)})`
+  return `${base} · ${cell.met ? 'met' : 'missed'} target ${fmtTarget(cell.target)}`
+}
+
+function overallTargetFor(
+  catalog: KpiCatalog | null,
+  channel: KpiChannel,
+  userId: string | null,
+): number | null {
+  if (!catalog) return null
+  const dims = channel === 'tickets' ? catalog.tickets.dimensions : catalog.calls.dimensions
+  const overall = dims.find((d) => d.id === '__overall__')
+  if (!overall) return null
+  if (userId) {
+    const ov = overall.overrides.find((o) => o.user_id === userId)
+    if (ov) return ov.target
+  }
+  return overall.org_target
+}
+
+function MetTag({
+  met,
+  target,
+}: {
+  met: boolean | null | undefined
+  target?: number | null
+}) {
+  if (target == null || met == null) return null
+  return (
+    <span className={['team-perf-met', met ? 'is-met' : 'is-missed'].join(' ')}>
+      {met ? 'Met' : 'Missed'}
+    </span>
+  )
 }
 
 function putChannel(channel: KpiChannel): 'ticket' | 'call' {
@@ -631,9 +663,16 @@ export function TeamPerformance() {
               </div>
             </div>
             <p className="panel-lede">
-              Pass count over scored findings in this window. Partial and fail sit in the
-              denominator. Click a cell with scores to open Training for that gap.
-              When a KPI is set, the cell colors against that target instead of 80 / 60.
+              Each cell is that agent's pass count in this window. When a KPI is set, the
+              cell also shows Met or Missed against that agent's effective target.
+              Click a scored cell to open Training for that gap.
+            </p>
+            <p className="team-perf-heat-legend" aria-hidden="true">
+              <span className="team-perf-met is-met">Met</span> hit the KPI
+              <span className="team-perf-met is-missed">Missed</span> below the KPI
+              <span className="team-perf-heat-swatch tone-good">green</span> met
+              <span className="team-perf-heat-swatch tone-warn">amber</span> within 20
+              <span className="team-perf-heat-swatch tone-bad">red</span> missed
             </p>
             {!heat || heat.dimensions.length === 0 ? (
               <p className="empty-copy">No scored dimensions in this window yet.</p>
@@ -662,14 +701,20 @@ export function TeamPerformance() {
                             const channel = heatChannel === 'tickets' ? 'ticket' : 'call'
                             const canPractice = cell.n > 0 && Boolean(row.user_id)
                             const href = `/training?channel=${channel}&dim=${encodeURIComponent(cell.id)}&agent=${encodeURIComponent(row.user_id)}&days=${days}`
+                            const inner = (
+                              <>
+                                <span className="team-perf-heat-rate">{fmtPassRate(cell)}</span>
+                                <MetTag met={cell.met} target={cell.target} />
+                              </>
+                            )
                             return (
                               <td key={cell.id} className={`team-perf-heat-cell tone-${tone}`}>
                                 {canPractice ? (
                                   <Link to={href} title={heatmapTitle(cell)}>
-                                    {fmtPassRate(cell)}
+                                    {inner}
                                   </Link>
                                 ) : (
-                                  fmtPassRate(cell)
+                                  inner
                                 )}
                               </td>
                             )
@@ -686,6 +731,7 @@ export function TeamPerformance() {
           <section className="team-perf-panel" aria-label={teamView ? 'Agents' : 'Your scores'}>
             <h2>{teamView ? 'Agents' : 'Your scores'}</h2>
             <p className="panel-lede">
+              Ticket avg and Call avg show Met or Missed against that agent's Overall KPI.
               Top Strength and Top Gap are the most common winning and missing dimensions
               across scored tickets and calls in this window.
             </p>
@@ -726,6 +772,8 @@ export function TeamPerformance() {
                     sortedAgents.map((row) => {
                       const mine = Boolean(row.user_id && userId && row.user_id === userId)
                       const ticketHref = mine ? '/ticket-audit-mine' : '/ticket-audit'
+                      const ticketGoal = overallTargetFor(kpis, 'tickets', row.user_id)
+                      const callGoal = overallTargetFor(kpis, 'calls', row.user_id)
                       return (
                         <tr key={row.user_id ?? 'unassigned'}>
                           <td>
@@ -738,7 +786,17 @@ export function TeamPerformance() {
                             )}
                           </td>
                           {teamView ? <td>{roleTagLabel(row.role)}</td> : null}
-                          <td>{fmtScore(row.tickets.avg_score)}</td>
+                          <td>
+                            {fmtScore(row.tickets.avg_score)}
+                            <MetTag
+                              met={
+                                row.tickets.avg_score == null || ticketGoal == null
+                                  ? null
+                                  : row.tickets.avg_score >= ticketGoal
+                              }
+                              target={ticketGoal}
+                            />
+                          </td>
                           <td>
                             {row.user_id ? (
                               <Link to={ticketHref}>{row.tickets.count}</Link>
@@ -746,7 +804,17 @@ export function TeamPerformance() {
                               row.tickets.count
                             )}
                           </td>
-                          <td>{fmtScore(row.calls.avg_score)}</td>
+                          <td>
+                            {fmtScore(row.calls.avg_score)}
+                            <MetTag
+                              met={
+                                row.calls.avg_score == null || callGoal == null
+                                  ? null
+                                  : row.calls.avg_score >= callGoal
+                              }
+                              target={callGoal}
+                            />
+                          </td>
                           <td>
                             {row.user_id ? <Link to="/audits">{row.calls.count}</Link> : row.calls.count}
                           </td>

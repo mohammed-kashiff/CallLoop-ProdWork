@@ -5000,6 +5000,69 @@ html[data-color-mode='dark'] .cc-shell {
 .team-perf-heat-cell a {
   color: inherit;
   font-weight: 650;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.team-perf-heat-rate {
+  display: block;
+}
+
+.team-perf-heat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.7rem;
+  margin: 0 0 0.65rem;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+.team-perf-heat-swatch {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: var(--ink);
+}
+
+.team-perf-heat-swatch.tone-good {
+  background: color-mix(in srgb, var(--pass) 18%, transparent);
+}
+
+.team-perf-heat-swatch.tone-warn {
+  background: color-mix(in srgb, var(--partial) 18%, transparent);
+}
+
+.team-perf-heat-swatch.tone-bad {
+  background: color-mix(in srgb, var(--fail) 18%, transparent);
+}
+
+.team-perf-met {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.team-perf-heat-cell .team-perf-met {
+  margin-left: 0;
+}
+
+.team-perf-met.is-met {
+  background: color-mix(in srgb, var(--pass) 22%, transparent);
+  color: var(--pass, #166534);
+}
+
+.team-perf-met.is-missed {
+  background: color-mix(in srgb, var(--fail) 22%, transparent);
+  color: var(--fail, #991b1b);
 }
 
 .team-perf-kpi td {
