@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Product — CallLoop</title>
+  <meta name="description" content="Everything CallLoop actually scores: Call QA, Ticket Audit, Team Performance, Training, self-serve rubrics, and roles — with evidence on every verdict." />
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <header class="nav">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo">CallLoop<span class="dot">.</span></a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/product" class="is-active">Product</a>
+        <a href="/how-it-works">How it works</a>
+        <a href="/integrations">Integrations</a>
+      </nav>
+      <div class="nav-actions">
+        <a href="https://web.call-loop.com/login" class="btn btn-ghost">Login</a>
+        <a href="mailto:hello@call-loop.com?subject=Request%20a%20demo" class="btn btn-primary">Request a demo</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="page-hero mesh-soft" aria-label="Product">
+      <div class="page-hero-inner">
+        <p class="eyebrow">Product</p>
+        <h1>Everything CallLoop actually scores, and how</h1>
+      </div>
+    </section>
+
+    <section class="stack-page" aria-label="Features">
+      <div class="stack-inner">
+        <article class="feature-block reveal">
+          <h2>Call QA</h2>
+          <p>PyAI transcription with speaker diarization, then a hybrid deterministic + LLM rubric pass. Every verdict cites a verified line from the real transcript.</p>
+        </article>
+        <article class="feature-block reveal">
+          <h2>Ticket Audit</h2>
+          <p>Ticket Audit ships with a five-dimension default rubric you can fully customize — Problem Diagnosis, Resolution Correctness, Communication Clarity, Tone &amp; Empathy, Ownership &amp; Handoff Quality — plus a deterministic Response Timeliness metric. Every agent who touched a ticket gets their own independent scorecard, not a shared number. Internal notes are captured and factored in, not discarded. Screenshots are described and placed exactly where they occurred in the thread.</p>
+        </article>
+        <article class="feature-block reveal">
+          <h2>Team Performance</h2>
+          <p>One view across both channels: org and self rollups, a per-dimension pass-rate heatmap, and assignable KPI targets with Met/Missed tracking per agent.</p>
+        </article>
+        <article class="feature-block reveal">
+          <h2>Training</h2>
+          <p>Listen / Drill / Recap — generated from each agent&rsquo;s own real, stored Top Gap findings. Coaching pulled from what actually happened, not a generic course.</p>
+        </article>
+        <article class="feature-block reveal">
+          <h2>Self-Serve Rubric Builder</h2>
+          <p>Build, version, and activate your own criteria for calls and tickets separately. Save a library, switch what&rsquo;s active — no engineering ticket required.</p>
+        </article>
+        <article class="feature-block reveal">
+          <h2>Roles</h2>
+          <p>A real Owner / Manager / Agent model. A Manager — not just the original account owner — sees the full team&rsquo;s results; an Agent sees only their own. Enforced on every route, not a presentation-layer toggle.</p>
+        </article>
+
+        <div class="trust-band trio-inner mesh-band reveal">
+          <h2>How your data stays yours</h2>
+          <p>Two independent layers of tenant isolation — application-layer org identity resolved only from a verified login, and Postgres Row-Level Security re-checking it on every query through a role that cannot bypass RLS even if the app layer had a bug. Every sensitive action — who changed a rubric, who connected an integration, who exported data — is written to a durable, non-editable activity log.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="subpage-close" aria-label="Close">
+      <div class="subpage-close-inner">
+        <div class="cta-band mesh-band reveal">
+          <p>See your own calls and tickets scored — with the receipts.</p>
+          <a href="mailto:hello@call-loop.com?subject=Request%20a%20demo" class="btn btn-primary btn-lg">Request a demo</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <a href="/" class="nav-logo">CallLoop<span class="dot">.</span></a>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="/product">Product</a>
+        <a href="mailto:hello@call-loop.com?subject=Security%20question">Security</a>
+        <a href="https://web.call-loop.com/privacy">Privacy Policy</a>
+        <a href="mailto:hello@call-loop.com">Contact</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>

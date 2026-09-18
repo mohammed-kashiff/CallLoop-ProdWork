@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How it works — CallLoop</title>
+  <meta name="description" content="From a closed call or ticket to a coached agent: connect, ingest, score, review, and coach — with evidence on every verdict." />
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <header class="nav">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo">CallLoop<span class="dot">.</span></a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/product">Product</a>
+        <a href="/how-it-works" class="is-active">How it works</a>
+        <a href="/integrations">Integrations</a>
+      </nav>
+      <div class="nav-actions">
+        <a href="https://web.call-loop.com/login" class="btn btn-ghost">Login</a>
+        <a href="mailto:hello@call-loop.com?subject=Request%20a%20demo" class="btn btn-primary">Request a demo</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="page-hero mesh-soft" aria-label="How it works">
+      <div class="page-hero-inner">
+        <p class="eyebrow">How it works</p>
+        <h1>From a closed call or ticket to a coached agent</h1>
+      </div>
+    </section>
+
+    <section class="stack-page" aria-label="Steps">
+      <div class="stack-inner">
+        <div class="step-stack">
+          <article class="step-card reveal">
+            <span class="trio-num">01</span>
+            <h2>Connect</h2>
+            <p>JustCall (call recordings) connects with an API key and secret pasted from your JustCall dashboard. Intercom (Conversations &amp; Tickets) connects via OAuth — no key to copy, just approve access.</p>
+          </article>
+          <article class="step-card reveal">
+            <span class="trio-num">02</span>
+            <h2>Ingest</h2>
+            <p>Calls are transcribed and speaker-diarized. Tickets — whether uploaded as a PDF or pulled live from Intercom — are normalized into the exact same shape before scoring, so the engine can&rsquo;t tell the two sources apart.</p>
+          </article>
+          <article class="step-card reveal">
+            <span class="trio-num">03</span>
+            <h2>Score</h2>
+            <p>Every agent who touched the case is evaluated independently against every rubric dimension. Every verdict cites the exact line it&rsquo;s based on.</p>
+          </article>
+          <article class="step-card reveal">
+            <span class="trio-num">04</span>
+            <h2>Review</h2>
+            <p>Team Performance surfaces the trend and the weak spots. Every number is clickable straight back to the real evidence behind it.</p>
+          </article>
+          <article class="step-card reveal">
+            <span class="trio-num">05</span>
+            <h2>Coach</h2>
+            <p>Training turns each agent&rsquo;s own real Top Gap findings into Listen / Drill / Recap exercises.</p>
+          </article>
+        </div>
+
+        <div class="explainer-list">
+          <article class="finding-card reveal">
+            <div class="finding-head">
+              <span>Why evidence citation matters</span>
+              <span class="chip chip-pass">PASS</span>
+            </div>
+            <p class="finding-quote">A verdict on Resolution Correctness doesn&rsquo;t just say Pass — it shows the exact line (&ldquo;I&rsquo;ve processed yours as a one-time exception&rdquo;) a manager can check against the real thread in one click.</p>
+          </article>
+          <article class="finding-card reveal">
+            <div class="finding-head">
+              <span>Why per-agent scoring matters</span>
+              <span class="chip chip-gap">GAP</span>
+            </div>
+            <p class="finding-quote">A ticket handed off mid-thread. The first agent&rsquo;s diagnosis was solid; the second agent&rsquo;s handoff dropped context and made the customer repeat themselves. One shared score would hide which agent actually needs the coaching — two independent scorecards don&rsquo;t.</p>
+          </article>
+        </div>
+
+        <div class="faq">
+          <h2 class="reveal">Honest answers</h2>
+          <details class="reveal">
+            <summary>Can a ticket be rescored?</summary>
+            <p>Off by default — Claude isn&rsquo;t perfectly deterministic, so a re-run could change a score that&rsquo;s already been acted on. An org can opt in.</p>
+          </details>
+          <details class="reveal">
+            <summary>What if we change our rubric mid-quarter?</summary>
+            <p>Rubrics are versioned — you can build a new one, activate it going forward, and old scores stay tied to the rubric that produced them.</p>
+          </details>
+          <details class="reveal">
+            <summary>Is our data isolated from other customers?</summary>
+            <p>Yes — two independent layers, described on the <a href="/product" class="text-link">Product</a> page&rsquo;s trust block.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="subpage-close" aria-label="Close">
+      <div class="subpage-close-inner">
+        <div class="cta-band mesh-band reveal">
+          <p>See your own calls and tickets scored — with the receipts.</p>
+          <a href="mailto:hello@call-loop.com?subject=Request%20a%20demo" class="btn btn-primary btn-lg">Request a demo</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <a href="/" class="nav-logo">CallLoop<span class="dot">.</span></a>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="/product">Product</a>
+        <a href="mailto:hello@call-loop.com?subject=Security%20question">Security</a>
+        <a href="https://web.call-loop.com/privacy">Privacy Policy</a>
+        <a href="mailto:hello@call-loop.com">Contact</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>
