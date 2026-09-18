@@ -2961,6 +2961,8 @@ def _justcall_poll_once() -> None:
     if justcall.host_configured() and host_oid not in ids:
         ids = list(ids) + [host_oid]
     for oid in ids:
+        if not org_features.features_for_org(oid).get("enable_justcall_integration"):
+            continue
         try:
             with org_scope(oid):
                 _sync_justcall_recent(
@@ -3004,6 +3006,11 @@ def justcall_integration_status(request: Request):
 def justcall_save_credentials(body: JustCallCredentialBody, request: Request):
     """Store this org's JustCall pair in Vault. Never echoes the secret."""
     org_id = _org(request)
+    if not org_features.features_for_org(org_id).get("enable_justcall_integration"):
+        raise HTTPException(
+            status_code=403,
+            detail="JustCall integration is not enabled for this org.",
+        )
     key_raw = (body.api_key or body.justcall_api_key or "").strip()
     secret_raw = (body.api_secret or body.justcall_api_secret or "").strip()
     if not key_raw or not secret_raw:
@@ -3065,8 +3072,14 @@ def justcall_delete_credentials(request: Request):
 
 @app.post("/api/integrations/justcall/sync")
 def justcall_sync_now(request: Request):
+    org_id = _org(request)
+    if not org_features.features_for_org(org_id).get("enable_justcall_integration"):
+        raise HTTPException(
+            status_code=403,
+            detail="JustCall integration is not enabled for this org.",
+        )
     try:
-        return _sync_justcall_recent(org_id=_org(request), host_fallback=False)
+        return _sync_justcall_recent(org_id=org_id, host_fallback=False)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except httpx.HTTPStatusError as e:
@@ -3171,6 +3184,11 @@ def intercom_connect(request: Request):
                 "Intercom is not configured on this host "
                 "(INTERCOM_CLIENT_ID/INTERCOM_CLIENT_SECRET)."
             ),
+        )
+    if not org_features.features_for_org(org_id).get("enable_intercom_integration"):
+        raise HTTPException(
+            status_code=403,
+            detail="Intercom integration is not enabled for this org.",
         )
     url = intercom_oauth.build_authorize_url(org_id)
     applog.event(log, "intercom_connect_started", org_id=org_id)
@@ -3518,20 +3536,29 @@ def _record_intercom_poll_success(org_id: str) -> None:
         )
 
 
+def _intercom_poll_once() -> None:
+    """One poll cycle over every org with Intercom credentials. Extracted
+    from the infinite loop so tests can drive it without sleeping —
+    mirrors _justcall_poll_once."""
+    try:
+        ids = org_vault.list_org_ids_for_provider(intercom_oauth.PROVIDER)
+    except Exception:  # noqa: BLE001
+        ids = []
+    for oid in ids:
+        if not org_features.features_for_org(oid).get("enable_intercom_integration"):
+            continue
+        try:
+            with org_scope(oid):
+                _sync_intercom_recent(oid)
+        except Exception as e:  # noqa: BLE001
+            _record_intercom_poll_failure(oid, e)
+        else:
+            _record_intercom_poll_success(oid)
+
+
 def _intercom_poll_loop():
     while True:
-        try:
-            ids = org_vault.list_org_ids_for_provider(intercom_oauth.PROVIDER)
-        except Exception:  # noqa: BLE001
-            ids = []
-        for oid in ids:
-            try:
-                with org_scope(oid):
-                    _sync_intercom_recent(oid)
-            except Exception as e:  # noqa: BLE001
-                _record_intercom_poll_failure(oid, e)
-            else:
-                _record_intercom_poll_success(oid)
+        _intercom_poll_once()
         time.sleep(intercom_oauth.poll_seconds())
 
 

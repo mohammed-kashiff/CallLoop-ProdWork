@@ -9,12 +9,20 @@ import { appHomePath, isAdminHost } from '../lib/adminHost'
 
 const HOME = { to: '/', label: 'Home', end: true, icon: 'home' } as const
 
-const LOOP_NAV = [
+const CHURN_FEEDBACK_NAV = [
   { to: '/feedbacks', label: 'Feedbacks', end: false, icon: 'feedbacks' },
   { to: '/churn-risk', label: 'Churn Risk', end: false, icon: 'churn' },
+] as const
+
+const INTEGRATIONS_NAV = [
   { to: '/integrations', label: 'Integrations', end: false, icon: 'integrations' },
+] as const
+
+const TRAINING_NAV = [
   { to: '/training', label: 'Training', end: false, icon: 'training' },
 ] as const
+
+const LOOP_NAV = [...CHURN_FEEDBACK_NAV, ...INTEGRATIONS_NAV, ...TRAINING_NAV] as const
 
 type NavIconName =
   | typeof HOME.icon
@@ -225,7 +233,9 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
   const auditsOpen = pathname.startsWith('/audits')
   const ticketAuditOpen = pathname.startsWith('/ticket-audit')
   const showNeighbourhood = flagEnabled(features, 'show_neighbourhood_nav')
-  const showGrowth = flagEnabled(features, 'show_growth_tools_nav')
+  const showChurnFeedback = flagEnabled(features, 'show_churn_feedback_nav')
+  const showIntegrations = flagEnabled(features, 'show_integrations_nav')
+  const showTraining = flagEnabled(features, 'show_training_nav')
   const showTicketAudit = flagEnabled(features, 'show_ticket_audit_nav')
 
   return (
@@ -454,23 +464,25 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               Activity log
             </NavLink>
           ) : null}
-          {showGrowth
-            ? LOOP_NAV.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  className={({ isActive }) =>
-                    ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
-                  }
-                  onClick={onNavigate}
-                >
-                  <NavIcon name={item.icon} />
-                  {item.label}
-                  {'soon' in item && item.soon ? <span className="nav-soon">Soon</span> : null}
-                </NavLink>
-              ))
-            : null}
+          {[
+            ...(showChurnFeedback ? CHURN_FEEDBACK_NAV : []),
+            ...(showIntegrations ? INTEGRATIONS_NAV : []),
+            ...(showTraining ? TRAINING_NAV : []),
+          ].map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) =>
+                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+              }
+              onClick={onNavigate}
+            >
+              <NavIcon name={item.icon} />
+              {item.label}
+              {'soon' in item && item.soon ? <span className="nav-soon">Soon</span> : null}
+            </NavLink>
+          ))}
           {isPlatformAdmin ? (
             <>
               <NavLink

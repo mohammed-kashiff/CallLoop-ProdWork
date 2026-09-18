@@ -139,6 +139,57 @@ def test_connect_503_when_app_not_configured(monkeypatch):
     assert r.status_code == 503
 
 
+def test_connect_403_when_integration_disabled(monkeypatch):
+    from backend.api import app
+    from tests.conftest import authorize
+
+    _configure_app(monkeypatch, client_id="ic_client_disabled")
+    _stub_vault(monkeypatch)
+    monkeypatch.setattr("backend.api.org_features.features_for_org", lambda oid: {})
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+
+    r = client.get("/api/integrations/intercom/connect", follow_redirects=False)
+    assert r.status_code == 403
+    assert "not enabled" in r.json()["detail"]
+
+
+def test_disconnect_allowed_when_integration_disabled(monkeypatch):
+    """Disabling the integration must never trap an org's own stored
+    connection — disconnect stays available regardless of the flag."""
+    from backend.api import app
+    from tests.conftest import authorize
+
+    store = _stub_vault(monkeypatch)
+    store[(DEFAULT_ORG_ID, "intercom")] = {
+        "data": {"access_token": "tok"}, "suffix": "tok1", "external_account_id": None,
+    }
+    monkeypatch.setattr("backend.api.org_features.features_for_org", lambda oid: {})
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+
+    r = client.delete("/api/integrations/intercom")
+    assert r.status_code == 200
+    assert r.json()["configured"] is False
+
+
+def test_intercom_poll_skips_orgs_with_integration_disabled(monkeypatch):
+    import backend.api as api_module
+
+    monkeypatch.setattr(
+        "backend.api.org_vault.list_org_ids_for_provider",
+        lambda provider: [DEFAULT_ORG_ID, ORG_B],
+    )
+    monkeypatch.setattr(
+        "backend.api.org_features.features_for_org",
+        lambda oid: {"enable_intercom_integration": oid != DEFAULT_ORG_ID},
+    )
+    synced: list[str] = []
+    monkeypatch.setattr("backend.api._sync_intercom_recent", lambda oid: synced.append(oid))
+    api_module._intercom_poll_once()
+    assert synced == [ORG_B]
+
+
 def test_callback_requires_no_jwt_it_is_a_public_route(monkeypatch):
     """The callback is a top-level redirect from Intercom's own domain — it
     must not 401 just because no Authorization header is attached."""

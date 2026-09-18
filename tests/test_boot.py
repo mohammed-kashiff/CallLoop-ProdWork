@@ -123,7 +123,9 @@ def test_me_keeps_existing_keys_and_adds_features(monkeypatch):
         lambda org_id: {
             "show_usage_bar": True,
             "show_neighbourhood_nav": True,
-            "show_growth_tools_nav": True,
+            "show_churn_feedback_nav": True,
+            "show_integrations_nav": True,
+            "show_training_nav": True,
             "show_powered_by_pyai": True,
             "show_billed_usage_panel": True,
         },

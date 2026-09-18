@@ -29,6 +29,27 @@ Real Ticket QA Rubric, Roles, and Per-Agent Ticket Audit Rebuild epics
 this flag was gating on are shipped. A platform admin can still turn it
 off per org from Command Center if a specific team shouldn't see it yet.
 
+**2026-09-18: show_growth_tools_nav split into three flags.** It used to
+gate one bundled sidebar block (Feedbacks, Churn Risk, Integrations,
+Training) under a name that described none of them precisely.
+show_churn_feedback_nav is its replacement for Feedbacks + Churn Risk;
+show_integrations_nav and show_training_nav are new, separate keys so
+each flag's name actually says what it controls. The three orgs that
+had an explicit (all `true`) row under the old key were migrated to
+show_churn_feedback_nav directly in the DB — see the migration note in
+this module's git history; no Alembic migration needed since
+feature_key is a free-text column.
+
+enable_justcall_integration / enable_intercom_integration gate the
+JustCall and Intercom integrations independently per org: the connect
+routes, the manual sync action, and the background poller all check
+this before running (backend/api.py). On by default so no currently
+connected org loses their integration on deploy. New orgs created via
+signup (auth.ensure_membership) get an explicit
+enable_justcall_integration=false row at creation time — JustCall
+starts opted-out for new signups; Intercom does not get this special
+case and stays on the coded default.
+
 org_id is the JWT tenant only. Do not read it from the request body here.
 """
 
@@ -83,9 +104,21 @@ FEATURE_DEFINITIONS: dict[str, FeatureDefinition] = {
         "risk": "low",
         "default_enabled": True,
     },
-    "show_growth_tools_nav": {
-        "label": "Growth tools nav",
-        "description": "Shows the Growth tools nav entry.",
+    "show_churn_feedback_nav": {
+        "label": "Churn risk & feedback nav",
+        "description": "Shows the Churn Risk and Feedbacks nav entries.",
+        "risk": "low",
+        "default_enabled": True,
+    },
+    "show_integrations_nav": {
+        "label": "Integrations nav",
+        "description": "Shows the Integrations nav entry.",
+        "risk": "low",
+        "default_enabled": True,
+    },
+    "show_training_nav": {
+        "label": "Training nav",
+        "description": "Shows the Training nav entry.",
         "risk": "low",
         "default_enabled": True,
     },
@@ -152,6 +185,25 @@ FEATURE_DEFINITIONS: dict[str, FeatureDefinition] = {
         "risk": "danger",
         "default_enabled": False,
     },
+    "enable_justcall_integration": {
+        "label": "JustCall integration",
+        "description": (
+            "Lets this org connect JustCall, sync calls, and run the "
+            "background JustCall poller. On by default for existing orgs; "
+            "new orgs created via signup start with this off."
+        ),
+        "risk": "medium",
+        "default_enabled": True,
+    },
+    "enable_intercom_integration": {
+        "label": "Intercom integration",
+        "description": (
+            "Lets this org connect Intercom, and run the background "
+            "Intercom poller. On by default."
+        ),
+        "risk": "medium",
+        "default_enabled": True,
+    },
 }
 
 # Trial-run dashboard switches. Insert other keys without a schema change —
@@ -163,6 +215,29 @@ FEATURE_KEYS = tuple(FEATURE_DEFINITIONS.keys())
 DEFAULT_OFF_KEYS = frozenset(
     key for key, defn in FEATURE_DEFINITIONS.items() if not defn["default_enabled"]
 )
+
+
+def seed_new_org_defaults(conn, org_id: str) -> None:
+    """Called once, from auth.ensure_membership's org-creation path, on the
+    same connection/transaction that just inserted the row into `orgs`.
+
+    Writes an explicit override row rather than changing a coded default,
+    so this only affects orgs created from here on — every existing org
+    keeps reading the JustCall default (on) via the normal missing-row
+    rule in features_for_org(). Not routed through set_feature(): this is
+    the org's starting state, not an admin decision, so it should not
+    appear in org_features_history as a toggle."""
+    oid = parse_org_id(org_id)
+    if not oid:
+        return
+    conn.execute(
+        """
+        INSERT INTO org_features (org_id, feature_key, enabled, updated_at)
+        VALUES (%s, %s, %s, now())
+        ON CONFLICT (org_id, feature_key) DO NOTHING
+        """,
+        (oid, "enable_justcall_integration", False),
+    )
 
 
 def feature_definitions() -> list[dict]:

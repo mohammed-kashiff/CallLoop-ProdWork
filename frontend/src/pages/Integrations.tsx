@@ -3,8 +3,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { JustCallAgentIdentityMapping } from '../components/JustCallAgentIdentityMapping'
 import { SketchWallpaper } from '../components/SketchWallpaper'
 import { useAudit } from '../context/AuditContext'
+import { useAuth } from '../context/AuthContext'
 import { apiFetch, readError } from '../lib/api'
 import { capFirst, formatTime, scoreHue } from '../lib/format'
+import { flagEnabled } from '../lib/features'
 import type { CallListItem } from '../types'
 
 interface JustCallStatus {
@@ -26,6 +28,9 @@ const INTERCOM_AUTHORIZE_PREFIX = 'https://app.intercom.com/'
 
 export function Integrations() {
   const navigate = useNavigate()
+  const { features } = useAuth()
+  const justcallEnabled = flagEnabled(features, 'enable_justcall_integration')
+  const intercomEnabled = flagEnabled(features, 'enable_intercom_integration')
   const [searchParams, setSearchParams] = useSearchParams()
   const { selectCall, refreshCalls } = useAudit()
   const [status, setStatus] = useState<JustCallStatus | null>(null)
@@ -251,7 +256,7 @@ export function Integrations() {
         <button
           type="button"
           className="start-btn"
-          disabled={syncing || !connected}
+          disabled={syncing || !connected || !justcallEnabled}
           onClick={() => void onSync()}
         >
           {syncing ? 'Syncing…' : 'Sync now'}
@@ -265,7 +270,7 @@ export function Integrations() {
       )}
       {note && !error ? <p className="panel-lede">{note}</p> : null}
 
-      {intercom?.app_configured ? (
+      {intercom?.app_configured && intercomEnabled ? (
         <section className="integrations-status" aria-label="Intercom connection">
           <div className="keys-row">
             <p className="pyai-kicker">Intercom</p>
@@ -305,73 +310,125 @@ export function Integrations() {
             </div>
           </div>
         </section>
+      ) : intercom?.app_configured && !intercomEnabled ? (
+        <section className="integrations-status" aria-label="Intercom connection">
+          <div className="keys-row">
+            <p className="pyai-kicker">Intercom</p>
+            <span className="keys-chip is-pending">Disabled</span>
+          </div>
+          <h2>Intercom is turned off for this organization</h2>
+          <p className="panel-lede">
+            {intercomConnected
+              ? 'Contact CallLoop to turn it back on. Your existing connection is still stored — disconnect below to remove it.'
+              : 'Contact CallLoop to enable Intercom for your organization.'}
+          </p>
+          {intercomConnected ? (
+            <div className="integrations-actions">
+              <button
+                type="button"
+                className="ghost-btn"
+                disabled={removingIntercom}
+                onClick={() => void onDisconnectIntercom()}
+              >
+                {removingIntercom ? 'Removing…' : 'Disconnect'}
+              </button>
+            </div>
+          ) : null}
+        </section>
       ) : null}
 
-      <section className="integrations-status" aria-label="JustCall connection">
-        <div className="keys-row">
-          <p className="pyai-kicker">JustCall</p>
-          <span className={['keys-chip', connected ? 'is-live' : 'is-pending'].join(' ')}>
-            {connected ? 'Connected' : 'Not connected'}
-          </span>
-        </div>
-        <h2>Completed calls are pulled, transcribed, and scored automatically</h2>
-        <p className="panel-lede">
-          {connected
-            ? status?.polling
-              ? `Connected${status.key_suffix ? ` · key ending ${status.key_suffix}` : ''}. New calls are picked up every ${interval}s. Click Sync now to pull immediately.`
-              : `Connected${status?.key_suffix ? ` · key ending ${status.key_suffix}` : ''}. Click Sync now to pull completed calls.`
-            : 'Get the API key and API secret from JustCall → Settings → APIs and Webhooks, paste them here, then click Save. They are stored encrypted for this organization only.'}
-        </p>
-        <p className="panel-lede">
-          After you save, click <strong>Sync now</strong>. Finished calls keep coming in on
-          their own after that. Disconnect removes this org&apos;s credentials.
-        </p>
+      {justcallEnabled ? (
+        <section className="integrations-status" aria-label="JustCall connection">
+          <div className="keys-row">
+            <p className="pyai-kicker">JustCall</p>
+            <span className={['keys-chip', connected ? 'is-live' : 'is-pending'].join(' ')}>
+              {connected ? 'Connected' : 'Not connected'}
+            </span>
+          </div>
+          <h2>Completed calls are pulled, transcribed, and scored automatically</h2>
+          <p className="panel-lede">
+            {connected
+              ? status?.polling
+                ? `Connected${status.key_suffix ? ` · key ending ${status.key_suffix}` : ''}. New calls are picked up every ${interval}s. Click Sync now to pull immediately.`
+                : `Connected${status?.key_suffix ? ` · key ending ${status.key_suffix}` : ''}. Click Sync now to pull completed calls.`
+              : 'Get the API key and API secret from JustCall → Settings → APIs and Webhooks, paste them here, then click Save. They are stored encrypted for this organization only.'}
+          </p>
+          <p className="panel-lede">
+            After you save, click <strong>Sync now</strong>. Finished calls keep coming in on
+            their own after that. Disconnect removes this org&apos;s credentials.
+          </p>
 
-        <div className="integrations-fields">
-          <label className="keys-field">
-            <span>API key</span>
-            <input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={connected ? 'Paste a new key to replace' : 'JustCall API key'}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-          </label>
-          <label className="keys-field">
-            <span>API secret</span>
-            <input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={connected ? 'Paste a new secret to replace' : 'JustCall API secret'}
-              value={apiSecret}
-              onChange={(e) => setApiSecret(e.target.value)}
-            />
-          </label>
-          <div className="integrations-actions">
-            <button
-              type="button"
-              className="ghost-btn"
-              disabled={saving || removing}
-              onClick={() => void onSave()}
-            >
-              {saving ? 'Saving…' : connected ? 'Replace credentials' : 'Save and connect'}
-            </button>
-            {connected ? (
+          <div className="integrations-fields">
+            <label className="keys-field">
+              <span>API key</span>
+              <input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={connected ? 'Paste a new key to replace' : 'JustCall API key'}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+              />
+            </label>
+            <label className="keys-field">
+              <span>API secret</span>
+              <input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={connected ? 'Paste a new secret to replace' : 'JustCall API secret'}
+                value={apiSecret}
+                onChange={(e) => setApiSecret(e.target.value)}
+              />
+            </label>
+            <div className="integrations-actions">
               <button
                 type="button"
                 className="ghost-btn"
                 disabled={saving || removing}
+                onClick={() => void onSave()}
+              >
+                {saving ? 'Saving…' : connected ? 'Replace credentials' : 'Save and connect'}
+              </button>
+              {connected ? (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  disabled={saving || removing}
+                  onClick={() => void onDisconnect()}
+                >
+                  {removing ? 'Removing…' : 'Disconnect'}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </section>
+      ) : (
+        <section className="integrations-status" aria-label="JustCall connection">
+          <div className="keys-row">
+            <p className="pyai-kicker">JustCall</p>
+            <span className="keys-chip is-pending">Disabled</span>
+          </div>
+          <h2>JustCall is turned off for this organization</h2>
+          <p className="panel-lede">
+            {connected
+              ? 'Contact CallLoop to turn it back on. Your existing connection is still stored — disconnect below to remove it.'
+              : 'Contact CallLoop to enable JustCall for your organization.'}
+          </p>
+          {connected ? (
+            <div className="integrations-actions">
+              <button
+                type="button"
+                className="ghost-btn"
+                disabled={removing}
                 onClick={() => void onDisconnect()}
               >
                 {removing ? 'Removing…' : 'Disconnect'}
               </button>
-            ) : null}
-          </div>
-        </div>
-      </section>
+            </div>
+          ) : null}
+        </section>
+      )}
 
       <JustCallAgentIdentityMapping />
 

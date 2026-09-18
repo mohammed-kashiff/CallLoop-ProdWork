@@ -170,6 +170,75 @@ def test_save_update_delete_justcall_via_vault(monkeypatch):
     assert after.json().get("key_suffix") in (None, "")
 
 
+def test_save_justcall_403_when_integration_disabled(monkeypatch):
+    from backend.api import app
+    from tests.conftest import authorize
+
+    _stub_vault(monkeypatch)
+    monkeypatch.setattr("backend.api.org_features.features_for_org", lambda oid: {})
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.post(
+        "/api/integrations/justcall",
+        json={"api_key": _jc_key("qqqq"), "api_secret": _jc_secret("rrrr")},
+    )
+    assert r.status_code == 403
+    assert "not enabled" in r.json()["detail"]
+
+
+def test_sync_now_403_when_integration_disabled(monkeypatch):
+    from backend.api import app
+    from tests.conftest import authorize
+
+    store = _stub_vault(monkeypatch)
+    store[DEFAULT_ORG_ID] = {
+        "api_key": _jc_key("s1"), "api_secret": _jc_secret("s2"), "suffix": "s1s1",
+    }
+    monkeypatch.setattr("backend.api.org_features.features_for_org", lambda oid: {})
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.post("/api/integrations/justcall/sync")
+    assert r.status_code == 403
+    assert "not enabled" in r.json()["detail"]
+
+
+def test_disconnect_justcall_allowed_when_integration_disabled(monkeypatch):
+    """Disabling the integration must never trap an org's own stored
+    credentials — disconnect stays available regardless of the flag."""
+    from backend.api import app
+    from tests.conftest import authorize
+
+    store = _stub_vault(monkeypatch)
+    store[DEFAULT_ORG_ID] = {
+        "api_key": _jc_key("t1"), "api_secret": _jc_secret("t2"), "suffix": "t1t1",
+    }
+    monkeypatch.setattr("backend.api.org_features.features_for_org", lambda oid: {})
+    client = TestClient(app)
+    authorize(client, monkeypatch)
+    r = client.delete("/api/integrations/justcall")
+    assert r.status_code == 200
+    assert r.json()["configured"] is False
+
+
+def test_justcall_poll_skips_orgs_with_integration_disabled(monkeypatch):
+    import backend.api as api_module
+
+    monkeypatch.setattr("backend.api.org_vault.list_org_ids", lambda: [DEFAULT_ORG_ID, ORG_B])
+    monkeypatch.setattr("backend.api.integration_org_id", lambda: "host-org")
+    monkeypatch.setattr("backend.justcall.host_configured", lambda: False)
+    monkeypatch.setattr(
+        "backend.api.org_features.features_for_org",
+        lambda oid: {"enable_justcall_integration": oid != DEFAULT_ORG_ID},
+    )
+    synced: list[str] = []
+    monkeypatch.setattr(
+        "backend.api._sync_justcall_recent",
+        lambda org_id, host_fallback=False: synced.append(org_id),
+    )
+    api_module._justcall_poll_once()
+    assert synced == [ORG_B]
+
+
 def test_post_api_keys_rejects_justcall(monkeypatch):
     from backend.api import app
     from tests.conftest import authorize

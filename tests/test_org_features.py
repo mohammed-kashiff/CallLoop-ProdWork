@@ -106,10 +106,14 @@ def test_missing_row_is_enabled(monkeypatch):
         flags = features_for_org(DEFAULT_ORG_ID)
     assert flags["show_usage_bar"] is True
     assert flags["show_neighbourhood_nav"] is True
-    assert flags["show_growth_tools_nav"] is True
+    assert flags["show_churn_feedback_nav"] is True
+    assert flags["show_integrations_nav"] is True
+    assert flags["show_training_nav"] is True
     assert flags["show_powered_by_pyai"] is True
     assert flags["show_billed_usage_panel"] is True
     assert flags["use_selfhosted_transcription"] is False
+    assert flags["enable_justcall_integration"] is True
+    assert flags["enable_intercom_integration"] is True
     assert any("org_id = %s" in s for s in conn.sql)
 
 
@@ -306,7 +310,9 @@ def test_me_reports_disabled_flag(monkeypatch):
         lambda org_id: {
             "show_usage_bar": False,
             "show_neighbourhood_nav": True,
-            "show_growth_tools_nav": True,
+            "show_churn_feedback_nav": True,
+            "show_integrations_nav": True,
+            "show_training_nav": True,
             "show_powered_by_pyai": True,
             "show_billed_usage_panel": True,
         },

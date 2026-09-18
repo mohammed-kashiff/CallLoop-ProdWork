@@ -27,6 +27,7 @@ class _FakeConn:
         self.existing = list(existing or [])
         self.inserted_orgs: list = list(orgs or [])
         self.inserted_members: list = []
+        self.inserted_features: list = []
 
     def execute(self, sql, params=None):
         norm = " ".join(str(sql).split()).upper()
@@ -60,6 +61,9 @@ class _FakeConn:
             self.existing.append(
                 {"org_id": params[0], "user_id": params[1], "role": role}
             )
+            return _Row(None)
+        if "INSERT INTO ORG_FEATURES" in norm:
+            self.inserted_features.append(params)
             return _Row(None)
         return _Row(None)
 
@@ -199,7 +203,9 @@ def test_me_returns_membership_from_jwt(monkeypatch):
         lambda org_id: {
             "show_usage_bar": True,
             "show_neighbourhood_nav": True,
-            "show_growth_tools_nav": True,
+            "show_churn_feedback_nav": True,
+            "show_integrations_nav": True,
+            "show_training_nav": True,
             "show_powered_by_pyai": True,
             "show_billed_usage_panel": True,
         },
@@ -289,6 +295,33 @@ def test_ensure_membership_domain_match(monkeypatch):
     assert len(conn.inserted_orgs) == 1
     assert conn.inserted_members[0][2] == "owner"
     assert conn.inserted_members[1][2] == "member"
+
+
+def test_ensure_membership_seeds_justcall_off_for_new_org(monkeypatch):
+    """New signups start with JustCall opted out; existing orgs (no row
+    written here) keep reading the coded default (on) via the normal
+    missing-row rule in org_features.features_for_org()."""
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ensure_membership(str(uuid.uuid4()), "ada@acme.com")
+
+    assert len(conn.inserted_features) == 1
+    org_id, feature_key, enabled = conn.inserted_features[0][:3]
+    assert org_id == conn.inserted_orgs[0][0]
+    assert feature_key == "enable_justcall_integration"
+    assert enabled is False
+
+
+def test_ensure_membership_does_not_reseed_for_existing_member(monkeypatch):
+    """The org_features seed only runs on the branch that actually creates
+    a new org (created=True) — a second member joining an existing org
+    must not write another row."""
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ensure_membership(str(uuid.uuid4()), "ada@acme.com")
+        ensure_membership(str(uuid.uuid4()), "lin@acme.com")
+
+    assert len(conn.inserted_features) == 1
 
 
 def test_ensure_membership_blocklist_bypass(monkeypatch):

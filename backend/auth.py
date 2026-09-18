@@ -22,6 +22,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from . import applog
 from . import audit_store
 from . import db
+from . import org_features
 from .config import cors_origins
 from .org_ids import (
     DEFAULT_ORG_ID,
@@ -294,6 +295,7 @@ def ensure_membership(
             audit_store.seed_legacy_rubric(
                 conn, org_id=org_id, rubric_id=str(uuid.uuid4()),
             )
+            org_features.seed_new_org_defaults(conn, org_id)
 
         db.apply_tenant_gucs(conn, org_id=org_id, user_id=uid)
         _ensure_placeholder_rubric(conn, org_id=org_id, user_id=uid)
