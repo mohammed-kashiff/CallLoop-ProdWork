@@ -19,6 +19,7 @@ import { Feedbacks } from './pages/Feedbacks'
 import { FlaggedForReview } from './pages/FlaggedForReview'
 import { Home } from './pages/Home'
 import { Integrations } from './pages/Integrations'
+import { KpiTargets } from './pages/KpiTargets'
 import { Login } from './pages/Login'
 import { Neighbourhood } from './pages/Neighbourhood'
 import { PlatformAdmins } from './pages/PlatformAdmins'
@@ -84,6 +85,7 @@ function App() {
                     <Route path="ticket-audit-mine" element={<MyTicketContributions />} />
                     <Route path="ticket-rubric-builder" element={<TicketRubricBuilder />} />
                     <Route path="profile" element={<Profile />} />
+                    <Route path="kpi-targets" element={<KpiTargets />} />
                     <Route path="pyai" element={<Pyai />} />
                     <Route path="*" element={<Navigate to={home} replace />} />
                   </Route>

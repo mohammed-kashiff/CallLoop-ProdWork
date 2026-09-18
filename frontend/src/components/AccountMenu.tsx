@@ -103,6 +103,14 @@ export function AccountMenu() {
             >
               Rubric
             </button>
+            <Link
+              role="menuitem"
+              to="/kpi-targets"
+              className="account-menu-item"
+              onClick={close}
+            >
+              KPI targets
+            </Link>
             <button
               type="button"
               role="menuitem"
