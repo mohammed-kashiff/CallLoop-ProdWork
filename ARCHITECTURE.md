@@ -283,7 +283,7 @@ of orgs/users now that real signups exist.
 | Error tracking | **Sentry** (`sentry-sdk[fastapi]`) | 5xx only, scrubbed, org-tagged |
 | Frontend | **React 19 + TypeScript + Vite** | `frontend/` |
 | Frontend auth/data client | `@supabase/supabase-js` | |
-| Hosting | **Render** | `callloop-prodwork` (API) + static site `callloop-web` (customer `call-loop.com` and admin `commandcenter.call-loop.com`, AC-12 shared-build) |
+| Hosting | **Render** | `callloop-prodwork` (API) + static site `callloop-web` (customer `web.call-loop.com` and admin `commandcenter.call-loop.com`, AC-12 shared-build — **2026-09-18**: platform moved off bare `call-loop.com`, which now belongs to a separate, not-yet-built marketing site; `call-loop.com`/`www.call-loop.com` stay on `callloop-web`'s custom domains and in `CORS_ORIGINS` only for a transition window) |
 | CI | **GitHub Actions** | Real Postgres container; migrate → downgrade → upgrade → pytest |
 
 **External APIs this product depends on:**

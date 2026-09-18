@@ -118,7 +118,7 @@ export function PlatformAdmins() {
 
   if (!isAdminHost()) {
     // Command Center pages live only at commandcenter.call-loop.com, never
-    // call-loop.com — even for an actual platform admin. Full cross-origin
+    // web.call-loop.com — even for an actual platform admin. Full cross-origin
     // navigation (not a router Link) since this is a different host.
     if (typeof window !== 'undefined') {
       window.location.href = `${ADMIN_ORIGIN}/platform-admins`

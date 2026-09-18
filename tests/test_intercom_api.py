@@ -21,7 +21,7 @@ def _assert_intercom_land(r, *, connected: bool) -> None:
     loc = r.headers["location"]
     expected = CONNECTED_LANDING if connected else ERROR_LANDING
     assert loc == expected
-    assert loc.startswith("https://call-loop.com/")
+    assert loc.startswith(f"{CUSTOMER_ORIGIN}/")
     assert not loc.startswith("/")
     assert "onrender.com" not in loc
     assert "localhost" not in loc
@@ -231,7 +231,7 @@ def test_callback_redirect_ignores_the_request_host(monkeypatch):
     )
     _assert_intercom_land(r, connected=True)
     assert "onrender.com" not in r.headers["location"]
-    assert r.headers["location"].startswith("https://call-loop.com/")
+    assert r.headers["location"].startswith(f"{CUSTOMER_ORIGIN}/")
 
 
 def test_callback_stores_the_token_under_the_org_id_from_state(monkeypatch):

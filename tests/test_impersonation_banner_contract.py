@@ -1,7 +1,7 @@
 """AC-34 Members-tab "Log in as" must use the same customer-origin handoff
 the existing ImpersonationBanner already consumes (AC-18). Verification
 lock, not a new banner: if the Members button drifts to a different query
-shape or opens Command Center instead of call-loop.com, the real banner
+shape or opens Command Center instead of web.call-loop.com, the real banner
 would not show."""
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def test_members_tab_log_in_as_uses_the_same_handoff_the_banner_reads():
     assert "adminHost ? null : <ImpersonationBanner />" in layout
 
     host = (FRONTEND / "lib" / "adminHost.ts").read_text(encoding="utf-8")
-    assert "CUSTOMER_ORIGIN = 'https://call-loop.com'" in host
+    assert "CUSTOMER_ORIGIN = 'https://web.call-loop.com'" in host
 
 
 def test_sign_out_clears_the_impersonation_hint():

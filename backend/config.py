@@ -26,7 +26,7 @@ ADMIN_ORIGIN = "https://commandcenter.call-loop.com"
 # OAuth callback landing page) must target this explicitly, never a
 # relative path or anything derived from the current request. Keep in
 # sync with frontend CUSTOMER_ORIGIN in frontend/src/lib/adminHost.ts.
-CUSTOMER_ORIGIN = "https://call-loop.com"
+CUSTOMER_ORIGIN = "https://web.call-loop.com"
 
 
 def load_env() -> str:
