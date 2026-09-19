@@ -60,12 +60,23 @@ Optional: `INTERCOM_POLL_SECONDS` (default 300). Not required for a new app.
 
 ### Set on the new Intercom app (Developer Hub)
 
-Copy what the trial app had. Typical production values (use the real API host):
+Copy what the trial app had, **except permissions — trim those** (see below). Typical production values (use the real API host):
 
-- OAuth **on**, scopes only what ingest needs (conversations / tickets / contacts as used). Extra unused scopes often fail review.
+- OAuth **on**
 - Redirect URL: `https://<API_HOST>/api/integrations/intercom/callback`
 - Webhook URL: `https://<API_HOST>/api/integrations/intercom/webhook`
 - Topics at least: `conversation.admin.closed`, `ticket.resolved`, `ticket.closed`, `app.uninstalled`
+
+#### Trim permissions before submitting ([IN-29](https://calloop.atlassian.net/browse/IN-29))
+
+The trial app has every People / Conversation / Ticket / Workspace-data permission checked — full read+write across all four. The code only ever reads Conversations and Tickets (`backend/intercom_client.py`: `get_conversation`, `search_closed_conversations`, `get_ticket`, `search_closed_tickets`; `backend/intercom_oauth.py`'s `GET /me` for workspace identity on connect). Nothing calls People or Workspace-data, and nothing writes.
+
+On the new app, under Authentication → Permissions:
+
+- Keep: Conversations (read), Tickets (read)
+- Uncheck: write access on both, plus the full People and Workspace-data categories
+
+This is a dashboard-only change — `build_authorize_url()` doesn't send a `scope` param, so Intercom grants exactly whatever's checked here. Over-broad scope requests are a common reason review gets bounced, so do this before submitting, not after. Confirm no org besides CallLoop's own is connected before flipping it, so no live connection breaks.
 
 No new CallLoop tables. No Connect-button rewrite. Still **one** CallLoop app, many customer workspaces.
 
@@ -85,7 +96,7 @@ Customers use the same Integrations button. You do not join their workspace. You
 
 Approval is for the app you submitted. Recreating on another Intercom account later is a **new** app and needs its **own** review.
 
-For review, Intercom will want: a short description, a **test CallLoop login**, and a video of Connect → use → disconnect. Show the `client_id` and `state` on the authorize URL. Trim scopes first.
+For review, Intercom will want: a short description, a **test CallLoop login**, and a video of Connect → use → disconnect. Show the `client_id` and `state` on the authorize URL. Trim permissions first ([IN-29](https://calloop.atlassian.net/browse/IN-29) — see above).
 
 Keep a separate `[Dev]` / `[Staging]` Intercom app for experiments so production stays frozen. Scope or OAuth changes on the live app need re-approval.
 
