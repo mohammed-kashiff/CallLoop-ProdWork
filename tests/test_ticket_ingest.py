@@ -515,6 +515,12 @@ def test_ingest_ticket_pdf_records_parse_and_agent_resolve_on_success(monkeypatc
     assert ("parse", "succeeded") in stages
     assert ("agent_resolve", "succeeded") in stages
     assert not any(s == "image_describe" for s, _st, _d in events)
+    parse_started = next(d for s, st, d in events if s == "parse" and st == "started")
+    assert parse_started["apis"] == [{
+        "method": "POST", "endpoint": "/api/tickets/upload",
+    }]
+    agent_resolve = next(d for s, st, d in events if s == "agent_resolve")
+    assert "apis" not in agent_resolve
 
 
 def test_ingest_ticket_pdf_with_an_image_writes_message_and_asset_rows(monkeypatch):

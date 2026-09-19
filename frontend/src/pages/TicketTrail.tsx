@@ -37,6 +37,29 @@ function agentIdFromDetail(detail: Record<string, unknown> | null): string | nul
   return typeof raw === 'string' && raw ? raw : null
 }
 
+type ApiCall = { method: string; endpoint: string }
+
+function apisFromDetail(detail: Record<string, unknown> | null): ApiCall[] {
+  const raw = detail?.apis
+  if (!Array.isArray(raw)) return []
+  const out: ApiCall[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const rec = item as Record<string, unknown>
+    const method = typeof rec.method === 'string' ? rec.method.trim().toUpperCase() : ''
+    const endpoint = typeof rec.endpoint === 'string' ? rec.endpoint.trim() : ''
+    if (method && endpoint) out.push({ method, endpoint })
+  }
+  return out
+}
+
+function detailWithoutApis(detail: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!detail) return null
+  const rest = { ...detail }
+  delete rest.apis
+  return Object.keys(rest).length ? rest : null
+}
+
 export function TicketTrail() {
   const { isPlatformAdmin } = useAuth()
   const { ticketId } = useParams()
@@ -112,6 +135,8 @@ export function TicketTrail() {
             <ol className="call-trail-list">
               {data.events.map((e, i) => {
                 const agentId = agentIdFromDetail(e.detail)
+                const apis = apisFromDetail(e.detail)
+                const extra = detailWithoutApis(e.detail)
                 return (
                   <li key={i} className={`call-trail-item is-${e.status}`}>
                     <span className="call-trail-icon" aria-hidden="true">
@@ -128,9 +153,21 @@ export function TicketTrail() {
                         <p className="admin-provision-hint">Agent {agentId}</p>
                       ) : null}
                       {e.error ? <p className="call-trail-error">{e.error}</p> : null}
-                      {e.detail ? (
+                      {apis.length ? (
+                        <ul className="call-trail-apis">
+                          {apis.map((api, j) => (
+                            <li key={`${api.method}-${api.endpoint}-${j}`} className="call-trail-api">
+                              <span className="call-trail-api-method">{api.method}</span>
+                              <code className="call-trail-api-endpoint">{api.endpoint}</code>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="call-trail-api-none">No API recorded for this step</p>
+                      )}
+                      {extra ? (
                         <pre className="call-trail-detail">
-                          {JSON.stringify(e.detail, null, 2)}
+                          {JSON.stringify(extra, null, 2)}
                         </pre>
                       ) : null}
                     </div>

@@ -607,32 +607,53 @@ def _ingest_intercom_object(org_id: str, kind: str, obj_id: str) -> str:
 
     ticket_id = ticket_ingest.create_ticket(org_id, source="intercom_api", external_id=ext_id)
     ticket_ingest.set_ticket_status(ticket_id, org_id, "processing")
+    fetch_apis = ticket_trail.intercom_fetch_apis(kind, linked)
+    parse_detail = ticket_trail.with_apis({"source": "intercom_api"}, *fetch_apis)
     ticket_trail.record(
         ticket_id, org_id, "parse", "started",
-        detail={"source": "intercom_api"},
+        detail=parse_detail,
     )
     try:
         members: list[tuple[str, str, dict]] = [(kind, obj_id, seed_obj)]
         try:
             for member_kind, member_id in linked:
                 members.append((member_kind, member_id, _fetch_member(access_token, member_kind, member_id)))
+        except Exception as e:
+            ticket_trail.record(
+                ticket_id, org_id, "parse", "failed",
+                detail=parse_detail,
+                error=applog.safe_exception_text(e),
+            )
+            raise
+        try:
             turns = _merge_turns([_normalize_member(k, o) for k, _, o in members])
         except Exception as e:
             ticket_trail.record(
                 ticket_id, org_id, "parse", "failed",
-                detail={"source": "intercom_api"},
+                detail=ticket_trail.with_apis(
+                    {"source": "intercom_api"},
+                    *fetch_apis,
+                    ticket_trail.API_INTERCOM_ATTACHMENT,
+                    ticket_trail.API_ANTHROPIC_MESSAGES,
+                ),
                 error=applog.safe_exception_text(e),
             )
             raise
         ticket_trail.record(
             ticket_id, org_id, "parse", "succeeded",
-            detail={"source": "intercom_api", "turns": len(turns)},
+            detail=ticket_trail.with_apis(
+                {"source": "intercom_api", "turns": len(turns)}, *fetch_apis,
+            ),
         )
         n_images = sum(1 for t in turns if t.get("is_image"))
         if n_images:
             ticket_trail.record(
                 ticket_id, org_id, "image_describe", "succeeded",
-                detail={"count": n_images},
+                detail=ticket_trail.with_apis(
+                    {"count": n_images},
+                    ticket_trail.API_INTERCOM_ATTACHMENT,
+                    ticket_trail.API_ANTHROPIC_MESSAGES,
+                ),
             )
         _resolve_agent_identities(org_id, turns)
         ticket_trail.record(

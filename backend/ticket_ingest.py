@@ -331,8 +331,9 @@ def ingest_ticket_pdf(org_id: str, pdf_bytes: bytes, *, source: str = "pdf_uploa
     """
     ticket_id = create_ticket(org_id, source=source)
     set_ticket_status(ticket_id, org_id, "processing")
+    parse_detail = ticket_trail.with_apis({"source": source}, ticket_trail.API_TICKET_UPLOAD)
     ticket_trail.record(
-        ticket_id, org_id, "parse", "started", detail={"source": source},
+        ticket_id, org_id, "parse", "started", detail=parse_detail,
     )
     try:
         try:
@@ -347,21 +348,26 @@ def ingest_ticket_pdf(org_id: str, pdf_bytes: bytes, *, source: str = "pdf_uploa
         except Exception as e:
             ticket_trail.record(
                 ticket_id, org_id, "parse", "failed",
-                detail={"source": source},
+                detail=parse_detail,
                 error=applog.safe_exception_text(e),
             )
             raise
         ticket_trail.record(
             ticket_id, org_id, "parse", "succeeded",
-            detail={"source": source, "turns": len(turns)},
+            detail=ticket_trail.with_apis(
+                {"source": source, "turns": len(turns)}, ticket_trail.API_TICKET_UPLOAD,
+            ),
         )
 
         with tracing.span("task", "ticket.extract"):
             images = ticket_image_extraction.extract_images(pdf_bytes)
             if images:
+                vision_detail = ticket_trail.with_apis(
+                    {"count": len(images)}, ticket_trail.API_ANTHROPIC_MESSAGES,
+                )
                 ticket_trail.record(
                     ticket_id, org_id, "image_describe", "started",
-                    detail={"count": len(images)},
+                    detail=vision_detail,
                 )
                 try:
                     descriptions = [
@@ -371,13 +377,13 @@ def ingest_ticket_pdf(org_id: str, pdf_bytes: bytes, *, source: str = "pdf_uploa
                 except Exception as e:
                     ticket_trail.record(
                         ticket_id, org_id, "image_describe", "failed",
-                        detail={"count": len(images)},
+                        detail=vision_detail,
                         error=applog.safe_exception_text(e),
                     )
                     raise
                 ticket_trail.record(
                     ticket_id, org_id, "image_describe", "succeeded",
-                    detail={"count": len(images)},
+                    detail=vision_detail,
                 )
             else:
                 descriptions = []

@@ -3878,6 +3878,43 @@ html[data-color-mode='dark'] .claude-cord-plug {
   word-break: break-word;
 }
 
+.call-trail-apis {
+  margin: 0.4rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.call-trail-api {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+  font-size: 0.78rem;
+}
+
+.call-trail-api-method {
+  flex: 0 0 3.4rem;
+  font-family: var(--mono);
+  font-weight: 750;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.call-trail-api-endpoint {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
+.call-trail-api-none {
+  margin: 0.35rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
 .admin-table {
   width: 100%;
   border-collapse: collapse;

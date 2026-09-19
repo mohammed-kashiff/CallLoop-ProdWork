@@ -9,7 +9,8 @@ itself isn't silently lost.
 
 detail must not contain transcript quotes, screenshot text, credentials,
 or other secrets — criterion rows store agent_user_id, verdict, and
-evidence_verified only.
+evidence_verified only. Outbound HTTP calls are listed in detail["apis"]
+as {method, endpoint} templates (no live ids, query strings, or tokens).
 """
 
 from __future__ import annotations
@@ -23,6 +24,58 @@ from . import db
 from .org_ids import org_scope, parse_org_id
 
 log = logging.getLogger("callproof.ticket_trail")
+
+# Templates only — never interpolate a live id, signed URL, or query string.
+API_ANTHROPIC_MESSAGES = {
+    "method": "POST", "endpoint": "https://api.anthropic.com/v1/messages",
+}
+API_INTERCOM_CONVERSATION = {
+    "method": "GET", "endpoint": "https://api.intercom.io/conversations/{id}",
+}
+API_INTERCOM_TICKET = {
+    "method": "GET", "endpoint": "https://api.intercom.io/tickets/{id}",
+}
+API_INTERCOM_ATTACHMENT = {
+    "method": "GET",
+    "endpoint": "https://*.intercomcdn.com/… (attachment; live URL not stored)",
+}
+API_TICKET_UPLOAD = {
+    "method": "POST", "endpoint": "/api/tickets/upload",
+}
+API_TICKET_SCORE = {
+    "method": "POST", "endpoint": "/api/tickets/{ticket_id}/score",
+}
+
+
+def with_apis(detail: dict | None, *apis: dict) -> dict:
+    """Merge method/endpoint templates onto a detail dict. Drops query
+    strings so a signed attachment URL can never land in the trail."""
+    out = dict(detail or {})
+    cleaned: list[dict] = []
+    for item in apis:
+        if not isinstance(item, dict):
+            continue
+        method = str(item.get("method") or "").strip().upper()
+        endpoint = str(item.get("endpoint") or "").strip().split("?", 1)[0]
+        if not method or not endpoint:
+            continue
+        cleaned.append({"method": method, "endpoint": endpoint})
+    if cleaned:
+        out["apis"] = cleaned
+    return out
+
+
+def intercom_fetch_apis(kind: str, linked: list | None = None) -> tuple[dict, ...]:
+    kinds = {kind}
+    for item in linked or []:
+        if isinstance(item, (tuple, list)) and item:
+            kinds.add(item[0])
+    out: list[dict] = []
+    if "conversation" in kinds:
+        out.append(API_INTERCOM_CONVERSATION)
+    if "ticket" in kinds:
+        out.append(API_INTERCOM_TICKET)
+    return tuple(out)
 
 
 def _parse_ticket_id(ticket_id) -> str | None:

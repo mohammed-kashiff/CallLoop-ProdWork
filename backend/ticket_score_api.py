@@ -218,14 +218,20 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found.")
 
+    def _score_detail(extra: dict | None = None) -> dict:
+        return ticket_trail.with_apis(
+            {"refresh": bool(refresh), **(extra or {})},
+            ticket_trail.API_TICKET_SCORE,
+        )
+
     ticket_trail.record(
-        tid, org_id, "scoring", "started", detail={"refresh": bool(refresh)},
+        tid, org_id, "scoring", "started", detail=_score_detail(),
     )
 
     def _scoring_failed(status_code: int, message: str, extra: dict | None = None):
         ticket_trail.record(
             tid, org_id, "scoring", "failed",
-            detail={"refresh": bool(refresh), **(extra or {})},
+            detail=_score_detail(extra),
             error=message,
         )
         raise HTTPException(status_code=status_code, detail=message)
@@ -275,7 +281,8 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
     def _on_dimension_event(dim, status, detail):
         did = (dim or {}).get("id") or "unknown"
         ticket_trail.record(
-            tid, org_id, f"criterion:{did}", status, detail=detail,
+            tid, org_id, f"criterion:{did}", status,
+            detail=ticket_trail.with_apis(detail, ticket_trail.API_ANTHROPIC_MESSAGES),
         )
 
     fresh_results: list[dict] = []
@@ -294,7 +301,7 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
             sentry_report.capture_exception(e)
             ticket_trail.record(
                 tid, org_id, "scoring", "failed",
-                detail={"refresh": bool(refresh), "agents": to_score},
+                detail=_score_detail({"agents": to_score}),
                 error=applog.safe_exception_text(e),
             )
             raise HTTPException(status_code=502, detail="Ticket scoring failed.") from None
@@ -312,7 +319,7 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
             sentry_report.capture_exception(e)
             ticket_trail.record(
                 tid, org_id, "scoring", "failed",
-                detail={"refresh": bool(refresh)},
+                detail=_score_detail(),
                 error=applog.safe_exception_text(e),
             )
             raise HTTPException(status_code=502, detail="Ticket scoring failed.") from None
@@ -335,16 +342,18 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
     skipped = [a for a in resolved if a not in (to_score or [])]
     ticket_trail.record(
         tid, org_id, "scoring", "succeeded",
-        detail={
-            "refresh": bool(refresh),
+        detail=_score_detail({
             "cached": cached,
             "scored": [r["agent_user_id"] for r in fresh_results],
             "skipped": skipped,
-        },
+        }),
     )
     ticket_trail.record(
         tid, org_id, "result_served", "succeeded",
-        detail={"source": "cache" if cached else "fresh"},
+        detail=ticket_trail.with_apis(
+            {"source": "cache" if cached else "fresh"},
+            ticket_trail.API_TICKET_SCORE,
+        ),
     )
 
     return _payload(

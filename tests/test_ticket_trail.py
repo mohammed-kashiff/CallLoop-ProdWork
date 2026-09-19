@@ -164,6 +164,37 @@ def test_agent_resolve_detail_counts_unique_ids_and_names():
     assert ticket_trail.agent_resolve_detail(turns) == {"resolved": 1, "unresolved": 1}
 
 
+def test_with_apis_strips_query_strings_and_skips_empty():
+    from backend import ticket_trail
+
+    out = ticket_trail.with_apis(
+        {"count": 1},
+        {"method": "get", "endpoint": "https://cdn.example/file.png?token=secret"},
+        {"method": "", "endpoint": "https://example.com"},
+        {"method": "POST", "endpoint": "https://api.anthropic.com/v1/messages"},
+    )
+    assert out["count"] == 1
+    assert out["apis"] == [
+        {"method": "GET", "endpoint": "https://cdn.example/file.png"},
+        {"method": "POST", "endpoint": "https://api.anthropic.com/v1/messages"},
+    ]
+    assert "token" not in json.dumps(out)
+
+
+def test_intercom_fetch_apis_includes_linked_kinds():
+    from backend import ticket_trail
+
+    assert ticket_trail.intercom_fetch_apis("conversation") == (
+        ticket_trail.API_INTERCOM_CONVERSATION,
+    )
+    assert ticket_trail.intercom_fetch_apis("ticket") == (
+        ticket_trail.API_INTERCOM_TICKET,
+    )
+    both = ticket_trail.intercom_fetch_apis("conversation", [("ticket", "t-1")])
+    assert ticket_trail.API_INTERCOM_CONVERSATION in both
+    assert ticket_trail.API_INTERCOM_TICKET in both
+
+
 def test_admin_trail_route_scopes_by_caller_supplied_org_and_returns_history(monkeypatch):
     monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "tester@example.com")
     seen_scopes: list[str] = []
@@ -387,7 +418,7 @@ def test_score_route_records_scoring_failed_when_ingest_failed(auth_client, monk
     seen: list[tuple] = []
 
     def _record(ticket_id, org_id, stage, status, *, detail=None, error=None):
-        seen.append((stage, status, error))
+        seen.append((stage, status, error, detail))
 
     monkeypatch.setattr("backend.ticket_score_api.ticket_trail.record", _record)
     monkeypatch.setattr(
@@ -400,8 +431,11 @@ def test_score_route_records_scoring_failed_when_ingest_failed(auth_client, monk
     )
     r = auth_client.post(f"/api/tickets/{TICKET_A}/score")
     assert r.status_code == 400
-    assert ("scoring", "started", None) in seen
-    assert any(s == "scoring" and st == "failed" for s, st, _e in seen)
+    assert any(s == "scoring" and st == "started" and e is None for s, st, e, _d in seen)
+    failed = next(d for s, st, _e, d in seen if s == "scoring" and st == "failed")
+    assert failed["apis"] == [{
+        "method": "POST", "endpoint": "/api/tickets/{ticket_id}/score",
+    }]
 
 
 def test_score_route_404_does_not_write_a_trail(auth_client, monkeypatch):
