@@ -59,6 +59,7 @@ def _best_of(findings: list[dict], verdict: str) -> dict | None:
         "reasoning": best.get("reasoning"),
         "evidence_text": best.get("evidence_text"),
         "evidence_seq": best.get("evidence_seq"),
+        "evidence_verified": best.get("evidence_verified"),
     }
 
 

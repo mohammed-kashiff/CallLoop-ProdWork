@@ -63,6 +63,18 @@ type TicketSpan = {
   turn_count: number
 }
 
+// Top strength/gap carry the same evidence shape as a TicketFinding
+// (minus verdict/weight) — the quote that made this dimension the
+// standout, so the UI can show why, not just which dimension.
+type TicketHighlight = {
+  id?: string | null
+  name?: string | null
+  reasoning?: string | null
+  evidence_text?: string | null
+  evidence_seq?: number | null
+  evidence_verified?: boolean | null
+} | null
+
 // TA-21/TA-28: one independent scorecard per agent, not one per ticket.
 type PerAgentAudit = {
   agent_user_id: string
@@ -72,8 +84,8 @@ type PerAgentAudit = {
   updated_at: string | null
   findings: TicketFinding[]
   spans: TicketSpan[]
-  top_strength?: { id?: string | null; name?: string | null } | null
-  top_gap?: { id?: string | null; name?: string | null } | null
+  top_strength?: TicketHighlight
+  top_gap?: TicketHighlight
   audit_summary?: string | null
 }
 
@@ -86,8 +98,8 @@ type ScoreRouteAgent = {
   score: number
   findings: TicketFinding[]
   spans: TicketSpan[]
-  top_strength?: { id?: string | null; name?: string | null } | null
-  top_gap?: { id?: string | null; name?: string | null } | null
+  top_strength?: TicketHighlight
+  top_gap?: TicketHighlight
   audit_summary?: string | null
 }
 
@@ -696,6 +708,12 @@ export function TicketAudit() {
   const messagesBySeq = new Map((ticket?.messages || []).map((m) => [m.seq, m]))
   const assetsBySeq = new Map((ticket?.assets || []).map((asset) => [asset.seq, asset]))
 
+  const resolveEvidence = (seq: number | null | undefined) => {
+    if (seq == null) return undefined
+    const turn = messagesBySeq.get(seq)
+    return { isImage: Boolean(turn?.has_image), assetUrl: turn?.has_image ? assetUrls[turn.seq] : undefined }
+  }
+
   return (
     <>
       <header className="page-bar">
@@ -804,6 +822,7 @@ export function TicketAudit() {
                           summary={audit.audit_summary}
                           strength={audit.top_strength}
                           gap={audit.top_gap}
+                          resolveEvidence={resolveEvidence}
                         />
                         <ul className="criteria-list">
                           {audit.findings.map((f) => {

@@ -2510,6 +2510,22 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   font-weight: 650;
 }
 
+.score-summary-reason {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--muted-fg);
+}
+
+.score-summary-tiles .evidence {
+  margin: 0.5rem 0 0;
+  padding: 0.55rem 0.7rem;
+}
+
+.score-summary-tiles .evidence p {
+  font-size: 0.88rem;
+}
+
 .team-perf-sort {
   border: 0;
   background: transparent;

@@ -29,6 +29,17 @@ type OwnFinding = {
   earned?: number | null
 }
 
+// Same shape as a finding's own evidence, minus verdict/weight — the
+// quote that made this dimension the top strength/gap, not just its name.
+type OwnHighlight = {
+  id?: string | null
+  name?: string | null
+  reasoning?: string | null
+  evidence_text?: string | null
+  evidence_seq?: number | null
+  evidence_verified?: boolean | null
+} | null
+
 type OwnTicketContribution = {
   ticket_id: string
   status: string
@@ -36,8 +47,8 @@ type OwnTicketContribution = {
   turns: OwnTurn[]
   own_span_seqs: number[]
   findings: OwnFinding[] | null
-  top_strength?: { id?: string | null; name?: string | null } | null
-  top_gap?: { id?: string | null; name?: string | null } | null
+  top_strength?: OwnHighlight
+  top_gap?: OwnHighlight
   audit_summary?: string | null
 }
 
@@ -144,6 +155,11 @@ export function MyTicketContributions() {
                 summary={t.audit_summary}
                 strength={t.top_strength}
                 gap={t.top_gap}
+                resolveEvidence={(seq) => {
+                  if (seq == null) return undefined
+                  const turn = t.turns.find((turn) => turn.seq === seq)
+                  return { isImage: Boolean(turn?.has_image) }
+                }}
               />
               <ul className="criteria-list">
               {t.findings.map((f) => (

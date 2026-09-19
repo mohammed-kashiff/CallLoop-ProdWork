@@ -10,16 +10,20 @@ from backend import ticket_audit_summary as m
 FINDINGS = [
     {"id": "tone", "name": "Tone", "weight": 15, "verdict": "pass",
      "reasoning": "The agent stayed calm and empathetic throughout.",
-     "evidence_text": "I understand your frustration.", "evidence_seq": 1},
+     "evidence_text": "I understand your frustration.", "evidence_seq": 1,
+     "evidence_verified": True},
     {"id": "diagnostic_reasoning", "name": "Diagnostic Reasoning", "weight": 20, "verdict": "pass",
      "reasoning": "Correctly identified the root cause from the logs.",
-     "evidence_text": "It's the payment worker.", "evidence_seq": 3},
+     "evidence_text": "It's the payment worker.", "evidence_seq": 3,
+     "evidence_verified": True},
     {"id": "investigation_rigor", "name": "Investigation Rigor", "weight": 20, "verdict": "fail",
      "reasoning": "Never checked logs before guessing at a fix.",
-     "evidence_text": "Try clearing your cache.", "evidence_seq": 2},
+     "evidence_text": "Try clearing your cache.", "evidence_seq": 2,
+     "evidence_verified": False},
     {"id": "escalation_quality", "name": "Escalation Quality", "weight": 10, "verdict": "partial",
      "reasoning": "Escalated, but with limited context.",
-     "evidence_text": "Passing to tier 2.", "evidence_seq": 4},
+     "evidence_text": "Passing to tier 2.", "evidence_seq": 4,
+     "evidence_verified": True},
 ]
 
 
@@ -36,6 +40,23 @@ def test_top_strength_picks_the_highest_weighted_pass():
     assert result["id"] == "diagnostic_reasoning"  # weight 20 > tone's 15
     assert result["weight"] == 20
     assert result["reasoning"] == "Correctly identified the root cause from the logs."
+
+
+def test_top_strength_and_top_gap_carry_the_quote_that_caused_them():
+    """The whole point of surfacing evidence_text/evidence_seq here: the
+    UI can show *why* a dimension became the top strength/gap, not just
+    its name — the actual quote from the ticket, plus whether it was
+    verified verbatim (same evidence_verified contract as a per-criterion
+    finding)."""
+    strength = m.top_strength(FINDINGS)
+    assert strength["evidence_text"] == "It's the payment worker."
+    assert strength["evidence_seq"] == 3
+    assert strength["evidence_verified"] is True
+
+    gap = m.top_gap(FINDINGS)
+    assert gap["evidence_text"] == "Try clearing your cache."
+    assert gap["evidence_seq"] == 2
+    assert gap["evidence_verified"] is False
 
 
 def test_top_gap_picks_the_highest_weighted_fail():
