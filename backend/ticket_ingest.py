@@ -45,11 +45,13 @@ from __future__ import annotations
 
 from psycopg.types.json import Json
 
+from . import applog
 from . import db
 from . import ticket_agent_aliases
 from . import ticket_image_extraction
 from . import ticket_image_store
 from . import ticket_pdf_parser
+from . import ticket_trail
 from . import tracing
 from .org_ids import org_scope
 
@@ -329,21 +331,56 @@ def ingest_ticket_pdf(org_id: str, pdf_bytes: bytes, *, source: str = "pdf_uploa
     """
     ticket_id = create_ticket(org_id, source=source)
     set_ticket_status(ticket_id, org_id, "processing")
+    ticket_trail.record(
+        ticket_id, org_id, "parse", "started", detail={"source": source},
+    )
     try:
-        with tracing.span("task", "ticket.parse"):
-            text = ticket_pdf_parser.extract_text(pdf_bytes)
-            if not ticket_pdf_parser.looks_like_justcall_export(text):
-                raise ValueError(
-                    "PDF does not match the known JustCall export template; "
-                    "this deterministic parser only handles that format."
-                )
-            turns = ticket_pdf_parser.parse_turns_with_pages(pdf_bytes)
+        try:
+            with tracing.span("task", "ticket.parse"):
+                text = ticket_pdf_parser.extract_text(pdf_bytes)
+                if not ticket_pdf_parser.looks_like_justcall_export(text):
+                    raise ValueError(
+                        "PDF does not match the known JustCall export template; "
+                        "this deterministic parser only handles that format."
+                    )
+                turns = ticket_pdf_parser.parse_turns_with_pages(pdf_bytes)
+        except Exception as e:
+            ticket_trail.record(
+                ticket_id, org_id, "parse", "failed",
+                detail={"source": source},
+                error=applog.safe_exception_text(e),
+            )
+            raise
+        ticket_trail.record(
+            ticket_id, org_id, "parse", "succeeded",
+            detail={"source": source, "turns": len(turns)},
+        )
 
         with tracing.span("task", "ticket.extract"):
             images = ticket_image_extraction.extract_images(pdf_bytes)
-            descriptions = [
-                ticket_image_extraction.describe_image(img["png_bytes"]) for img in images
-            ]
+            if images:
+                ticket_trail.record(
+                    ticket_id, org_id, "image_describe", "started",
+                    detail={"count": len(images)},
+                )
+                try:
+                    descriptions = [
+                        ticket_image_extraction.describe_image(img["png_bytes"])
+                        for img in images
+                    ]
+                except Exception as e:
+                    ticket_trail.record(
+                        ticket_id, org_id, "image_describe", "failed",
+                        detail={"count": len(images)},
+                        error=applog.safe_exception_text(e),
+                    )
+                    raise
+                ticket_trail.record(
+                    ticket_id, org_id, "image_describe", "succeeded",
+                    detail={"count": len(images)},
+                )
+            else:
+                descriptions = []
         merged = interleave_images(turns, images, descriptions)
 
         unresolved_names = {
@@ -357,6 +394,10 @@ def ingest_ticket_pdf(org_id: str, pdf_bytes: bytes, *, source: str = "pdf_uploa
                     resolved = aliases.get(t.get("speaker_name"))
                     if resolved:
                         t["agent_user_id"] = resolved
+        ticket_trail.record(
+            ticket_id, org_id, "agent_resolve", "succeeded",
+            detail=ticket_trail.agent_resolve_detail(merged),
+        )
 
         insert_ticket_messages(ticket_id, org_id, merged)
 

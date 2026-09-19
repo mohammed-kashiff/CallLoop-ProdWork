@@ -581,6 +581,71 @@ def call_logs_csv_rows(query: str) -> tuple[list[dict], dict]:
     return calls, matched
 
 
+def ticket_logs(query: str, limit: int | None = None) -> dict:
+    """Search tickets by email, org id, or short id.
+
+    Owner id (or a bare org id) returns the whole org's tickets; a regular
+    member's id is scoped to tickets where they appear as agent_user_id
+    (tickets have no uploaded_by).
+    """
+    org_id, agent_user_id, matched = _resolve_call_log_scope(query)
+    cap = max(1, min(int(limit or _CALL_LOGS_LIMIT_DEFAULT), _CALL_LOGS_LIMIT_MAX))
+    tickets, total = _ticket_logs_rows(org_id, agent_user_id, limit=cap)
+    return {
+        "matched": matched,
+        "tickets": tickets,
+        "total_tickets": total,
+        "tickets_truncated": total > len(tickets),
+    }
+
+
+def _ticket_logs_rows(
+    org_id: str, agent_user_id: str | None, *, limit: int,
+) -> tuple[list[dict], int]:
+    """Ticket rows for the resolved scope, newest first."""
+    with org_scope(org_id):
+        with db.connection() as conn:
+            where = "t.org_id = %s"
+            params: list = [org_id]
+            if agent_user_id:
+                where += """
+                    AND EXISTS (
+                        SELECT 1 FROM ticket_messages m
+                        WHERE m.ticket_id = t.id
+                          AND m.org_id = t.org_id
+                          AND m.agent_user_id = %s
+                    )
+                """
+                params.append(agent_user_id)
+            total_row = conn.execute(
+                f"SELECT COUNT(*) AS n FROM tickets t WHERE {where}", params,
+            ).fetchone()
+            rows = conn.execute(
+                f"""
+                SELECT t.id, t.source, t.status, t.subject, t.external_id, t.created_at
+                FROM tickets t
+                WHERE {where}
+                ORDER BY t.created_at DESC
+                LIMIT %s
+                """,
+                [*params, limit],
+            ).fetchall()
+    out = []
+    for row in rows or []:
+        out.append(
+            {
+                "ticket_id": str(row["id"]),
+                "source": row.get("source"),
+                "status": row.get("status"),
+                "subject": row.get("subject"),
+                "external_id": row.get("external_id"),
+                "created_at": _json_value(row.get("created_at")),
+            }
+        )
+    total = int((total_row or {}).get("n") or 0)
+    return out, total
+
+
 def rubric_for_org(org_id: str | None) -> dict:
     """Current active rubric weights for an org's Rubric tab (CR-14).
 

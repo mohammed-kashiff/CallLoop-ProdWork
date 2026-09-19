@@ -48,6 +48,7 @@ from . import call_agent_identity_aliases_api
 from . import db
 from . import env_keys
 from . import call_trail
+from . import ticket_trail
 from . import error_notify
 from . import impersonation
 from . import intercom_client
@@ -737,6 +738,50 @@ def admin_call_trail(call_id: int, org_id: str, request: Request):
         "org_id": oid,
         "filename": row.get("filename"),
         "events": call_trail.history(call_id, oid),
+    }
+
+
+@app.get("/api/admin/ticket-logs")
+def admin_ticket_logs(request: Request, query: str = "", limit: int | None = None):
+    """Search tickets by email, org id, or short id."""
+    auth.require_platform_admin(request)
+    return admin_console.ticket_logs(query, limit=limit)
+
+
+@app.get("/api/admin/tickets/{ticket_id}/trail")
+def admin_ticket_trail(ticket_id: str, org_id: str, request: Request):
+    """Full pipeline audit trail for one ticket — parse, screenshot
+    describe, agent resolve, per-agent per-criterion scoring, and every
+    time a score was served. Platform-admin only. org_id comes from the
+    caller (Ticket Logs already has it per row) rather than being
+    resolved server-side — this file must never bypass RLS directly
+    (see test_rls.py).
+    """
+    auth.require_platform_admin(request)
+    oid = parse_org_id(org_id)
+    if not oid:
+        raise HTTPException(status_code=400, detail="org_id is required.")
+    try:
+        tid = str(uuid.UUID(str(ticket_id or "").strip()))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid ticket id.") from None
+    with org_scope(oid):
+        with db.connection() as c:
+            row = c.execute(
+                """
+                SELECT source, subject FROM tickets
+                WHERE id = %s AND org_id = %s
+                """,
+                (tid, oid),
+            ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"No ticket with id {tid}")
+    return {
+        "ticket_id": tid,
+        "org_id": oid,
+        "source": row.get("source"),
+        "subject": row.get("subject"),
+        "events": ticket_trail.history(tid, oid),
     }
 
 

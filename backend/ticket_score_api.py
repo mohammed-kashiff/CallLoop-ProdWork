@@ -53,6 +53,7 @@ from . import ticket_permissions
 from . import ticket_rubric
 from . import ticket_rubric_builder
 from . import ticket_scoring
+from . import ticket_trail
 
 log = logging.getLogger("callproof.ticket_score_api")
 
@@ -216,14 +217,25 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
     ticket = ticket_ingest.get_ticket(tid, org_id)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found.")
-    if ticket["status"] == "failed":
-        raise HTTPException(
-            status_code=400, detail="This ticket failed ingestion; there is nothing to score.",
+
+    ticket_trail.record(
+        tid, org_id, "scoring", "started", detail={"refresh": bool(refresh)},
+    )
+
+    def _scoring_failed(status_code: int, message: str, extra: dict | None = None):
+        ticket_trail.record(
+            tid, org_id, "scoring", "failed",
+            detail={"refresh": bool(refresh), **(extra or {})},
+            error=message,
         )
+        raise HTTPException(status_code=status_code, detail=message)
+
+    if ticket["status"] == "failed":
+        _scoring_failed(400, "This ticket failed ingestion; there is nothing to score.")
     if ticket["status"] != "ready":
-        raise HTTPException(status_code=409, detail="This ticket is still processing.")
+        _scoring_failed(409, "This ticket is still processing.")
     if not ticket["messages"]:
-        raise HTTPException(status_code=400, detail="This ticket has no messages to score.")
+        _scoring_failed(400, "This ticket has no messages to score.")
 
     turns = [
         {
@@ -238,9 +250,9 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
 
     resolved = ticket_scoring.resolved_agent_ids(turns)
     if not resolved:
-        raise HTTPException(
-            status_code=400,
-            detail="No agent identities are resolved on this ticket yet — map agent names first.",
+        _scoring_failed(
+            400,
+            "No agent identities are resolved on this ticket yet — map agent names first.",
         )
 
     stored_by_agent = {
@@ -252,7 +264,7 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
                 log, "ticket_rescore_blocked",
                 ticket_id=tid, agents=list(stored_by_agent),
             )
-            raise HTTPException(status_code=403, detail=_RESCORE_DENIED)
+            _scoring_failed(403, _RESCORE_DENIED, extra={"refresh": True})
         to_score = resolved  # allowed re-score: every resolved agent runs fresh
     else:
         # TA-28: the guard is per-agent — an agent with no stored row yet
@@ -260,12 +272,19 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
         # ticket was already audited.
         to_score = [a for a in resolved if a not in stored_by_agent]
 
+    def _on_dimension_event(dim, status, detail):
+        did = (dim or {}).get("id") or "unknown"
+        ticket_trail.record(
+            tid, org_id, f"criterion:{did}", status, detail=detail,
+        )
+
     fresh_results: list[dict] = []
     if to_score:
         try:
             rubric = ticket_rubric.ensure_ticket_rubric(org_id)
             fresh_results = ticket_scoring.score_ticket_per_agent(
                 turns, rubric["dimensions"], only_agent_ids=to_score,
+                on_dimension_event=_on_dimension_event,
             )
         except Exception as e:  # noqa: BLE001
             applog.event(
@@ -273,6 +292,11 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
                 ticket_id=tid, error=applog.safe_exception_text(e),
             )
             sentry_report.capture_exception(e)
+            ticket_trail.record(
+                tid, org_id, "scoring", "failed",
+                detail={"refresh": bool(refresh), "agents": to_score},
+                error=applog.safe_exception_text(e),
+            )
             raise HTTPException(status_code=502, detail="Ticket scoring failed.") from None
 
         try:
@@ -286,6 +310,11 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
                 ticket_id=tid, error=applog.safe_exception_text(e),
             )
             sentry_report.capture_exception(e)
+            ticket_trail.record(
+                tid, org_id, "scoring", "failed",
+                detail={"refresh": bool(refresh)},
+                error=applog.safe_exception_text(e),
+            )
             raise HTTPException(status_code=502, detail="Ticket scoring failed.") from None
 
         applog.event(
@@ -302,6 +331,21 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
     cached = not fresh_results
     if cached:
         applog.event(log, "ticket_audit_cache", result="HIT", ticket_id=tid, agents=resolved)
+
+    skipped = [a for a in resolved if a not in (to_score or [])]
+    ticket_trail.record(
+        tid, org_id, "scoring", "succeeded",
+        detail={
+            "refresh": bool(refresh),
+            "cached": cached,
+            "scored": [r["agent_user_id"] for r in fresh_results],
+            "skipped": skipped,
+        },
+    )
+    ticket_trail.record(
+        tid, org_id, "result_served", "succeeded",
+        detail={"source": "cache" if cached else "fresh"},
+    )
 
     return _payload(
         tid, agent_results, turns, cached=cached, viewer_user_id=viewer_id, is_manager=is_manager,

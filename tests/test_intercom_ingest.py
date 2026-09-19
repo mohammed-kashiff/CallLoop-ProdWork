@@ -21,6 +21,7 @@ def _no_agent_identity_resolution_by_default(monkeypatch):
         intercom_ingest.ticket_agent_identity_aliases, "resolve_agent_user_ids",
         lambda *a, **k: {},
     )
+    monkeypatch.setattr(intercom_ingest.ticket_trail, "record", lambda *a, **k: None)
     monkeypatch.setattr(
         intercom_ingest.ticket_ingest, "set_ticket_display_metadata",
         lambda *a, **k: None,
@@ -513,6 +514,21 @@ def test_ingest_intercom_conversation_dedupes_via_external_id(monkeypatch):
     result = intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
     assert result == "existing-ticket-id"
     assert fetch_called == []  # never re-fetched — dedup short-circuits before any API call
+
+
+def test_ingest_intercom_conversation_dedupe_writes_no_trail(monkeypatch):
+    seen: list = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_trail, "record",
+        lambda *a, **k: seen.append((a, k)),
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id",
+        lambda org_id, *, source, external_id: "existing-ticket-id",
+    )
+    result = intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
+    assert result == "existing-ticket-id"
+    assert seen == []
 
 
 def test_ingest_intercom_conversation_requires_a_stored_token(monkeypatch):

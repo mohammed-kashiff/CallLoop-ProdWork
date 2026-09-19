@@ -385,22 +385,45 @@ def run_ticket_wave_for_agent(
     build_prompt_fn=build_prompt,
     call_claude_fn=call_claude,
     validate_evidence_fn=validate_evidence,
+    on_dimension_event=None,
 ) -> list[dict]:
     """Every rubric dimension, independently scored for one agent — one
     finding per dimension, always (TA-26: no dimension is ever silently
     skipped; a genuinely inapplicable one still comes back as its own
-    "not_applicable" finding, never simply absent from the list)."""
+    "not_applicable" finding, never simply absent from the list).
+
+    on_dimension_event(dim, status, detail) is optional and injected the
+    same way call_claude_fn already is, so this module stays decoupled
+    from ticket_trail. Never allowed to break scoring: any exception it
+    raises is swallowed.
+    """
+    def _notify(dim, status, detail=None):
+        if on_dimension_event is None:
+            return
+        try:
+            on_dimension_event(dim, status, detail)
+        except Exception:  # noqa: BLE001
+            pass
+
     findings = []
     for dim in dimensions:
-        result = evaluate_criterion_for_agent(
-            _dimension_question(dim),
-            _scoreable_turns(turns, dim),
-            target_agent_user_id=target_agent_user_id,
-            spans=spans,
-            build_prompt_fn=build_prompt_fn,
-            call_claude_fn=call_claude_fn,
-            validate_evidence_fn=validate_evidence_fn,
-        )
+        _notify(dim, "started", {"agent_user_id": target_agent_user_id})
+        try:
+            result = evaluate_criterion_for_agent(
+                _dimension_question(dim),
+                _scoreable_turns(turns, dim),
+                target_agent_user_id=target_agent_user_id,
+                spans=spans,
+                build_prompt_fn=build_prompt_fn,
+                call_claude_fn=call_claude_fn,
+                validate_evidence_fn=validate_evidence_fn,
+            )
+        except Exception as e:
+            _notify(dim, "failed", {
+                "agent_user_id": target_agent_user_id,
+                "error": applog.safe_exception_text(e),
+            })
+            raise
         weight = dim.get("weight") or 0
         result["id"] = dim.get("id")
         result["name"] = dim.get("name")
@@ -408,6 +431,16 @@ def run_ticket_wave_for_agent(
         result["earned"] = _earned_weight(result["verdict"], weight)
         result["attributed_to"] = target_agent_user_id if result["evidence_verified"] else None
         findings.append(result)
+        verdict = result.get("verdict")
+        _notify(
+            dim,
+            "failed" if verdict == "error" else "succeeded",
+            {
+                "agent_user_id": target_agent_user_id,
+                "verdict": verdict,
+                "evidence_verified": result.get("evidence_verified"),
+            },
+        )
         applog.event(
             log, "ticket_criterion_scored",
             dimension=dim.get("id"),
@@ -444,6 +477,7 @@ def score_ticket_for_agent(
     build_prompt_fn=build_prompt,
     call_claude_fn=call_claude,
     validate_evidence_fn=validate_evidence,
+    on_dimension_event=None,
 ) -> dict:
     """One agent's complete, independent scorecard for this ticket."""
     spans = spans if spans is not None else agent_spans(turns)
@@ -455,6 +489,7 @@ def score_ticket_for_agent(
             build_prompt_fn=build_prompt_fn,
             call_claude_fn=call_claude_fn,
             validate_evidence_fn=validate_evidence_fn,
+            on_dimension_event=on_dimension_event,
         )
     own_spans = [s for s in spans if str(s.get("agent_user_id") or "") == str(target_agent_user_id)]
     result = {
@@ -480,6 +515,7 @@ def score_ticket_per_agent(
     build_prompt_fn=build_prompt,
     call_claude_fn=call_claude,
     validate_evidence_fn=validate_evidence,
+    on_dimension_event=None,
 ) -> list[dict]:
     """TA-21/TA-25 entrypoint: one independent scorecard per real,
     identified agent on this ticket. only_agent_ids restricts which
@@ -501,6 +537,7 @@ def score_ticket_per_agent(
             build_prompt_fn=build_prompt_fn,
             call_claude_fn=call_claude_fn,
             validate_evidence_fn=validate_evidence_fn,
+            on_dimension_event=on_dimension_event,
         )
         for agent_id in targets
     ]

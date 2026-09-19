@@ -14,6 +14,8 @@ import { AuditDetail } from './pages/AuditDetail'
 import { Audits } from './pages/Audits'
 import { CallLogs } from './pages/CallLogs'
 import { CallTrail } from './pages/CallTrail'
+import { TicketLogs } from './pages/TicketLogs'
+import { TicketTrail } from './pages/TicketTrail'
 import { ChurnRisk } from './pages/ChurnRisk'
 import { Feedbacks } from './pages/Feedbacks'
 import { FlaggedForReview } from './pages/FlaggedForReview'
@@ -78,10 +80,12 @@ function App() {
                     <Route path="training" element={<Training />} />
                     <Route path="admin" element={<Admin />} />
                     <Route path="call-logs" element={<CallLogs />} />
+                    <Route path="call-logs/:callId/trail" element={<CallTrail />} />
+                    <Route path="ticket-logs" element={<TicketLogs />} />
+                    <Route path="ticket-logs/:ticketId/trail" element={<TicketTrail />} />
                     <Route path="platform-admins" element={<PlatformAdmins />} />
                     <Route path="admin-activity-log" element={<AdminActivityLog />} />
                     <Route path="activity-log" element={<ActivityLog />} />
-                    <Route path="call-logs/:callId/trail" element={<CallTrail />} />
                     <Route path="ticket-audit" element={<TicketAudit />} />
                     <Route path="ticket-audit/:ticketId" element={<TicketAudit />} />
                     <Route path="ticket-audit-mine" element={<MyTicketContributions />} />

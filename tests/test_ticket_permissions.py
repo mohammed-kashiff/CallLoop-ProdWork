@@ -19,6 +19,13 @@ from backend import ticket_permissions as perm
 from backend.org_ids import DEFAULT_ORG_ID
 from tests.conftest import mint_access_token
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _stub_ticket_trail(monkeypatch):
+    monkeypatch.setattr("backend.ticket_score_api.ticket_trail.record", lambda *a, **k: None)
+
 AGENT_A = "11111111-1111-1111-1111-111111111111"
 AGENT_B = "22222222-2222-2222-2222-222222222222"
 

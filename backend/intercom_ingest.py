@@ -110,6 +110,7 @@ from . import ticket_agent_identity_aliases
 from . import ticket_image_extraction
 from . import ticket_image_store
 from . import ticket_ingest
+from . import ticket_trail
 from .intercom_oauth import PROVIDER
 
 log = logging.getLogger("callproof.intercom")
@@ -606,12 +607,38 @@ def _ingest_intercom_object(org_id: str, kind: str, obj_id: str) -> str:
 
     ticket_id = ticket_ingest.create_ticket(org_id, source="intercom_api", external_id=ext_id)
     ticket_ingest.set_ticket_status(ticket_id, org_id, "processing")
+    ticket_trail.record(
+        ticket_id, org_id, "parse", "started",
+        detail={"source": "intercom_api"},
+    )
     try:
         members: list[tuple[str, str, dict]] = [(kind, obj_id, seed_obj)]
-        for member_kind, member_id in linked:
-            members.append((member_kind, member_id, _fetch_member(access_token, member_kind, member_id)))
-        turns = _merge_turns([_normalize_member(k, o) for k, _, o in members])
+        try:
+            for member_kind, member_id in linked:
+                members.append((member_kind, member_id, _fetch_member(access_token, member_kind, member_id)))
+            turns = _merge_turns([_normalize_member(k, o) for k, _, o in members])
+        except Exception as e:
+            ticket_trail.record(
+                ticket_id, org_id, "parse", "failed",
+                detail={"source": "intercom_api"},
+                error=applog.safe_exception_text(e),
+            )
+            raise
+        ticket_trail.record(
+            ticket_id, org_id, "parse", "succeeded",
+            detail={"source": "intercom_api", "turns": len(turns)},
+        )
+        n_images = sum(1 for t in turns if t.get("is_image"))
+        if n_images:
+            ticket_trail.record(
+                ticket_id, org_id, "image_describe", "succeeded",
+                detail={"count": n_images},
+            )
         _resolve_agent_identities(org_id, turns)
+        ticket_trail.record(
+            ticket_id, org_id, "agent_resolve", "succeeded",
+            detail=ticket_trail.agent_resolve_detail(turns),
+        )
         ticket_ingest.insert_ticket_messages(ticket_id, org_id, turns)
         ticket_ingest.set_ticket_display_metadata(
             ticket_id, org_id, **_display_metadata(kind, seed_obj),

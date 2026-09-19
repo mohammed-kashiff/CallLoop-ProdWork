@@ -293,6 +293,15 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               Call logs
             </NavLink>
             <NavLink
+              to="/ticket-logs"
+              className={({ isActive }) =>
+                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+              }
+              onClick={onNavigate}
+            >
+              Ticket logs
+            </NavLink>
+            <NavLink
               to="/platform-admins"
               className={({ isActive }) =>
                 ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
@@ -502,6 +511,15 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
                 onClick={onNavigate}
               >
                 Call logs
+              </NavLink>
+              <NavLink
+                to="/ticket-logs"
+                className={({ isActive }) =>
+                  ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+                }
+                onClick={onNavigate}
+              >
+                Ticket logs
               </NavLink>
             </>
           ) : null}

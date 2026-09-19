@@ -18,6 +18,13 @@ from backend.org_ids import DEFAULT_ORG_ID
 from backend.paths import ROOT
 from tests.test_ticket_score_api import AGENT_ID, _fake_ticket
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _stub_ticket_trail(monkeypatch):
+    monkeypatch.setattr("backend.ticket_score_api.ticket_trail.record", lambda *a, **k: None)
+
 AGENT_B = "55555555-5555-5555-5555-555555555555"
 
 STORED_A = {

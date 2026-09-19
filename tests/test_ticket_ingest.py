@@ -438,6 +438,7 @@ def _patch_pipeline(monkeypatch, ticket_ingest, *, turns, images=None, descripti
         ticket_ingest.ticket_image_store, "put_bytes",
         lambda org_id, ticket_id, seq, png_bytes: f"{org_id}/{ticket_id}/{seq}.png",
     )
+    monkeypatch.setattr(ticket_ingest.ticket_trail, "record", lambda *a, **k: None)
     # TA-15: no alias configured by default — tests that care about
     # resolution override this themselves after calling _patch_pipeline.
     monkeypatch.setattr(
@@ -473,6 +474,47 @@ def test_ingest_ticket_pdf_marks_failed_and_reraises_on_unknown_format(monkeypat
     assert [s for _tid, s in conn.status_updates] == ["processing", "failed"]
     assert conn.messages == []
     assert conn.assets == []
+
+
+def test_ingest_ticket_pdf_records_parse_failed_on_unknown_format(monkeypatch):
+    from backend import ticket_ingest
+
+    events = []
+
+    def _record(ticket_id, org_id, stage, status, *, detail=None, error=None):
+        events.append((stage, status, (detail or {}).get("source"), error is not None))
+
+    _patch_pipeline(monkeypatch, ticket_ingest, turns=[], justcall=False)
+    monkeypatch.setattr(ticket_ingest.ticket_trail, "record", _record)
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        with pytest.raises(ValueError, match="JustCall export template"):
+            ticket_ingest.ingest_ticket_pdf(ORG_A, b"fake-pdf-bytes")
+    assert ("parse", "started", "pdf_upload", False) in events
+    assert ("parse", "failed", "pdf_upload", True) in events
+
+
+def test_ingest_ticket_pdf_records_parse_and_agent_resolve_on_success(monkeypatch):
+    from backend import ticket_ingest
+
+    events = []
+
+    def _record(ticket_id, org_id, stage, status, *, detail=None, error=None):
+        events.append((stage, status, detail))
+
+    _patch_pipeline(
+        monkeypatch, ticket_ingest,
+        turns=[_text_turn(0, "customer", page_index=0, text="hi")],
+    )
+    monkeypatch.setattr(ticket_ingest.ticket_trail, "record", _record)
+    conn = _FakeConn()
+    with _fake_db(monkeypatch, conn):
+        ticket_ingest.ingest_ticket_pdf(ORG_A, b"fake-pdf-bytes")
+    stages = [(s, st) for s, st, _d in events]
+    assert ("parse", "started") in stages
+    assert ("parse", "succeeded") in stages
+    assert ("agent_resolve", "succeeded") in stages
+    assert not any(s == "image_describe" for s, _st, _d in events)
 
 
 def test_ingest_ticket_pdf_with_an_image_writes_message_and_asset_rows(monkeypatch):

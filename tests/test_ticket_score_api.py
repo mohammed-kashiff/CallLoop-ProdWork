@@ -23,6 +23,11 @@ CALL_ENGINE = ("qa_engine", "qa_v8", "rules_v8", "transcribe")
 AGENT_ID = "44444444-4444-4444-4444-444444444444"
 
 
+@pytest.fixture(autouse=True)
+def _stub_ticket_trail(monkeypatch):
+    monkeypatch.setattr("backend.ticket_score_api.ticket_trail.record", lambda *a, **k: None)
+
+
 def test_does_not_import_the_call_engine_directly():
     """ticket_scoring.py itself is allowed (and required) here — this
     route's whole job is calling it. It must not reach past that into

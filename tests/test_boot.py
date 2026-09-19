@@ -27,6 +27,8 @@ EXPECTED_ROUTES = {
     "/api/admin/log-password-reset-request",
     "/api/admin/call-logs",
     "/api/admin/call-logs/export",
+    "/api/admin/ticket-logs",
+    "/api/admin/tickets/{ticket_id}/trail",
     "/api/admin/orgs/{org_id}/rubric",
     "/api/pyai/status",
     "/api/keys",
