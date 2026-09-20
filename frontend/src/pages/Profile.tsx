@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { apiFetch, fmtUsd, readError } from '../lib/api'
-import { appHomePath } from '../lib/adminHost'
+import { appHomePath, isAdminHost } from '../lib/adminHost'
 import { roleTagLabel } from '../lib/roles'
 import { useAuth } from '../context/AuthContext'
 
@@ -189,6 +189,8 @@ export function Profile() {
   const pyai = usage?.usage?.by_provider?.pyai
   const claude = usage?.usage?.by_provider?.anthropic
   const roleLabel = role ? roleTagLabel(role) : null
+
+  if (isAdminHost()) return <Navigate to="/admin" replace />
 
   return (
     <>

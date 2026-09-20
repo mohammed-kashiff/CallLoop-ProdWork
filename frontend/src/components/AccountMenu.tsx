@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { isAdminHost } from '../lib/adminHost'
 
 function displayName(
   firstName: string | null,
@@ -21,6 +22,7 @@ export function AccountMenu() {
   const name = displayName(firstName, lastName, email)
   const showEmail = Boolean(email && name !== email)
   const onProfile = pathname.startsWith('/profile')
+  const adminHost = isAdminHost()
 
   useEffect(() => {
     if (!open) return
@@ -84,33 +86,37 @@ export function AccountMenu() {
             {showEmail ? <p className="account-menu-email">{email}</p> : null}
           </div>
           <div id={menuId} role="menu" aria-label="Account">
-            <Link
-              role="menuitem"
-              to="/profile"
-              className="account-menu-item"
-              onClick={close}
-            >
-              Profile
-            </Link>
-            <button
-              type="button"
-              role="menuitem"
-              className="account-menu-item"
-              onClick={() => {
-                close()
-                window.open('/rubric-view', '_blank', 'noopener,noreferrer')
-              }}
-            >
-              Rubric
-            </button>
-            <Link
-              role="menuitem"
-              to="/kpi-targets"
-              className="account-menu-item"
-              onClick={close}
-            >
-              KPI targets
-            </Link>
+            {adminHost ? null : (
+              <>
+                <Link
+                  role="menuitem"
+                  to="/profile"
+                  className="account-menu-item"
+                  onClick={close}
+                >
+                  Profile
+                </Link>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="account-menu-item"
+                  onClick={() => {
+                    close()
+                    window.open('/rubric-view', '_blank', 'noopener,noreferrer')
+                  }}
+                >
+                  Rubric
+                </button>
+                <Link
+                  role="menuitem"
+                  to="/kpi-targets"
+                  className="account-menu-item"
+                  onClick={close}
+                >
+                  KPI targets
+                </Link>
+              </>
+            )}
             <button
               type="button"
               role="menuitem"

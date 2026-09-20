@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { apiFetch, readError } from '../lib/api'
 import { AuditSummaryTiles } from '../components/AuditSummaryTiles'
 import { TicketEvidence } from '../components/TicketEvidence'
 import { capFirst } from '../lib/format'
+import { isAdminHost } from '../lib/adminHost'
 
 // TA-12/TA-21/TA-30 (PRD §7): an agent's own scorecard rolled up across
 // every ticket they've touched — never a teammate's individual score, even
@@ -91,6 +92,8 @@ export function MyTicketContributions() {
       cancelled = true
     }
   }, [])
+
+  if (isAdminHost()) return <Navigate to="/admin" replace />
 
   return (
     <>

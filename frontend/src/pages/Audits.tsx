@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { capFirst } from '../lib/format'
 import { apiFetch, readError } from '../lib/api'
+import { isAdminHost } from '../lib/adminHost'
 import { useAuth } from '../context/AuthContext'
 import { flagEnabled } from '../lib/features'
 import type { CallListItem } from '../types'
@@ -213,6 +214,8 @@ export function Audits() {
       setDeletingId(null)
     }
   }
+
+  if (isAdminHost()) return <Navigate to="/admin" replace />
 
   return (
     <>

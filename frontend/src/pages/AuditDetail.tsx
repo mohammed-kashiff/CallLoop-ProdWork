@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams } from 'react-router-dom'
 import { CriteriaFindings } from '../components/CriteriaFindings'
 import { ScoreOverview } from '../components/ScoreOverview'
 import { TranscriptPlayer } from '../components/TranscriptPlayer'
 import { apiFetch, readError } from '../lib/api'
+import { isAdminHost } from '../lib/adminHost'
 import { capFirst, sentimentLabel } from '../lib/format'
 import { mapAudit } from '../lib/mapAudit'
 import { stripSpeakerTags } from '../lib/speakerText'
@@ -81,6 +82,8 @@ export function AuditDetail() {
   const feedbackEmpty =
     feedbackReady && !report?.feedback.aboutAgent.length && !report?.feedback.aboutProduct.length
   const hasRecap = Boolean(report?.summary.narrative || report?.summary.actionItems.length)
+
+  if (isAdminHost()) return <Navigate to="/admin" replace />
 
   return (
     <>

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, readError, trackEvent } from '../lib/api'
 import { AuditSummaryTiles } from '../components/AuditSummaryTiles'
 import { TicketEvidence } from '../components/TicketEvidence'
 import { capFirst } from '../lib/format'
+import { isAdminHost } from '../lib/adminHost'
 import { useAuth } from '../context/AuthContext'
 
 // TA-10 (PRD §3/§9/§10): its own page, not a variant of AuditDetail.tsx —
@@ -713,6 +714,8 @@ export function TicketAudit() {
     const turn = messagesBySeq.get(seq)
     return { isImage: Boolean(turn?.has_image), assetUrl: turn?.has_image ? assetUrls[turn.seq] : undefined }
   }
+
+  if (isAdminHost()) return <Navigate to="/admin" replace />
 
   return (
     <>
