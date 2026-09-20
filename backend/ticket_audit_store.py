@@ -61,6 +61,7 @@ def _row_to_dict(row) -> dict:
         "score": row["score"],
         **payload,
         "requested_by": str(row["requested_by"]) if row["requested_by"] else None,
+        "triggered_by": row["triggered_by"],
         "created_at": _iso(row["created_at"]),
         "updated_at": _iso(row["updated_at"]),
     }
@@ -74,7 +75,7 @@ def fetch_all(ticket_id: str, org_id: str) -> list[dict]:
             rows = conn.execute(
                 """
                 SELECT id, agent_user_id, score, findings, requested_by,
-                       created_at, updated_at
+                       triggered_by, created_at, updated_at
                 FROM ticket_audits
                 WHERE ticket_id = %s AND org_id = %s
                 ORDER BY created_at
@@ -92,7 +93,7 @@ def fetch_for_agent(ticket_id: str, org_id: str, agent_user_id: str) -> dict | N
             row = conn.execute(
                 """
                 SELECT id, agent_user_id, score, findings, requested_by,
-                       created_at, updated_at
+                       triggered_by, created_at, updated_at
                 FROM ticket_audits
                 WHERE ticket_id = %s AND org_id = %s AND agent_user_id = %s
                 """,
@@ -107,23 +108,31 @@ def upsert_many(
     agent_results: list[dict],
     *,
     requested_by: str | None = None,
+    triggered_by: str = "manual",
 ) -> list[str]:
     """INSERT one row per agent result, or UPDATE that agent's existing
     row on an allowed re-score. agent_results is score_ticket_per_agent's
     output: each dict must carry agent_user_id/score/findings (plus
     whatever else the caller wants persisted as findings — response
-    timeliness, spans, etc. are folded in by the caller before this)."""
+    timeliness, spans, etc. are folded in by the caller before this).
+
+    triggered_by (IN-31) is one value for the whole call — every agent
+    scored in the same score_ticket_route/auto_audit_ticket invocation
+    was triggered the same way — never derived per-agent from the
+    result dict, and excluded from the stored JSONB payload since it's
+    a real column now, not scoring output."""
     actor = parse_org_id(requested_by)
     sql = """
                 INSERT INTO ticket_audits (
                     id, org_id, ticket_id, agent_user_id, score, findings,
-                    requested_by, created_at, updated_at
+                    requested_by, triggered_by, created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, now(), now())
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now(), now())
                 ON CONFLICT (ticket_id, agent_user_id) DO UPDATE SET
                     score = excluded.score,
                     findings = excluded.findings,
                     requested_by = COALESCE(excluded.requested_by, ticket_audits.requested_by),
+                    triggered_by = excluded.triggered_by,
                     updated_at = now()
                 RETURNING id
                 """
@@ -132,13 +141,18 @@ def upsert_many(
         for result in agent_results:
             agent_user_id = result["agent_user_id"]
             score = result.get("score")
-            payload = {k: v for k, v in result.items() if k not in ("agent_user_id", "score")}
+            payload = {
+                k: v for k, v in result.items()
+                if k not in ("agent_user_id", "score", "triggered_by")
+            }
             audit_id = str(uuid.uuid4())
             params_with_actor = (
-                audit_id, org_id, ticket_id, agent_user_id, score, Json(payload), actor,
+                audit_id, org_id, ticket_id, agent_user_id, score, Json(payload),
+                actor, triggered_by,
             )
             params_without_actor = (
-                audit_id, org_id, ticket_id, agent_user_id, score, Json(payload), None,
+                audit_id, org_id, ticket_id, agent_user_id, score, Json(payload),
+                None, triggered_by,
             )
             # Each agent's upsert gets its own connection/transaction — a
             # ForeignKeyViolation rollback on one agent must never discard

@@ -67,7 +67,7 @@ def test_first_score_always_allowed_when_flag_off(auth_client, monkeypatch):
     )
     wrote = {}
 
-    def fake_upsert_many(ticket_id, org_id, agent_results, *, requested_by=None):
+    def fake_upsert_many(ticket_id, org_id, agent_results, *, requested_by=None, triggered_by="manual"):
         wrote["agent_results"] = agent_results
         wrote["org_id"] = org_id
         return ["new-audit"]

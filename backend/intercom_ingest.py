@@ -110,6 +110,7 @@ from . import ticket_agent_identity_aliases
 from . import ticket_image_extraction
 from . import ticket_image_store
 from . import ticket_ingest
+from . import ticket_score_api
 from . import ticket_trail
 from .intercom_oauth import PROVIDER
 
@@ -689,6 +690,10 @@ def _ingest_intercom_object(org_id: str, kind: str, obj_id: str) -> str:
         ticket_ingest.set_ticket_status(ticket_id, org_id, "failed")
         raise
     ticket_ingest.set_ticket_status(ticket_id, org_id, "ready")
+    # IN-33: Auto Audit. auto_audit_ticket() checks enable_ticket_auto_audit
+    # itself and never raises — a skip or failure here must never break
+    # ingestion, which has already fully succeeded by this point.
+    ticket_score_api.auto_audit_ticket(org_id, ticket_id)
     applog.event(
         log, "intercom_ingest", result="ok",
         kind=("group" if len(members) > 1 else kind),

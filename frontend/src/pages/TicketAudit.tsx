@@ -5,6 +5,7 @@ import { AuditSummaryTiles } from '../components/AuditSummaryTiles'
 import { TicketEvidence } from '../components/TicketEvidence'
 import { capFirst } from '../lib/format'
 import { isAdminHost } from '../lib/adminHost'
+import { flagEnabled } from '../lib/features'
 import { useAuth } from '../context/AuthContext'
 
 // TA-10 (PRD §3/§9/§10): its own page, not a variant of AuditDetail.tsx —
@@ -88,6 +89,10 @@ type PerAgentAudit = {
   top_strength?: TicketHighlight
   top_gap?: TicketHighlight
   audit_summary?: string | null
+  // IN-31/IN-34: how this scorecard came to exist — a person clicking
+  // Score (manual) or Intercom ingestion auto-scoring it (auto). A
+  // property of the whole scorecard, not of each individual finding.
+  triggered_by?: 'manual' | 'auto' | null
 }
 
 // The shape POST /score returns — response_timeliness/top_strength/top_gap
@@ -102,6 +107,7 @@ type ScoreRouteAgent = {
   top_strength?: TicketHighlight
   top_gap?: TicketHighlight
   audit_summary?: string | null
+  triggered_by?: 'manual' | 'auto' | null
 }
 
 type ScoreRouteResponse = {
@@ -586,7 +592,8 @@ export function TicketAudit() {
   const { ticketId } = useParams()
   const navigate = useNavigate()
   const inputRef = useRef<HTMLInputElement>(null)
-  const { role } = useAuth()
+  const { role, features } = useAuth()
+  const autoAuditEnabled = flagEnabled(features, 'enable_ticket_auto_audit')
 
   const [ticket, setTicket] = useState<TicketDetail | null>(null)
   const [loading, setLoading] = useState(false)
@@ -678,6 +685,7 @@ export function TicketAudit() {
           top_strength: a.top_strength,
           top_gap: a.top_gap,
           audit_summary: a.audit_summary,
+          triggered_by: a.triggered_by,
         }))
         return { ...prev, audits, view_scope: data.view_scope }
       })
@@ -728,6 +736,12 @@ export function TicketAudit() {
           <h1>Ticket Audit</h1>
         </div>
       </header>
+
+      {autoAuditEnabled ? (
+        <p className="scaffold-banner">
+          Auto Audit enabled — tickets closed on Intercom will be scored automatically.
+        </p>
+      ) : null}
 
       {!ticketId && role === 'owner' ? <AgentAliasMapping /> : null}
       {!ticketId && role === 'owner' ? <IntercomIdentityAliasMapping /> : null}
@@ -815,7 +829,17 @@ export function TicketAudit() {
                     ticket.audits.map((audit) => (
                       <div key={audit.agent_user_id} className="agent-scorecard">
                         <div className="criterion-top">
-                          <h3>{audit.display_name}</h3>
+                          <h3>
+                            {audit.display_name}
+                            {audit.triggered_by === 'auto' && (
+                              <span
+                                className="nav-soon"
+                                title="Scored automatically when this ticket was ingested from Intercom"
+                              >
+                                Auto-audited
+                              </span>
+                            )}
+                          </h3>
                           <p className="agent-scorecard-score">
                             {Math.round(audit.score)}
                             <span>/100</span>

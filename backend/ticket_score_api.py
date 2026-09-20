@@ -208,11 +208,74 @@ def activate_ticket_rubric_route(request: Request, name: str):
 
 def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
     org_id = auth.org_id_from_request(request)
-    # AC-72: a real Claude call per agent per ticket — generous but real.
-    rate_limit.enforce("ticket_score", org_id, limit=60, window_seconds=300)
     tid = _parse_ticket_id(ticket_id)
     viewer_id = auth.user_id_from_request(request)
     is_manager = auth.is_owner_or_manager(request)  # TA-12/AC-60
+
+    agent_results, turns, cached = _score_ticket_core(
+        org_id, tid, refresh=refresh, triggered_by="manual",
+        requested_by=getattr(request.state, "user_id", None),
+    )
+    return _payload(
+        tid, agent_results, turns, cached=cached, viewer_user_id=viewer_id, is_manager=is_manager,
+    )
+
+
+def auto_audit_ticket(org_id: str, ticket_id: str) -> None:
+    """IN-33: Intercom ingestion's own trigger for Auto Audit
+    (enable_ticket_auto_audit, IN-30). Checks the flag itself so
+    intercom_ingest.py stays unaware of scoring policy — call this
+    unconditionally at the end of ingestion.
+
+    Never raises. Any reason the shared core wouldn't score (not ready,
+    no resolved agent identities yet, rescore blocked, rate-limited)
+    surfaces there as an HTTPException; here it just means auto-audit
+    quietly doesn't fire this time — the ticket stays ready/unscored and
+    falls back to the manual path, which is the correct safety net, not
+    a gap (PRD §4.3). A real, unexpected failure is logged and reported
+    to Sentry, but still never propagates into the ingestion call site.
+    """
+    if not org_features.features_for_org(org_id).get("enable_ticket_auto_audit"):
+        return
+    try:
+        _score_ticket_core(
+            org_id, ticket_id, refresh=False, triggered_by="auto", requested_by=None,
+        )
+    except HTTPException as e:
+        applog.event(
+            log, "ticket_auto_audit_skipped",
+            ticket_id=ticket_id, org_id=org_id, status=e.status_code, reason=e.detail,
+        )
+    except Exception as e:  # noqa: BLE001
+        applog.event(
+            log, "ticket_auto_audit_failed", level=logging.ERROR,
+            ticket_id=ticket_id, org_id=org_id, error=applog.safe_exception_text(e),
+        )
+        sentry_report.capture_exception(e)
+
+
+def _score_ticket_core(
+    org_id: str,
+    tid: str,
+    *,
+    refresh: bool,
+    triggered_by: str,
+    requested_by: str | None,
+) -> tuple[list[dict], list[dict], bool]:
+    """The actual scoring logic, shared by score_ticket_route (manual,
+    triggered_by="manual") and auto_audit_ticket (triggered_by="auto",
+    IN-32/IN-33) — reused, not duplicated, per the PRD. Raises
+    HTTPException for every reason scoring didn't happen; the HTTP route
+    lets that propagate as the response, auto_audit_ticket() catches it.
+
+    Returns (agent_results, turns, cached) — unfiltered by viewer
+    permission; score_ticket_route applies that via _payload(). Callers
+    with no viewer (auto-audit) just discard the return value.
+    """
+    # AC-72: a real Claude call per agent per ticket — generous but real.
+    # Same bucket/key regardless of triggered_by, so auto-audit queues
+    # behind manual scoring's existing budget rather than a separate one.
+    rate_limit.enforce("ticket_score", org_id, limit=60, window_seconds=300)
 
     ticket = ticket_ingest.get_ticket(tid, org_id)
     if not ticket:
@@ -306,10 +369,13 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
             )
             raise HTTPException(status_code=502, detail="Ticket scoring failed.") from None
 
+        for r in fresh_results:
+            r["triggered_by"] = triggered_by
+
         try:
             ticket_audit_store.upsert_many(
                 tid, org_id, fresh_results,
-                requested_by=getattr(request.state, "user_id", None),
+                requested_by=requested_by, triggered_by=triggered_by,
             )
         except Exception as e:  # noqa: BLE001
             applog.event(
@@ -356,9 +422,7 @@ def score_ticket_route(request: Request, ticket_id: str, refresh: bool = False):
         ),
     )
 
-    return _payload(
-        tid, agent_results, turns, cached=cached, viewer_user_id=viewer_id, is_manager=is_manager,
-    )
+    return agent_results, turns, cached
 
 
 _BULK_AUDIT_MAX_PER_CALL = 50  # stays under the 60/300s ticket_score rate limit

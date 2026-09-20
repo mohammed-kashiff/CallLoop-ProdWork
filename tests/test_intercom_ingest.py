@@ -650,6 +650,43 @@ def test_ingest_intercom_conversation_happy_path_writes_turns_and_marks_ready(mo
     assert len(inserted["turns"]) == 3
 
 
+def test_ingest_intercom_conversation_calls_auto_audit_after_marking_ready(monkeypatch):
+    """IN-33: the ingestion path's own trigger for Auto Audit — called
+    unconditionally (auto_audit_ticket checks the flag itself), and
+    only after the ticket is already marked 'ready'."""
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "find_ticket_by_external_id",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        intercom_ingest.org_vault, "load_credential",
+        lambda *a, **k: {"access_token": "tok"},
+    )
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "create_ticket",
+        lambda org_id, *, source, external_id: "new-ticket-id",
+    )
+    statuses = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_ingest, "set_ticket_status",
+        lambda ticket_id, org_id, status: statuses.append(status),
+    )
+    monkeypatch.setattr(intercom_ingest.ticket_ingest, "insert_ticket_messages", lambda *a, **k: None)
+    monkeypatch.setattr(
+        intercom_ingest.intercom_client, "get_conversation",
+        lambda token, cid: REAL_SHAPED_CONVERSATION,
+    )
+    calls: list = []
+    monkeypatch.setattr(
+        intercom_ingest.ticket_score_api, "auto_audit_ticket",
+        lambda org_id, ticket_id: calls.append((org_id, ticket_id, tuple(statuses))),
+    )
+
+    result = intercom_ingest.ingest_intercom_conversation("org-1", "conv-123")
+
+    assert calls == [("org-1", result, ("processing", "ready"))]
+
+
 def test_ingest_intercom_conversation_stores_display_metadata(monkeypatch):
     monkeypatch.setattr(
         intercom_ingest.ticket_ingest, "find_ticket_by_external_id",

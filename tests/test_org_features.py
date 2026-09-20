@@ -150,6 +150,7 @@ def test_default_features_keeps_trial_on_and_selfhosted_off():
     off_by_default = {
         "use_selfhosted_transcription", "enable_bulk_call_clear",
         "enable_call_rescoring", "enable_ticket_rescoring",
+        "enable_ticket_auto_audit",
     }
     assert all(
         flags[key] is True
@@ -191,6 +192,17 @@ def test_bulk_call_clear_is_the_only_danger_tier_flag_today():
     assert defs["enable_bulk_call_clear"]["risk"] == "danger"
     danger_keys = {k for k, d in defs.items() if d["risk"] == "danger"}
     assert danger_keys == {"enable_bulk_call_clear"}
+
+
+def test_enable_ticket_auto_audit_is_off_by_default_and_medium_risk():
+    """IN-30/IN-31: real Claude spend per closed ticket with no human in
+    the loop deciding when — same off-by-default reasoning as
+    enable_ticket_rescoring, and never destructive (reversible, org-
+    scoped), so medium not danger."""
+    defs = {d["key"]: d for d in feature_definitions()}
+    assert defs["enable_ticket_auto_audit"]["default_enabled"] is False
+    assert defs["enable_ticket_auto_audit"]["risk"] == "medium"
+    assert "enable_ticket_auto_audit" in DEFAULT_OFF_KEYS
 
 
 def test_admin_feature_flags_route_returns_risk_metadata(monkeypatch):

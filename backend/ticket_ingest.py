@@ -516,7 +516,8 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
             ).fetchall()
             audit_rows = conn.execute(
                 """
-                SELECT agent_user_id, score, findings, created_at, updated_at
+                SELECT agent_user_id, score, findings, triggered_by,
+                       created_at, updated_at
                 FROM ticket_audits
                 WHERE ticket_id = %s AND org_id = %s
                 ORDER BY created_at
@@ -585,6 +586,7 @@ def get_ticket(ticket_id: str, org_id: str) -> dict | None:
                 "display_name": member_names.get(str(row["agent_user_id"]))
                 or str(row["agent_user_id"])[:8],
                 "score": row["score"],
+                "triggered_by": row["triggered_by"],
                 "created_at": _iso(row["created_at"]),
                 "updated_at": _iso(row["updated_at"]),
                 **(row["findings"] if isinstance(row["findings"], dict) else {}),

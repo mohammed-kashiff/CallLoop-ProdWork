@@ -50,6 +50,16 @@ enable_justcall_integration=false row at creation time — JustCall
 starts opted-out for new signups; Intercom does not get this special
 case and stays on the coded default.
 
+enable_ticket_auto_audit (IN-30..35, 2026-09-20): scores a ticket the
+moment it finishes ingesting from Intercom, no manual click. Off by
+default, permanently, same reasoning as enable_call_rescoring/
+enable_ticket_rescoring being off by default — this changes real
+behavior and spends real Claude money per closed ticket with no human
+deciding when, so an org opts in deliberately. Checked by
+ticket_score_api.auto_audit_ticket(), called from
+intercom_ingest._ingest_intercom_object() only — the PDF upload path
+is untouched, v1 is Intercom-only.
+
 org_id is the JWT tenant only. Do not read it from the request body here.
 """
 
@@ -203,6 +213,17 @@ FEATURE_DEFINITIONS: dict[str, FeatureDefinition] = {
         ),
         "risk": "medium",
         "default_enabled": True,
+    },
+    "enable_ticket_auto_audit": {
+        "label": "Auto Audit (Intercom tickets)",
+        "description": (
+            "Scores a ticket automatically the moment it finishes "
+            "ingesting from Intercom — no manual click. Off by default; "
+            "spends a real Claude call per agent per closed ticket once "
+            "turned on for this org."
+        ),
+        "risk": "medium",
+        "default_enabled": False,
     },
 }
 
