@@ -544,6 +544,8 @@ sequenceDiagram
 
 **AC-12 hosting decision (explicit):** the internal console lives at `https://commandcenter.call-loop.com` as the **same frontend build** with a second custom domain, not a separate deployed admin app. Hostname switches routing/chrome; API auth is unchanged (`require_platform_admin`). CORS allowlists that origin (`backend.config.ADMIN_ORIGIN`); wildcards are rejected. This is not a hardened origin boundary — customer JS still contains the Admin page.
 
+**Command Center visual (2026-09-20):** Tailwind v4 in `frontend/src/cc.css` for the admin host only (no Preflight; utilities `@layer` + scoped to `.layout-shell--admin`). AC-32's "extend tokens, don't adopt Tailwind" still applies to the customer app. Electric Cyan `.cc-shell` in `App.css` was removed.
+
 **`require_owner()`** (`backend/auth.py`) is the equivalent gate for the self-serve rubric builder — checks `request.state.role == "owner"` (set on every request from `org_members.role`). `org_members.role` is only `"owner"` or `"member"` today (see `docs/adr/001-tenancy-model.md` / the roles hierarchy note); there's no team-admin tier yet, so this starts owner-only and will need revisiting once that role ships.
 
 ---

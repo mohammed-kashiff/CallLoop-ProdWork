@@ -1,28 +1,15 @@
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { CcDenied, CommandCenterPage } from '../components/cc/CommandCenterPage'
+import { ccHint } from '../components/cc/classes'
 import { ADMIN_ORIGIN, isAdminHost } from '../lib/adminHost'
 import { ActivityLogTable } from './ActivityLog'
-
-// AC-63/AC-69: every org's activity, in one place — Command Center,
-// platform admin only. Same gate/host pattern as PlatformAdmins.tsx.
 
 export function AdminActivityLog() {
   const { isPlatformAdmin } = useAuth()
 
   if (!isPlatformAdmin) {
-    if (isAdminHost()) {
-      return (
-        <>
-          <header className="page-bar">
-            <div>
-              <p className="crumb">Command Center</p>
-              <h1>Activity Log</h1>
-            </div>
-          </header>
-          <p className="admin-provision-hint">This console is limited to platform admins.</p>
-        </>
-      )
-    }
+    if (isAdminHost()) return <CcDenied title="Security log" />
     return <Navigate to="/" replace />
   }
 
@@ -34,17 +21,11 @@ export function AdminActivityLog() {
   }
 
   return (
-    <>
-      <header className="page-bar">
-        <div>
-          <p className="crumb">Command Center</p>
-          <h1>Activity Log</h1>
-        </div>
-      </header>
-      <p className="scaffold-banner">
+    <CommandCenterPage title="Security log" crumb="Command Center">
+      <p className={`${ccHint} mb-6`}>
         Every real state-changing action across every org — who did it, when, what changed.
       </p>
-      <ActivityLogTable endpoint="/api/admin/audit-log" showOrg />
-    </>
+      <ActivityLogTable endpoint="/api/admin/audit-log" showOrg variant="cc" filterable />
+    </CommandCenterPage>
   )
 }

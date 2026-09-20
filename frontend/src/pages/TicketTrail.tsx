@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom'
+import { CommandCenterPage } from '../components/cc/CommandCenterPage'
+import { CcTimeline, type CcTrailEvent } from '../components/cc/CcTimeline'
+import { ccErr, ccHint, ccMono } from '../components/cc/classes'
 import { useAuth } from '../context/AuthContext'
 import { apiFetch, readError } from '../lib/api'
 import { isAdminHost } from '../lib/adminHost'
@@ -24,12 +27,6 @@ type TrailPayload = {
 function stageLabel(stage: string): string {
   if (stage.startsWith('criterion:')) return `Criterion — ${stage.slice('criterion:'.length)}`
   return capFirst(stage.replace(/_/g, ' '))
-}
-
-function statusIcon(status: TrailEvent['status']): string {
-  if (status === 'succeeded') return '✓'
-  if (status === 'failed') return '✕'
-  return '…'
 }
 
 function agentIdFromDetail(detail: Record<string, unknown> | null): string | null {
@@ -102,82 +99,42 @@ export function TicketTrail() {
   if (!isAdminHost()) return <Navigate to="/" replace />
   if (!isPlatformAdmin) return <Navigate to="/admin" replace />
 
-  const title = data
-    ? capFirst(data.subject || `Ticket ${data.ticket_id}`)
-    : 'Ticket trail'
+  const title = data ? capFirst(data.subject || `Ticket ${data.ticket_id}`) : 'Ticket trail'
+  const events: CcTrailEvent[] = (data?.events || []).map((e) => ({
+    stage: stageLabel(e.stage),
+    status: e.status,
+    created_at: e.created_at,
+    error: e.error,
+    apis: apisFromDetail(e.detail),
+    extra: detailWithoutApis(e.detail),
+    agentId: agentIdFromDetail(e.detail),
+  }))
 
   return (
-    <>
-      <header className="page-bar">
-        <div>
-          <p className="crumb">
-            <Link to="/ticket-logs">Ticket logs</Link>
-            {data ? ` / ${data.ticket_id}` : ''}
-          </p>
-          <h1>{title}</h1>
-        </div>
-      </header>
-
+    <CommandCenterPage
+      title={title}
+      crumb={
+        <>
+          <Link className="hover:underline" to="/ticket-logs">
+            Ticket logs
+          </Link>
+          {data ? ` / ${data.ticket_id}` : ''}
+        </>
+      }
+    >
       {error ? (
-        <p className="upload-error" role="alert">
+        <p className={ccErr} role="alert">
           {error}
         </p>
       ) : null}
-      {loading ? <p className="panel-lede">Loading trail…</p> : null}
-
+      {loading ? <p className={ccHint}>Loading trail…</p> : null}
       {data && !loading ? (
-        <div className="admin-card">
-          <p className="admin-id">{data.org_id}</p>
-          {data.source ? <p className="admin-provision-hint">{data.source}</p> : null}
-          {data.events.length === 0 ? (
-            <p className="empty-copy">No pipeline events recorded for this ticket yet.</p>
-          ) : (
-            <ol className="call-trail-list">
-              {data.events.map((e, i) => {
-                const agentId = agentIdFromDetail(e.detail)
-                const apis = apisFromDetail(e.detail)
-                const extra = detailWithoutApis(e.detail)
-                return (
-                  <li key={i} className={`call-trail-item is-${e.status}`}>
-                    <span className="call-trail-icon" aria-hidden="true">
-                      {statusIcon(e.status)}
-                    </span>
-                    <div className="call-trail-body">
-                      <div className="call-trail-head">
-                        <span className="call-trail-stage">{stageLabel(e.stage)}</span>
-                        <span className="call-trail-time">
-                          {e.created_at ? new Date(e.created_at).toLocaleString() : '—'}
-                        </span>
-                      </div>
-                      {agentId ? (
-                        <p className="admin-provision-hint">Agent {agentId}</p>
-                      ) : null}
-                      {e.error ? <p className="call-trail-error">{e.error}</p> : null}
-                      {apis.length ? (
-                        <ul className="call-trail-apis">
-                          {apis.map((api, j) => (
-                            <li key={`${api.method}-${api.endpoint}-${j}`} className="call-trail-api">
-                              <span className="call-trail-api-method">{api.method}</span>
-                              <code className="call-trail-api-endpoint">{api.endpoint}</code>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="call-trail-api-none">No API recorded for this step</p>
-                      )}
-                      {extra ? (
-                        <pre className="call-trail-detail">
-                          {JSON.stringify(extra, null, 2)}
-                        </pre>
-                      ) : null}
-                    </div>
-                  </li>
-                )
-              })}
-            </ol>
-          )}
+        <div className="grid gap-4">
+          <p className={ccMono}>{data.org_id}</p>
+          {data.source ? <p className={ccHint}>{data.source}</p> : null}
+          <CcTimeline events={events} />
         </div>
       ) : null}
-    </>
+    </CommandCenterPage>
   )
 }

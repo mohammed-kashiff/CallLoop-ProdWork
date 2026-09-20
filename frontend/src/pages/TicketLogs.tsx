@@ -1,5 +1,9 @@
-import { useState, type FormEvent } from 'react'
-import { Link, Navigate } from 'react-router-dom'
+import { useEffect, useState, type FormEvent } from 'react'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
+import { CcDenied, CommandCenterPage } from '../components/cc/CommandCenterPage'
+import { CcSearchBar } from '../components/cc/CcSearchBar'
+import { CcEmpty, CcTable } from '../components/cc/CcTable'
+import { ccErr, ccHint, ccMono, ccRow, ccTd } from '../components/cc/classes'
 import { useAuth } from '../context/AuthContext'
 import { apiFetch, readError } from '../lib/api'
 import { isAdminHost } from '../lib/adminHost'
@@ -45,14 +49,15 @@ function sourceLabel(source: string | null): string {
 
 export function TicketLogs() {
   const { isPlatformAdmin } = useAuth()
-  const [query, setQuery] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initial = searchParams.get('query') || ''
+  const [query, setQuery] = useState(initial)
   const [data, setData] = useState<TicketLogsPayload | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const search = async (e: FormEvent) => {
-    e.preventDefault()
-    const q = query.trim()
+  const runSearch = async (raw: string) => {
+    const q = raw.trim()
     if (!q) return
     setError(null)
     setLoading(true)
@@ -68,115 +73,85 @@ export function TicketLogs() {
     }
   }
 
+  useEffect(() => {
+    if (initial) void runSearch(initial)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once for deep-link query
+  }, [])
+
+  const search = async (e: FormEvent) => {
+    e.preventDefault()
+    const q = query.trim()
+    if (!q) return
+    setSearchParams({ query: q })
+    await runSearch(q)
+  }
+
   if (!isPlatformAdmin) {
-    if (isAdminHost()) {
-      return (
-        <>
-          <header className="page-bar">
-            <div>
-              <p className="crumb">Platform</p>
-              <h1>Ticket logs</h1>
-            </div>
-          </header>
-          <p className="admin-provision-hint">This console is limited to platform admins.</p>
-        </>
-      )
-    }
+    if (isAdminHost()) return <CcDenied title="Ticket logs" />
     return <Navigate to="/" replace />
   }
 
   return (
-    <>
-      <header className="page-bar">
-        <div>
-          <p className="crumb">Platform</p>
-          <h1>Ticket logs</h1>
-        </div>
-      </header>
-
-      <section className="admin-card">
-        <h2>Search</h2>
-        <p className="admin-provision-hint">
-          Email, org id, or short id. A team member&rsquo;s id shows tickets they
-          appear on as an agent; the account owner&rsquo;s id (or a bare org id)
-          shows the whole org.
+    <CommandCenterPage title="Ticket logs" crumb="Command Center">
+      <CcSearchBar
+        value={query}
+        onChange={setQuery}
+        onSubmit={(e) => void search(e)}
+        placeholder="Email, org id, or short id"
+        hint="A team member’s id shows tickets they appear on as an agent; the account owner’s id (or a bare org id) shows the whole org."
+        loading={loading}
+      />
+      {error ? (
+        <p className={ccErr} role="alert">
+          {error}
         </p>
-        <form className="admin-provision-form" onSubmit={(e) => void search(e)}>
-          <label>
-            Email, org id, or short id
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="ada@example.com, UUID, or 100001"
-              required
-            />
-          </label>
-          <button type="submit" className="start-btn" disabled={loading}>
-            {loading ? 'Searching…' : 'Search'}
-          </button>
-        </form>
-        {error ? (
-          <p className="upload-error" role="alert">
-            {error}
-          </p>
-        ) : null}
-      </section>
+      ) : null}
 
       {data ? (
-        <div className="admin-card admin-calls-full">
-          <h3>{scopeLabel(data.matched)}</h3>
-          <p className="admin-id">{data.matched.org_id}</p>
-          <div className="admin-calls">
-            <dl className="admin-stats">
-              <div>
-                <dt>Total tickets</dt>
-                <dd>{data.total_tickets}</dd>
-              </div>
-            </dl>
-            <div className="admin-table-wrap">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Subject</th>
-                    <th>Source</th>
-                    <th>Status</th>
-                    <th>External id</th>
-                    <th>Trail</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.tickets.map((t) => (
-                    <tr key={t.ticket_id}>
-                      <td>
-                        {t.created_at ? new Date(t.created_at).toLocaleDateString() : '—'}
-                      </td>
-                      <td>{t.subject || t.ticket_id}</td>
-                      <td>{sourceLabel(t.source)}</td>
-                      <td>{t.status || '—'}</td>
-                      <td>{t.external_id || '—'}</td>
-                      <td>
-                        <Link
-                          to={`/ticket-logs/${t.ticket_id}/trail?org_id=${encodeURIComponent(data.matched.org_id)}`}
-                        >
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {data.tickets.length === 0 ? <p className="empty-copy">No tickets found.</p> : null}
-              {data.tickets_truncated ? (
-                <p className="admin-provision-hint">
-                  Showing the {data.tickets.length} most recent of {data.total_tickets} tickets.
-                </p>
-              ) : null}
-            </div>
+        <div className="grid gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-cc-ink">{scopeLabel(data.matched)}</h2>
+            <p className={ccMono}>{data.matched.org_id}</p>
+            <p className={`${ccHint} mt-1`}>{data.total_tickets} tickets</p>
           </div>
+          {data.tickets.length === 0 ? (
+            <CcEmpty title="No tickets found" body="Nothing ingested for this org or member yet." />
+          ) : (
+            <CcTable
+              columns={['Date', 'Subject', 'Source', 'Status', 'External id', 'Trail']}
+              footer={
+                data.tickets_truncated ? (
+                  <p className={ccHint}>
+                    Showing the {data.tickets.length} most recent of {data.total_tickets} tickets.
+                  </p>
+                ) : null
+              }
+            >
+              {data.tickets.map((t) => (
+                <tr key={t.ticket_id} className={ccRow}>
+                  <td className={ccTd}>
+                    {t.created_at ? new Date(t.created_at).toLocaleDateString() : '—'}
+                  </td>
+                  <td className={ccTd}>{t.subject || t.ticket_id}</td>
+                  <td className={ccTd}>{sourceLabel(t.source)}</td>
+                  <td className={ccTd}>{t.status || '—'}</td>
+                  <td className={`${ccTd} ${ccMono}`}>{t.external_id || '—'}</td>
+                  <td className={ccTd}>
+                    <Link
+                      className="font-semibold text-cc-ink underline-offset-2 hover:underline"
+                      to={`/ticket-logs/${t.ticket_id}/trail?org_id=${encodeURIComponent(data.matched.org_id)}`}
+                    >
+                      View
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </CcTable>
+          )}
         </div>
+      ) : !loading ? (
+        <CcEmpty title="Search an org or member" body="Results show here." />
       ) : null}
-    </>
+    </CommandCenterPage>
   )
 }

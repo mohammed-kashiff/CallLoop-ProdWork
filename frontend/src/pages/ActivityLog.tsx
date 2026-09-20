@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { apiFetch, readError } from '../lib/api'
+import { CcEmpty, CcTable } from '../components/cc/CcTable'
+import { ccErr, ccHint, ccInput, ccMono, ccRow, ccTd } from '../components/cc/classes'
 
 // AC-63/AC-69: this org's own durable audit trail — who did what, when.
 // Owner-or-manager only (AC-56), same tier as the ticket-audit team view
@@ -53,10 +55,21 @@ function diffSummary(row: AuditLogRow): string | null {
   return parts.length ? parts.join(', ') : null
 }
 
-export function ActivityLogTable({ endpoint, showOrg }: { endpoint: string; showOrg?: boolean }) {
+export function ActivityLogTable({
+  endpoint,
+  showOrg,
+  variant = 'default',
+  filterable = false,
+}: {
+  endpoint: string
+  showOrg?: boolean
+  variant?: 'default' | 'cc'
+  filterable?: boolean
+}) {
   const [rows, setRows] = useState<(AuditLogRow & { org_id?: string })[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -81,15 +94,34 @@ export function ActivityLogTable({ endpoint, showOrg }: { endpoint: string; show
     }
   }, [endpoint])
 
-  if (loading) return <p className="panel-lede">Loading…</p>
+  const visible = useMemo(() => {
+    if (!rows) return []
+    const q = filter.trim().toLowerCase()
+    if (!q) return rows
+    return rows.filter((row) => {
+      const email = (row.actor_email || '').toLowerCase()
+      const ip = (row.ip_address || '').toLowerCase()
+      return email.includes(q) || ip.includes(q)
+    })
+  }, [rows, filter])
+
+  if (loading) return <p className={variant === 'cc' ? ccHint : 'panel-lede'}>Loading…</p>
   if (error) {
     return (
-      <p className="upload-error" role="alert">
+      <p className={variant === 'cc' ? ccErr : 'upload-error'} role="alert">
         {error}
       </p>
     )
   }
   if (!rows || rows.length === 0) {
+    if (variant === 'cc') {
+      return (
+        <CcEmpty
+          title="No activity recorded yet"
+          body="This fills in as real state-changing actions happen (a role change, a credential save, a rubric activation)."
+        />
+      )
+    }
     return (
       <p className="empty-copy">
         No activity recorded yet — this fills in as real state-changing actions happen (a role
@@ -98,7 +130,22 @@ export function ActivityLogTable({ endpoint, showOrg }: { endpoint: string; show
     )
   }
 
-  return (
+  const table = variant === 'cc' ? (
+    <CcTable
+      columns={['When', ...(showOrg ? ['Org'] : []), 'Who', 'Action', 'Target', 'What changed']}
+    >
+      {visible.map((row) => (
+        <tr key={row.id} className={ccRow}>
+          <td className={ccTd}>{formatWhen(row.created_at)}</td>
+          {showOrg ? <td className={`${ccTd} ${ccMono}`}>{row.org_id ? row.org_id.slice(0, 8) : '—'}</td> : null}
+          <td className={ccTd}>{row.actor_email || (row.actor_id ? row.actor_id.slice(0, 8) : '—')}</td>
+          <td className={ccTd}>{actionLabel(row.action)}</td>
+          <td className={ccTd}>{row.target_id ? `${row.target_type || ''} ${row.target_id}`.trim() : '—'}</td>
+          <td className={ccTd}>{diffSummary(row) || '—'}</td>
+        </tr>
+      ))}
+    </CcTable>
+  ) : (
     <div className="admin-table-wrap">
       <table className="admin-table">
         <thead>
@@ -112,7 +159,7 @@ export function ActivityLogTable({ endpoint, showOrg }: { endpoint: string; show
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {visible.map((row) => (
             <tr key={row.id}>
               <td>{formatWhen(row.created_at)}</td>
               {showOrg ? <td>{row.org_id ? row.org_id.slice(0, 8) : '—'}</td> : null}
@@ -124,6 +171,30 @@ export function ActivityLogTable({ endpoint, showOrg }: { endpoint: string; show
           ))}
         </tbody>
       </table>
+    </div>
+  )
+
+  return (
+    <div className="grid gap-4">
+      {filterable ? (
+        <input
+          type="search"
+          className={variant === 'cc' ? ccInput : undefined}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter by email or IP"
+          aria-label="Filter by email or IP"
+        />
+      ) : null}
+      {visible.length === 0 ? (
+        variant === 'cc' ? (
+          <CcEmpty title="No matching rows" body="Try a different email or IP." />
+        ) : (
+          <p className="empty-copy">No matching rows.</p>
+        )
+      ) : (
+        table
+      )}
     </div>
   )
 }

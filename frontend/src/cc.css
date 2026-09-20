@@ -1,0 +1,50 @@
+/* Command Center only. No Preflight — customer App.css owns the global reset.
+   Utilities sit in @layer so unlayered App.css always wins on a name collision.
+   important(.layout-shell--admin) is not used: Tailwind 4.3 emits invalid
+   `@media important(...)` that lightningcss rejects. Host isolation is
+   `.layout-shell--admin` on the admin shell plus @source only CC files. */
+
+@layer theme, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@source "./pages/Admin.tsx";
+@source "./pages/CallLogs.tsx";
+@source "./pages/TicketLogs.tsx";
+@source "./pages/CallTrail.tsx";
+@source "./pages/TicketTrail.tsx";
+@source "./pages/PlatformAdmins.tsx";
+@source "./pages/AdminActivityLog.tsx";
+@source "./pages/ActivityLog.tsx";
+@source "./components/cc/**/*.tsx";
+@source "./components/cc/**/*.ts";
+@source "./components/AppLayout.tsx";
+@source "./components/Sidebar.tsx";
+
+@custom-variant dark (&:where(html[data-color-mode="dark"], html[data-color-mode="dark"] *));
+
+@theme {
+  --font-sans: Figtree, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-cc-paper: #f4f2ee;
+  --color-cc-card: #ffffff;
+  --color-cc-ink: #14202a;
+  --color-cc-muted: #5c6b75;
+  --color-cc-line: #e4e0d8;
+  --color-cc-sidebar: #111418;
+  --color-cc-fail: #b42318;
+  --color-cc-pass: #0f766e;
+}
+
+html[data-color-mode="dark"] .layout-shell--admin {
+  --color-cc-paper: #0c1014;
+  --color-cc-card: #141a20;
+  --color-cc-ink: #e8eef2;
+  --color-cc-muted: #93a3bb;
+  --color-cc-line: rgba(232, 238, 248, 0.12);
+  --color-cc-sidebar: #080a0c;
+  --color-cc-fail: #fb7185;
+  --color-cc-pass: #5eead4;
+}

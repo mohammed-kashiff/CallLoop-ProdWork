@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
+import { CcDenied, CommandCenterPage } from '../components/cc/CommandCenterPage'
+import { CcEmpty, CcTable } from '../components/cc/CcTable'
+import { ccBtn, ccErr, ccHint, ccInput, ccLabel, ccRow, ccTd } from '../components/cc/classes'
 import { apiFetch, readError } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 import { ADMIN_ORIGIN, isAdminHost } from '../lib/adminHost'
-
-// Command Center > Platform Admins. Platform admin is CallLoop-internal
-// staff only and must never reach a customer — every route this page
-// calls is gated server-side by auth.require_platform_admin, so even a
-// customer who found this URL would get a 403 on every request here.
-// This page only exists to grant it to another *internal* teammate
-// without touching the PLATFORM_ADMIN_EMAILS env var + a redeploy.
 
 type PlatformAdminRow = {
   email: string
@@ -100,26 +96,11 @@ export function PlatformAdmins() {
   }
 
   if (!isPlatformAdmin) {
-    if (isAdminHost()) {
-      return (
-        <>
-          <header className="page-bar">
-            <div>
-              <p className="crumb">Command Center</p>
-              <h1>Platform Admins</h1>
-            </div>
-          </header>
-          <p className="admin-provision-hint">This console is limited to platform admins.</p>
-        </>
-      )
-    }
+    if (isAdminHost()) return <CcDenied title="Platform Admins" />
     return <Navigate to="/" replace />
   }
 
   if (!isAdminHost()) {
-    // Command Center pages live only at commandcenter.call-loop.com, never
-    // web.call-loop.com — even for an actual platform admin. Full cross-origin
-    // navigation (not a router Link) since this is a different host.
     if (typeof window !== 'undefined') {
       window.location.href = `${ADMIN_ORIGIN}/platform-admins`
     }
@@ -127,102 +108,84 @@ export function PlatformAdmins() {
   }
 
   return (
-    <>
-      <header className="page-bar">
-        <div>
-          <p className="crumb">Command Center</p>
-          <h1>Platform Admins</h1>
-        </div>
-      </header>
-
-      <p className="scaffold-banner">
+    <CommandCenterPage title="Platform Admins" crumb="Command Center">
+      <p className={`${ccHint} mb-6`}>
         CallLoop-internal staff only — never grant this to a customer. Platform admin unlocks
         Command Center, cross-org call logs, and every /api/admin route across every workspace.
       </p>
 
-      <section className="admin-provision" aria-label="Grant platform admin access">
-        <h2>Grant access</h2>
-        <p className="admin-provision-hint">
+      <section className="mb-8 rounded-lg border border-cc-line bg-cc-card p-5" aria-label="Grant platform admin access">
+        <h2 className="mb-1 text-base font-semibold text-cc-ink">Grant access</h2>
+        <p className={`${ccHint} mb-4`}>
           Adds an email to the DB-managed allowlist. Statically configured admins
           (PLATFORM_ADMIN_EMAILS) are separate and not shown or editable here.
         </p>
-        <form className="admin-provision-form" onSubmit={(e) => void addAdmin(e)}>
-          <label>
+        <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => void addAdmin(e)}>
+          <label className={ccLabel}>
             Email
             <input
               type="email"
+              className={`${ccInput} min-w-[16rem]`}
               value={newEmail}
               onChange={(e) => setNewEmail(e.target.value)}
               required
             />
           </label>
-          <button type="submit" className="start-btn" disabled={adding}>
+          <button type="submit" className={ccBtn} disabled={adding}>
             {adding ? 'Granting…' : 'Grant access'}
           </button>
         </form>
         {addError ? (
-          <p className="upload-error" role="alert">
+          <p className={`${ccErr} mt-3`} role="alert">
             {addError}
           </p>
         ) : null}
       </section>
 
       {loadError ? (
-        <p className="upload-error" role="alert">
+        <p className={ccErr} role="alert">
           {loadError}
         </p>
       ) : null}
       {removeError ? (
-        <p className="upload-error" role="alert">
+        <p className={ccErr} role="alert">
           {removeError}
         </p>
       ) : null}
-      {loading ? <p className="panel-lede">Loading…</p> : null}
+      {loading ? <p className={ccHint}>Loading…</p> : null}
 
       {!loading && !loadError ? (
         admins.length ? (
-          <div className="admin-table-wrap">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>Email</th>
-                  <th>Added by</th>
-                  <th>Added</th>
-                  <th aria-label="Actions" />
+          <CcTable columns={['Email', 'Added by', 'Added', '']}>
+            {admins.map((a) => {
+              const isSelf = Boolean(myEmail && myEmail.toLowerCase() === a.email.toLowerCase())
+              return (
+                <tr key={a.email} className={ccRow}>
+                  <td className={ccTd}>{a.email}</td>
+                  <td className={ccTd}>{a.added_by || '—'}</td>
+                  <td className={ccTd}>{formatWhen(a.created_at)}</td>
+                  <td className={ccTd}>
+                    <button
+                      type="button"
+                      className="text-[13px] font-semibold text-cc-fail disabled:opacity-40"
+                      disabled={isSelf || removing === a.email}
+                      title={isSelf ? 'You cannot remove your own access here.' : undefined}
+                      onClick={() => void removeAdmin(a.email)}
+                    >
+                      {removing === a.email ? 'Removing…' : 'Remove'}
+                    </button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {admins.map((a) => {
-                  const isSelf = Boolean(myEmail && myEmail.toLowerCase() === a.email.toLowerCase())
-                  return (
-                    <tr key={a.email}>
-                      <td>{a.email}</td>
-                      <td>{a.added_by || '—'}</td>
-                      <td>{formatWhen(a.created_at)}</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="ghost-btn"
-                          disabled={isSelf || removing === a.email}
-                          title={isSelf ? 'You cannot remove your own access here.' : undefined}
-                          onClick={() => void removeAdmin(a.email)}
-                        >
-                          {removing === a.email ? 'Removing…' : 'Remove'}
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+              )
+            })}
+          </CcTable>
         ) : (
-          <p className="empty-copy">
-            No platform admins granted through this table yet — only statically configured
-            (PLATFORM_ADMIN_EMAILS) admins exist right now.
-          </p>
+          <CcEmpty
+            title="No DB-granted platform admins yet"
+            body="Only statically configured (PLATFORM_ADMIN_EMAILS) admins exist right now."
+          />
         )
       ) : null}
-    </>
+    </CommandCenterPage>
   )
 }

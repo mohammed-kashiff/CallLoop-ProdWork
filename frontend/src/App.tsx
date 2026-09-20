@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom'
+import type { ReactNode } from 'react'
 import { AppLayout } from './components/AppLayout'
 import { RequireAuth } from './components/RequireAuth'
 import { AuditProvider } from './context/AuditContext'
@@ -39,8 +40,16 @@ import { Training } from './pages/Training'
 import { appHomePath, isAdminHost } from './lib/adminHost'
 import './App.css'
 import './live.css'
+import './cc.css'
 
 function AuthedShell() {
+  if (isAdminHost()) {
+    return (
+      <AuditProvider>
+        <Outlet />
+      </AuditProvider>
+    )
+  }
   return (
     <PyaiStatusProvider>
       <AuditProvider>
@@ -48,6 +57,11 @@ function AuthedShell() {
       </AuditProvider>
     </PyaiStatusProvider>
   )
+}
+
+function CustomerPage({ children }: { children: ReactNode }) {
+  if (isAdminHost()) return <Navigate to="/admin" replace />
+  return <>{children}</>
 }
 
 function App() {
@@ -66,18 +80,18 @@ function App() {
                 <Route element={<AuthedShell />}>
                   <Route element={<AppLayout />}>
                     <Route index element={adminHost ? <Admin /> : <Home />} />
-                    <Route path="neighbourhood" element={<Neighbourhood />} />
-                    <Route path="agents-pulse" element={<AgentsPulse />} />
-                    <Route path="agents-pulse/flagged" element={<FlaggedForReview />} />
-                    <Route path="team-performance" element={<TeamPerformance />} />
-                    <Route path="audits" element={<Audits />} />
-                    <Route path="audits/:callId" element={<AuditDetail />} />
-                    <Route path="rubric-builder" element={<RubricBuilder />} />
-                    <Route path="rubric-view" element={<RubricView />} />
-                    <Route path="feedbacks" element={<Feedbacks />} />
-                    <Route path="churn-risk" element={<ChurnRisk />} />
-                    <Route path="integrations" element={<Integrations />} />
-                    <Route path="training" element={<Training />} />
+                    <Route path="neighbourhood" element={<CustomerPage><Neighbourhood /></CustomerPage>} />
+                    <Route path="agents-pulse" element={<CustomerPage><AgentsPulse /></CustomerPage>} />
+                    <Route path="agents-pulse/flagged" element={<CustomerPage><FlaggedForReview /></CustomerPage>} />
+                    <Route path="team-performance" element={<CustomerPage><TeamPerformance /></CustomerPage>} />
+                    <Route path="audits" element={<CustomerPage><Audits /></CustomerPage>} />
+                    <Route path="audits/:callId" element={<CustomerPage><AuditDetail /></CustomerPage>} />
+                    <Route path="rubric-builder" element={<CustomerPage><RubricBuilder /></CustomerPage>} />
+                    <Route path="rubric-view" element={<CustomerPage><RubricView /></CustomerPage>} />
+                    <Route path="feedbacks" element={<CustomerPage><Feedbacks /></CustomerPage>} />
+                    <Route path="churn-risk" element={<CustomerPage><ChurnRisk /></CustomerPage>} />
+                    <Route path="integrations" element={<CustomerPage><Integrations /></CustomerPage>} />
+                    <Route path="training" element={<CustomerPage><Training /></CustomerPage>} />
                     <Route path="admin" element={<Admin />} />
                     <Route path="call-logs" element={<CallLogs />} />
                     <Route path="call-logs/:callId/trail" element={<CallTrail />} />
@@ -85,14 +99,14 @@ function App() {
                     <Route path="ticket-logs/:ticketId/trail" element={<TicketTrail />} />
                     <Route path="platform-admins" element={<PlatformAdmins />} />
                     <Route path="admin-activity-log" element={<AdminActivityLog />} />
-                    <Route path="activity-log" element={<ActivityLog />} />
-                    <Route path="ticket-audit" element={<TicketAudit />} />
-                    <Route path="ticket-audit/:ticketId" element={<TicketAudit />} />
-                    <Route path="ticket-audit-mine" element={<MyTicketContributions />} />
-                    <Route path="ticket-rubric-builder" element={<TicketRubricBuilder />} />
-                    <Route path="profile" element={<Profile />} />
-                    <Route path="kpi-targets" element={<KpiTargets />} />
-                    <Route path="pyai" element={<Pyai />} />
+                    <Route path="activity-log" element={<CustomerPage><ActivityLog /></CustomerPage>} />
+                    <Route path="ticket-audit" element={<CustomerPage><TicketAudit /></CustomerPage>} />
+                    <Route path="ticket-audit/:ticketId" element={<CustomerPage><TicketAudit /></CustomerPage>} />
+                    <Route path="ticket-audit-mine" element={<CustomerPage><MyTicketContributions /></CustomerPage>} />
+                    <Route path="ticket-rubric-builder" element={<CustomerPage><TicketRubricBuilder /></CustomerPage>} />
+                    <Route path="profile" element={<CustomerPage><Profile /></CustomerPage>} />
+                    <Route path="kpi-targets" element={<CustomerPage><KpiTargets /></CustomerPage>} />
+                    <Route path="pyai" element={<CustomerPage><Pyai /></CustomerPage>} />
                     <Route path="*" element={<Navigate to={home} replace />} />
                   </Route>
                 </Route>

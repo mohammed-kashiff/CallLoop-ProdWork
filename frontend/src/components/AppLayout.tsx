@@ -31,15 +31,25 @@ export function AppLayout() {
 
   return (
     <div
-      className={adminHost ? 'app-shell layout-shell layout-shell--admin' : 'app-shell layout-shell'}
+      className={
+        adminHost
+          ? 'layout-shell layout-shell--admin min-h-screen bg-cc-paper text-cc-ink'
+          : 'app-shell layout-shell'
+      }
       data-theme={theme}
       data-color-mode={mode}
     >
       {adminHost ? null : <ImpersonationBanner />}
       <Sidebar open={navOpen} onNavigate={() => setNavOpen(false)} />
 
-      <div className="content-shell">
-        <header className="app-topbar">
+      <div className={adminHost ? 'flex min-h-screen min-w-0 flex-col bg-cc-paper' : 'content-shell'}>
+        <header
+          className={
+            adminHost
+              ? 'flex items-center gap-3 border-b border-cc-line bg-cc-paper px-4 py-2.5'
+              : 'app-topbar'
+          }
+        >
           <button
             type="button"
             className="nav-toggle"
@@ -61,7 +71,7 @@ export function AppLayout() {
           <AccountMenu />
         </header>
 
-        <main className="main">
+        <main className={adminHost ? 'min-w-0 flex-1 px-6 py-8' : 'main'}>
           <Outlet />
         </main>
       </div>

@@ -246,7 +246,11 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
         aria-hidden="true"
       />
       <aside
-        className={['sidebar', open ? 'is-open' : ''].filter(Boolean).join(' ')}
+        className={
+          adminHost
+            ? ['sidebar', 'bg-cc-sidebar', open ? 'is-open' : ''].filter(Boolean).join(' ')
+            : ['sidebar', open ? 'is-open' : ''].filter(Boolean).join(' ')
+        }
         aria-label="Call Loop navigation"
       >
         <div className="sidebar-brand">
@@ -264,7 +268,9 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
         </div>
 
         {adminHost ? (
-          <p className="sidebar-tagline cc-sidebar-caption">Platform Admin</p>
+          <p className="px-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/40">
+            Platform admin
+          </p>
         ) : (
           <>
             <p className="sidebar-tagline">We close the loop</p>
@@ -273,11 +279,16 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
         )}
 
         {adminHost ? (
-          <nav className="sidebar-nav" aria-label="Admin">
+          <nav className="flex min-h-0 flex-1 flex-col gap-0.5" aria-label="Admin">
             <NavLink
               to="/admin"
               className={({ isActive }) =>
-                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+                [
+                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-white/70 hover:bg-white/5 hover:text-white',
+                  isActive ? 'bg-white/10 text-white' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')
               }
               onClick={onNavigate}
             >
@@ -286,7 +297,12 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
             <NavLink
               to="/call-logs"
               className={({ isActive }) =>
-                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+                [
+                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-white/70 hover:bg-white/5 hover:text-white',
+                  isActive ? 'bg-white/10 text-white' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')
               }
               onClick={onNavigate}
             >
@@ -295,7 +311,12 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
             <NavLink
               to="/ticket-logs"
               className={({ isActive }) =>
-                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+                [
+                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-white/70 hover:bg-white/5 hover:text-white',
+                  isActive ? 'bg-white/10 text-white' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')
               }
               onClick={onNavigate}
             >
@@ -304,7 +325,12 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
             <NavLink
               to="/platform-admins"
               className={({ isActive }) =>
-                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+                [
+                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-white/70 hover:bg-white/5 hover:text-white',
+                  isActive ? 'bg-white/10 text-white' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')
               }
               onClick={onNavigate}
             >
@@ -313,17 +339,25 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
             <NavLink
               to="/admin-activity-log"
               className={({ isActive }) =>
-                ['sidebar-link', isActive ? 'is-active' : ''].filter(Boolean).join(' ')
+                [
+                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-white/70 hover:bg-white/5 hover:text-white',
+                  isActive ? 'bg-white/10 text-white' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')
               }
               onClick={onNavigate}
             >
-              Activity log
+              Security log
             </NavLink>
-            <div className="cc-sidebar-footer">
-              <span className="cc-sidebar-avatar" aria-hidden="true">
+            <div className="mt-auto flex items-center gap-2.5 border-t border-white/10 px-1 pt-3">
+              <span
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-[13px] font-semibold text-white"
+                aria-hidden="true"
+              >
                 {(email || '?').slice(0, 1).toUpperCase()}
               </span>
-              <span className="cc-sidebar-email">{email || 'Unknown admin'}</span>
+              <span className="truncate text-[12px] text-white/55">{email || 'Unknown admin'}</span>
             </div>
           </nav>
         ) : (

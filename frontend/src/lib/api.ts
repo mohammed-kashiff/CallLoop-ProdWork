@@ -18,7 +18,16 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
     if (token) headers.set('Authorization', `Bearer ${token}`)
   }
   const url = /^https?:\/\//i.test(path) ? path : apiUrl(path)
-  return fetch(url, { ...init, headers })
+  const res = await fetch(url, { ...init, headers })
+  if (
+    res.status === 401 &&
+    typeof window !== 'undefined' &&
+    window.location.pathname !== '/login' &&
+    window.location.pathname !== '/reset-password'
+  ) {
+    window.location.assign('/login')
+  }
+  return res
 }
 
 // AC-45/AC-46 (observability PRD §7): frontend-only interactions with no

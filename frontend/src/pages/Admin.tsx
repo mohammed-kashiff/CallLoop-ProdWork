@@ -15,6 +15,20 @@ import { roleTagLabel } from '../lib/roles'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { CUSTOMER_ORIGIN, isAdminHost } from '../lib/adminHost'
+import { CcDenied, CommandCenterPage } from '../components/cc/CommandCenterPage'
+import { CcEmpty, CcTable } from '../components/cc/CcTable'
+import { CcSearchBar } from '../components/cc/CcSearchBar'
+import {
+  ccBtn,
+  ccErr,
+  ccGhost,
+  ccHint,
+  ccInput,
+  ccLabel,
+  ccMono,
+  ccRow,
+  ccTd,
+} from '../components/cc/classes'
 
 type ProvisionResult = {
   email: string
@@ -225,17 +239,17 @@ function Modal({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
   return (
-    <div className="cc-modal-backdrop" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div
-        className="cc-modal"
+        className="w-full max-w-lg rounded-lg border border-cc-line bg-cc-card p-5 text-cc-ink shadow-lg"
         role="dialog"
         aria-modal="true"
         aria-label={title}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="cc-modal-header">
-          <h3>{title}</h3>
-          <button type="button" className="cc-modal-close" onClick={onClose} aria-label="Close">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <h3 className="text-base font-semibold">{title}</h3>
+          <button type="button" className="text-xl leading-none text-cc-muted" onClick={onClose} aria-label="Close">
             ×
           </button>
         </div>
@@ -246,10 +260,9 @@ function Modal({
 }
 
 /** AC-38: real per-day hits, no mock random numbers — a plain inline SVG
- * line, no charting dependency (matches AC-32's decision not to pull in
- * Tailwind/Chart.js for Command Center). */
+ * line, no charting dependency. */
 function UsageSparkline({ data }: { data: DailyUsagePoint[] }) {
-  if (data.length === 0) return <p className="empty-copy">No usage data yet.</p>
+  if (data.length === 0) return <p className={ccHint}>No usage data yet.</p>
   const w = 640
   const h = 200
   const padX = 12
@@ -269,12 +282,12 @@ function UsageSparkline({ data }: { data: DailyUsagePoint[] }) {
   const labelEvery = Math.max(1, Math.ceil(data.length / 6))
 
   return (
-    <figure className="cc-chart">
+    <figure className="text-cc-muted">
       <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Daily API hits trend, last 30 days">
         <defs>
           <linearGradient id="cc-chart-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--cc-accent)" stopOpacity="0.35" />
-            <stop offset="100%" stopColor="var(--cc-accent)" stopOpacity="0" />
+            <stop offset="0%" stopColor="currentColor" stopOpacity="0.2" />
+            <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
           </linearGradient>
         </defs>
         {gridLines.map((g) => (
@@ -284,12 +297,12 @@ function UsageSparkline({ data }: { data: DailyUsagePoint[] }) {
             x2={w - padX}
             y1={padTop + g * (h - padBottom - padTop)}
             y2={padTop + g * (h - padBottom - padTop)}
-            stroke="var(--cc-line)"
+            stroke="currentColor"
             strokeWidth="1"
           />
         ))}
         <polygon points={areaPoints} fill="url(#cc-chart-fill)" stroke="none" />
-        <polyline points={linePoints} fill="none" stroke="var(--cc-accent)" strokeWidth="2.5" />
+        <polyline points={linePoints} fill="none" stroke="currentColor" strokeWidth="2" />
         {data.map((d, i) =>
           i % labelEvery === 0 ? (
             <text
@@ -298,14 +311,14 @@ function UsageSparkline({ data }: { data: DailyUsagePoint[] }) {
               y={h - 8}
               fontSize="10"
               textAnchor="middle"
-              fill="var(--cc-ink-muted)"
+              fill="currentColor"
             >
               {d.date.slice(5)}
             </text>
           ) : null,
         )}
       </svg>
-      <figcaption className="admin-provision-hint">
+      <figcaption className={ccHint}>
         {data[0].date} – {data[data.length - 1].date}: {total} hits total
       </figcaption>
     </figure>
@@ -796,21 +809,7 @@ export function Admin() {
   }
 
   if (!isPlatformAdmin) {
-    if (isAdminHost()) {
-      return (
-        <>
-          <header className="page-bar">
-            <div>
-              <p className="crumb">Platform</p>
-              <h1>Admin</h1>
-            </div>
-          </header>
-          <p className="admin-provision-hint">
-            This console is limited to platform admins.
-          </p>
-        </>
-      )
-    }
+    if (isAdminHost()) return <CcDenied title="Command Center" />
     return <Navigate to="/" replace />
   }
 
@@ -843,201 +842,184 @@ export function Admin() {
   ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
 
   return (
-    <div className="cc-shell">
-      <header className="page-bar">
-        <div>
-          <p className="crumb">Platform</p>
-          <h1>Command Center</h1>
-        </div>
-      </header>
+    <CommandCenterPage
+      title="Command Center"
+      crumb="Platform"
+      actions={
+        <button type="button" className={ccBtn} onClick={() => setProvisionModalOpen(true)}>
+          Provision user
+        </button>
+      }
+    >
+      <CcSearchBar
+        value={orgQuery}
+        onChange={setOrgQuery}
+        placeholder="Search orgs — email, name, org id, short id (⌘K)"
+        hideSubmit
+        inputRef={searchInputRef}
+      />
 
-      {/* Not part of AC-37/38/39/40's scope — kept as-is, unrelocated. */}
-      <section className="admin-activity">
-        <h2>Activity</h2>
-        <p className="admin-provision-hint">
+      {orgSearchError ? (
+        <p className={ccErr} role="alert">
+          {orgSearchError}
+        </p>
+      ) : null}
+
+      <div className="mb-8">
+        <div className="mb-3 flex items-baseline justify-between gap-3">
+          <h2 className="text-base font-semibold text-cc-ink">Organizations</h2>
+          <span className="text-[13px] text-cc-muted">
+            {orgRows.length} {orgRows.length === 1 ? 'organization' : 'organizations'}
+          </span>
+        </div>
+        {orgRows.length === 0 ? (
+          <CcEmpty title="No matching orgs" body="Try a different email, name, or id." />
+        ) : (
+          <CcTable columns={['Org', 'Members', 'Short IDs', 'Created']}>
+            {orgRows.map((row) => (
+              <tr
+                key={row.org_id}
+                className={`${ccRow} cursor-pointer ${selectedOrg?.org_id === row.org_id ? 'bg-cc-paper' : ''}`}
+                onClick={() => void openOrg(row)}
+              >
+                <td className={ccTd}>
+                  <div className="flex items-center gap-3">
+                    <span
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cc-paper text-[13px] font-semibold"
+                      aria-hidden="true"
+                    >
+                      {(row.org_name || '?').slice(0, 1).toUpperCase()}
+                    </span>
+                    <span>
+                      <span className="block font-medium">{row.org_name || '—'}</span>
+                      <span className={ccMono}>{row.org_id}</span>
+                    </span>
+                  </div>
+                </td>
+                <td className={ccTd}>{row.member_count}</td>
+                <td className={ccTd}>{row.short_ids.length > 0 ? row.short_ids.join(', ') : '—'}</td>
+                <td className={ccTd}>
+                  {row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}
+                </td>
+              </tr>
+            ))}
+          </CcTable>
+        )}
+      </div>
+
+      <details className="mb-8 rounded-lg border border-cc-line bg-cc-card p-5">
+        <summary className="cursor-pointer text-base font-semibold text-cc-ink">Org activity</summary>
+        <p className={`${ccHint} mt-2 mb-4`}>
           Uploads, audits, and flag changes for one org in a date range.
           Retranscribes show as a new audit on that call. Not application logs.
         </p>
-        <form className="admin-provision-form" onSubmit={(e) => void loadActivity(e)}>
-          <label>
+        <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => void loadActivity(e)}>
+          <label className={ccLabel}>
             Org id or short id
             <input
               type="text"
+              className={ccInput}
               value={actOrg}
               onChange={(e) => setActOrg(e.target.value)}
               placeholder="UUID or 100001"
               required
             />
           </label>
-          <label>
+          <label className={ccLabel}>
             From
             <input
               type="date"
+              className={ccInput}
               value={actSince}
               onChange={(e) => setActSince(e.target.value)}
               required
             />
           </label>
-          <label>
+          <label className={ccLabel}>
             To
             <input
               type="date"
+              className={ccInput}
               value={actUntil}
               onChange={(e) => setActUntil(e.target.value)}
               required
             />
           </label>
-          <button type="submit" className="start-btn" disabled={actBusy}>
+          <button type="submit" className={ccBtn} disabled={actBusy}>
             {actBusy ? 'Loading…' : 'Load'}
           </button>
         </form>
         {actError ? (
-          <p className="upload-error" role="alert">
+          <p className={`${ccErr} mt-3`} role="alert">
             {actError}
           </p>
         ) : null}
         {activity ? (
-          <div className="admin-table-wrap">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>Type</th>
-                  <th>Who</th>
-                  <th>Detail</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className="mt-4">
+            {activity.events.length === 0 ? (
+              <CcEmpty title="No activity in that window" />
+            ) : (
+              <CcTable
+                columns={['When', 'Type', 'Who', 'Detail']}
+                footer={
+                  activity.truncated ? (
+                    <p className={ccHint}>Showing the most recent rows in this range.</p>
+                  ) : null
+                }
+              >
                 {activity.events.map((ev, i) => (
-                  <tr key={`${ev.kind}-${ev.at}-${ev.call_id ?? ev.feature_key ?? i}`}>
-                    <td>{ev.at ? new Date(ev.at).toLocaleString() : '—'}</td>
-                    <td>{activityKind(ev.kind)}</td>
-                    <td>{ev.actor || '—'}</td>
-                    <td>{activityLabel(ev)}</td>
+                  <tr key={`${ev.kind}-${ev.at}-${ev.call_id ?? ev.feature_key ?? i}`} className={ccRow}>
+                    <td className={ccTd}>{ev.at ? new Date(ev.at).toLocaleString() : '—'}</td>
+                    <td className={ccTd}>{activityKind(ev.kind)}</td>
+                    <td className={ccTd}>{ev.actor || '—'}</td>
+                    <td className={ccTd}>{activityLabel(ev)}</td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
-            {activity.events.length === 0 ? (
-              <p className="empty-copy">No activity in that window.</p>
-            ) : null}
-            {activity.truncated ? (
-              <p className="admin-provision-hint">Showing the most recent rows in this range.</p>
-            ) : null}
+              </CcTable>
+            )}
           </div>
         ) : null}
-      </section>
-
-      {/* AC-37/AC-39/AC-40: top bar — real org search (⌘K focuses it) and
-          the Provision-user action, now a modal trigger instead of an
-          always-open inline form. */}
-      <div className="cc-topbar">
-        <label className="cc-search">
-          <span className="sr-only">Search directory</span>
-          <input
-            ref={searchInputRef}
-            type="search"
-            value={orgQuery}
-            onChange={(e) => setOrgQuery(e.target.value)}
-            placeholder="Search orgs — email, name, org id, short id (⌘K)"
-          />
-        </label>
-        <button type="button" className="start-btn" onClick={() => setProvisionModalOpen(true)}>
-          Provision user
-        </button>
-      </div>
-
-      {orgSearchError ? (
-        <p className="upload-error" role="alert">
-          {orgSearchError}
-        </p>
-      ) : null}
-
-      {/* AC-37: the directory table — one row per org (AC-33), never per
-          member. Row click opens the inspector; the table itself never
-          unmounts, so its scroll position survives the drawer opening
-          and closing. */}
-      <div className="cc-directory-card">
-        <div className="cc-directory-card-header">
-          <h2>Organizations</h2>
-          <span className="cc-directory-count">
-            {orgRows.length} {orgRows.length === 1 ? 'organization' : 'organizations'}
-          </span>
-        </div>
-        <div className="admin-table-wrap">
-          <table className="admin-table cc-table">
-            <thead>
-              <tr>
-                <th>Org</th>
-                <th>Members</th>
-                <th>Short IDs</th>
-                <th>Created</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orgRows.map((row) => (
-                <tr
-                  key={row.org_id}
-                  className={`cc-row-clickable${selectedOrg?.org_id === row.org_id ? ' is-selected' : ''}`}
-                  onClick={() => void openOrg(row)}
-                >
-                  <td>
-                    <div className="cc-org-cell">
-                      <span className="cc-org-avatar" aria-hidden="true">
-                        {(row.org_name || '?').slice(0, 1).toUpperCase()}
-                      </span>
-                      <span>
-                        <span className="admin-org">{row.org_name || '—'}</span>
-                        <span className="admin-id">{row.org_id}</span>
-                      </span>
-                    </div>
-                  </td>
-                  <td>{row.member_count}</td>
-                  <td>{row.short_ids.length > 0 ? row.short_ids.join(', ') : '—'}</td>
-                  <td>{row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {orgRows.length === 0 ? <p className="empty-copy">No matching orgs.</p> : null}
-        </div>
-      </div>
+      </details>
 
       {/* AC-37: slide-over inspector. Backdrop click or Escape closes it. */}
       {selectedOrg ? (
-        <div className="cc-drawer-backdrop" onClick={closeDrawer}>
+        <div className="fixed inset-0 z-40 bg-black/40" onClick={closeDrawer}>
           <aside
-            className="cc-drawer"
+            className="absolute right-0 top-0 flex h-full w-full max-w-[32rem] flex-col overflow-y-auto border-l border-cc-line bg-cc-card p-6 text-cc-ink shadow-xl"
             role="dialog"
             aria-modal="true"
             aria-label={selectedOrg.org_name || 'Organization'}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="cc-drawer-header">
+            <div className="mb-4 flex items-start justify-between gap-3">
               <div>
-                <h2>{selectedOrg.org_name || 'Organization'}</h2>
-                <div className="cc-id-row">
-                  <p className="admin-id">{selectedOrg.org_id}</p>
+                <h2 className="text-lg font-semibold">{selectedOrg.org_name || 'Organization'}</h2>
+                <div className="mt-1 flex items-center gap-2">
+                  <p className={ccMono}>{selectedOrg.org_id}</p>
                   <button
                     type="button"
-                    className="cc-copy-btn"
+                    className="text-[12px] font-semibold text-cc-muted hover:text-cc-ink"
                     onClick={() => void copyOrgId(selectedOrg.org_id)}
                   >
                     {copiedOrgId ? 'Copied' : 'Copy'}
                   </button>
                 </div>
               </div>
-              <button type="button" className="cc-modal-close" onClick={closeDrawer} aria-label="Close">
+              <button type="button" className="text-xl leading-none text-cc-muted" onClick={closeDrawer} aria-label="Close">
                 ×
               </button>
             </div>
 
-            <nav className="cc-tabs" aria-label="Org detail tabs">
+            <nav className="mb-5 flex flex-wrap gap-1 border-b border-cc-line" aria-label="Org detail tabs">
               {(['overview', 'flags', 'rubric', 'members', 'account-logs'] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
-                  className={`cc-tab${activeTab === tab ? ' is-active' : ''}`}
+                  className={`-mb-px border-b-2 px-3 py-2 text-[13px] font-semibold ${
+                    activeTab === tab
+                      ? 'border-cc-ink text-cc-ink'
+                      : 'border-transparent text-cc-muted hover:text-cc-ink'
+                  }`}
                   onClick={() => setActiveTab(tab)}
                 >
                   {tab === 'overview'
@@ -1054,23 +1036,23 @@ export function Admin() {
             </nav>
 
             {detailError ? (
-              <p className="upload-error" role="alert">
+              <p className={ccErr} role="alert">
                 {detailError}
               </p>
             ) : null}
-            {busy ? <p className="empty-copy">Loading…</p> : null}
+            {busy ? <p className={ccHint}>Loading…</p> : null}
 
-            <div className="cc-tab-panel">
+            <div className="grid gap-5">
               {activeTab === 'overview' ? (
-                <div className="admin-card">
-                  <dl className="admin-stats">
+                <div className="grid gap-4">
+                  <dl className="grid grid-cols-2 gap-3 text-[13px]">
                     <div>
-                      <dt>Members</dt>
-                      <dd>{selectedOrg.member_count}</dd>
+                      <dt className="text-cc-muted">Members</dt>
+                      <dd className="text-lg font-semibold">{selectedOrg.member_count}</dd>
                     </div>
                     <div>
-                      <dt>Created</dt>
-                      <dd>
+                      <dt className="text-cc-muted">Created</dt>
+                      <dd className="text-lg font-semibold">
                         {selectedOrg.created_at
                           ? new Date(selectedOrg.created_at).toLocaleDateString()
                           : '—'}
@@ -1079,65 +1061,88 @@ export function Admin() {
                   </dl>
 
                   {usage || orgDetail ? (
-                    <div className="cc-stat-grid">
+                    <div className="grid grid-cols-2 gap-3">
                       {usage ? (
                         <>
-                          <div className="cc-stat-card cc-stat-accent">
-                            <p className="cc-stat-label">PyAI calls</p>
-                            <p className="cc-stat-value">{pyai?.hits ?? 0}</p>
+                          <div className="rounded-md border border-cc-line p-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-cc-muted">PyAI calls</p>
+                            <p className="text-xl font-semibold">{pyai?.hits ?? 0}</p>
                           </div>
-                          <div className="cc-stat-card cc-stat-good">
-                            <p className="cc-stat-label">Anthropic calls</p>
-                            <p className="cc-stat-value">{claude?.hits ?? 0}</p>
+                          <div className="rounded-md border border-cc-line p-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-cc-muted">Anthropic calls</p>
+                            <p className="text-xl font-semibold">{claude?.hits ?? 0}</p>
                           </div>
-                          <div className="cc-stat-card cc-stat-warn">
-                            <p className="cc-stat-label">Est. spend</p>
-                            <p className="cc-stat-value">{fmtUsd(usage.cost.total_usd)}</p>
+                          <div className="rounded-md border border-cc-line p-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-cc-muted">Est. spend</p>
+                            <p className="text-xl font-semibold">{fmtUsd(usage.cost.total_usd)}</p>
                           </div>
                         </>
                       ) : null}
                       {orgDetail ? (
-                        <div className="cc-stat-card">
-                          <p className="cc-stat-label">Data stored</p>
-                          <p className="cc-stat-value">{formatBytes(orgDetail.total_data_size_bytes)}</p>
+                        <div className="rounded-md border border-cc-line p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-cc-muted">Data stored</p>
+                          <p className="text-xl font-semibold">{formatBytes(orgDetail.total_data_size_bytes)}</p>
                         </div>
                       ) : null}
                     </div>
                   ) : null}
 
                   {orgDetail ? (
-                    <dl className="admin-stats">
+                    <dl className="grid grid-cols-3 gap-3 text-[13px]">
                       <div>
-                        <dt>Total calls</dt>
-                        <dd>{orgDetail.total_calls}</dd>
+                        <dt className="text-cc-muted">Total calls</dt>
+                        <dd className="font-semibold">{orgDetail.total_calls}</dd>
                       </div>
                       <div>
-                        <dt>Audited</dt>
-                        <dd>{orgDetail.audited_count}</dd>
+                        <dt className="text-cc-muted">Audited</dt>
+                        <dd className="font-semibold">{orgDetail.audited_count}</dd>
                       </div>
                       <div>
-                        <dt>PyAI polls</dt>
-                        <dd>{pyai?.polls ?? 0}</dd>
+                        <dt className="text-cc-muted">PyAI polls</dt>
+                        <dd className="font-semibold">{pyai?.polls ?? 0}</dd>
                       </div>
                     </dl>
                   ) : null}
 
-                  <h3>Usage trend — last 30 days</h3>
+                  <div className="flex flex-wrap gap-3">
+                    <Link
+                      className="text-[13px] font-semibold underline-offset-2 hover:underline"
+                      to={`/call-logs?query=${encodeURIComponent(selectedOrg.org_id)}`}
+                    >
+                      Open call logs
+                    </Link>
+                    <Link
+                      className="text-[13px] font-semibold underline-offset-2 hover:underline"
+                      to={`/ticket-logs?query=${encodeURIComponent(selectedOrg.org_id)}`}
+                    >
+                      Open ticket logs
+                    </Link>
+                  </div>
+
+                  <h3 className="text-sm font-semibold">Usage trend — last 30 days</h3>
                   <UsageSparkline data={daily} />
-                  <p className="admin-provision-hint">
-                    Per-call detail moved to <Link to="/call-logs">Call logs</Link>.
-                  </p>
                 </div>
               ) : null}
 
               {activeTab === 'flags' ? (
-                <div className="admin-card">
-                  {flagsByRisk.length === 0 ? (
-                    <p className="empty-copy">Loading flag definitions…</p>
+                <div>
+                    {flagsByRisk.length === 0 ? (
+                    <p className={ccHint}>Loading flag definitions…</p>
                   ) : (
                     flagsByRisk.map(({ risk, defs }) => (
-                      <div key={risk} className={`cc-flag-group cc-risk-${risk}`}>
-                        <h4 className="cc-flag-group-title">{RISK_LABEL[risk]}</h4>
+                      <div
+                        key={risk}
+                        className={`mb-4 rounded-md border p-3 ${
+                          risk === 'danger'
+                            ? 'border-cc-fail/40'
+                            : risk === 'medium'
+                              ? 'border-cc-line'
+                              : 'border-cc-line'
+                        }`}
+                      >
+                        <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-cc-muted">
+                          {RISK_LABEL[risk]}
+                        </h4>
                         <ul className="admin-flags">
                           {defs.map((def) => {
                             const on = isFlagOn(usage?.features, def)
@@ -1158,7 +1163,7 @@ export function Admin() {
                                   </span>
                                 </div>
                                 {def.description ? (
-                                  <p className="admin-provision-hint">{def.description}</p>
+                                  <p className={ccHint}>{def.description}</p>
                                 ) : null}
                               </li>
                             )
@@ -1171,34 +1176,34 @@ export function Admin() {
               ) : null}
 
               {activeTab === 'rubric' ? (
-                <div className="admin-card">
+                <div>
                   {rubricError ? (
-                    <p className="upload-error" role="alert">
+                    <p className={ccErr} role="alert">
                       {rubricError}
                     </p>
                   ) : null}
                   {rubric ? (
                     <>
-                      <div className="cc-rubric-hero">
+                      <div className="mb-4 flex items-start justify-between gap-3">
                         <div>
-                          <p className="cc-rubric-hero-version">
+                          <p className="text-sm font-semibold">
                             {rubric.source === 'custom'
                               ? `Custom — version ${rubric.version}`
                               : 'Not yet customized'}
                           </p>
-                          <p className="cc-rubric-hero-updated">
+                          <p className={ccHint}>
                             {rubric.updated_at
                               ? `Updated ${new Date(rubric.updated_at).toLocaleString()}`
                               : 'Showing default weights'}
                           </p>
                         </div>
                         <div
-                          className={`cc-rubric-hero-total${
+                          className={`text-2xl font-semibold ${
                             rubricTotal === 100
-                              ? ' is-good'
+                              ? 'text-cc-pass'
                               : rubricTotal > 100
-                                ? ' is-danger'
-                                : ' is-warn'
+                                ? 'text-cc-fail'
+                                : 'text-cc-muted'
                           }`}
                         >
                           {rubricTotal}
@@ -1233,7 +1238,7 @@ export function Admin() {
                       </p>
                       <button
                         type="button"
-                        className="start-btn"
+                        className={ccBtn}
                         disabled={rubricTotal !== 100 || rubricSaving}
                         onClick={() => void saveRubric()}
                       >
@@ -1252,8 +1257,8 @@ export function Admin() {
               ) : null}
 
               {activeTab === 'members' ? (
-                <div className="admin-card">
-                  <p className="admin-provision-hint">
+                <div>
+                  <p className={ccHint}>
                     Every real member of this org — each has their own "Log
                     in as," never ambiguous about who's being impersonated.
                   </p>
@@ -1288,10 +1293,10 @@ export function Admin() {
                                 <td>
                                   {m.first_seen ? new Date(m.first_seen).toLocaleDateString() : '—'}
                                 </td>
-                                <td className="cc-member-actions">
+                                <td className="flex flex-wrap gap-2">
                                   <button
                                     type="button"
-                                    className="ghost-btn"
+                                    className={ccGhost}
                                     disabled={impersonatingMemberId === m.user_id || !m.email}
                                     onClick={() => void logInAsMember(m)}
                                   >
@@ -1299,7 +1304,7 @@ export function Admin() {
                                   </button>
                                   <button
                                     type="button"
-                                    className="ghost-btn"
+                                    className={ccGhost}
                                     disabled={
                                       resettingMemberId === m.user_id ||
                                       !m.email ||
@@ -1311,18 +1316,18 @@ export function Admin() {
                                   </button>
                                   <button
                                     type="button"
-                                    className="ghost-btn"
+                                    className={ccGhost}
                                     onClick={() => void toggleMemberHistory(m)}
                                   >
                                     {expandedMemberId === m.user_id ? 'Hide history' : 'History'}
                                   </button>
                                   {memberImpersonateErrors[m.user_id] ? (
-                                    <p className="upload-error" role="alert">
+                                    <p className={ccErr} role="alert">
                                       {memberImpersonateErrors[m.user_id]}
                                     </p>
                                   ) : null}
                                   {memberResetErrors[m.user_id] ? (
-                                    <p className="upload-error" role="alert">
+                                    <p className={ccErr} role="alert">
                                       {memberResetErrors[m.user_id]}
                                     </p>
                                   ) : null}
@@ -1337,9 +1342,9 @@ export function Admin() {
                                 <tr key={`${m.user_id}-history`}>
                                   <td colSpan={6}>
                                     {pwEventsByUser[m.user_id] === undefined ? (
-                                      <p className="empty-copy">Loading…</p>
+                                      <p className={ccHint}>Loading…</p>
                                     ) : pwEventsByUser[m.user_id] === null ? (
-                                      <p className="upload-error" role="alert">
+                                      <p className={ccErr} role="alert">
                                         Could not load password history.
                                       </p>
                                     ) : (pwEventsByUser[m.user_id] as PasswordEvent[]).length === 0 ? (
@@ -1383,19 +1388,19 @@ export function Admin() {
               ) : null}
 
               {activeTab === 'account-logs' ? (
-                <div className="admin-card">
-                  <p className="admin-provision-hint">
+                <div>
+                  <p className={ccHint}>
                     Flag changes and member joins for this org, newest first.
                   </p>
                   {accountLog.length === 0 ? (
-                    <p className="empty-copy">No account activity recorded yet.</p>
+                    <p className={ccHint}>No account activity recorded yet.</p>
                   ) : (
-                    <ul className="cc-log-list">
+                    <ul className="grid gap-3">
                       {accountLog.map((entry, i) => (
-                        <li key={i} className="cc-log-row">
-                          <span className="cc-log-when">{new Date(entry.at).toLocaleString()}</span>
-                          <span className="cc-log-summary">{entry.summary}</span>
-                          <span className="cc-log-detail">{entry.detail}</span>
+                        <li key={i} className="grid gap-0.5 border-b border-cc-line pb-3 last:border-0">
+                          <span className="text-[12px] text-cc-muted">{new Date(entry.at).toLocaleString()}</span>
+                          <span className="text-sm font-semibold">{entry.summary}</span>
+                          <span className={ccHint}>{entry.detail}</span>
                         </li>
                       ))}
                     </ul>
@@ -1417,12 +1422,12 @@ export function Admin() {
             <strong>{pendingDangerToggle.def.label}</strong> for{' '}
             <strong>{selectedOrg?.org_name || 'this org'}</strong>? This is logged.
           </p>
-          <p className="admin-provision-hint">{pendingDangerToggle.def.description}</p>
-          <div className="cc-modal-actions">
-            <button type="button" className="ghost-btn" onClick={() => setPendingDangerToggle(null)}>
+          <p className={ccHint}>{pendingDangerToggle.def.description}</p>
+          <div className="mt-4 flex justify-end gap-2">
+            <button type="button" className={ccGhost} onClick={() => setPendingDangerToggle(null)}>
               Cancel
             </button>
-            <button type="button" className="start-btn" onClick={confirmDangerToggle}>
+            <button type="button" className={ccBtn} onClick={confirmDangerToggle}>
               Confirm
             </button>
           </div>
@@ -1431,55 +1436,59 @@ export function Admin() {
 
       {provisionModalOpen ? (
         <Modal title="Provision user" onClose={closeProvisionModal}>
-          <p className="admin-provision-hint">
+          <p className={ccHint}>
             Creates a login and a new org, named as you choose. The password is
             generated and shown once here — copy it and share it with the
             person alongside their email.
           </p>
-          <form className="admin-provision-form" onSubmit={(e) => void provisionUser(e)}>
-            <label>
+          <form className="mt-4 grid gap-3" onSubmit={(e) => void provisionUser(e)}>
+            <label className={ccLabel}>
               Email
               <input
                 type="email"
+                className={ccInput}
                 value={pEmail}
                 onChange={(e) => setPEmail(e.target.value)}
                 required
               />
             </label>
-            <label>
+            <label className={ccLabel}>
               First name
               <input
                 type="text"
+                className={ccInput}
                 value={pFirst}
                 onChange={(e) => setPFirst(e.target.value)}
                 required
               />
             </label>
-            <label>
+            <label className={ccLabel}>
               Last name
               <input
                 type="text"
+                className={ccInput}
                 value={pLast}
                 onChange={(e) => setPLast(e.target.value)}
                 required
               />
             </label>
-            <label>
+            <label className={ccLabel}>
               Org name
               <input
                 type="text"
+                className={ccInput}
                 value={pOrgName}
                 onChange={(e) => setPOrgName(e.target.value)}
                 required
               />
             </label>
-            <button type="submit" className="start-btn" disabled={provisioning}>
+            <button type="submit" className={ccBtn} disabled={provisioning}>
               {provisioning ? 'Creating…' : 'Create'}
             </button>
           </form>
 
           {provisionError ? (
-            <p className="upload-error" role="alert">
+            <p className={`${ccErr} mt-3`} role="alert">
               {provisionError}
             </p>
           ) : null}
@@ -1496,7 +1505,7 @@ export function Admin() {
               </p>
               <div className="admin-provision-secret">
                 <code>{provisionResult.temporary_password}</code>
-                <button type="button" className="ghost-btn" onClick={() => void copyPassword()}>
+                <button type="button" className={ccGhost} onClick={() => void copyPassword()}>
                   {copied ? 'Copied' : 'Copy'}
                 </button>
               </div>
@@ -1506,10 +1515,10 @@ export function Admin() {
       ) : null}
 
       {toast ? (
-        <div className="cc-toast" role="status">
+        <div className="fixed bottom-5 left-5 z-50 rounded-md bg-cc-ink px-4 py-2 text-[13px] font-semibold text-white" role="status">
           {toast}
         </div>
       ) : null}
-    </div>
+    </CommandCenterPage>
   )
 }
