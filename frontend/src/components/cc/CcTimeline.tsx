@@ -16,6 +16,17 @@ function statusMark(status: CcTrailEvent['status']): string {
   return '…'
 }
 
+function extraEntries(extra: Record<string, unknown>): [string, string][] {
+  const out: [string, string][] = []
+  for (const [key, value] of Object.entries(extra)) {
+    if (value == null || value === '') continue
+    const text = typeof value === 'string' ? value : JSON.stringify(value)
+    if (!text || text === '{}' || text === '[]') continue
+    out.push([key, text])
+  }
+  return out
+}
+
 export function CcTimeline({ events }: { events: CcTrailEvent[] }) {
   if (events.length === 0) {
     return (
@@ -31,50 +42,65 @@ export function CcTimeline({ events }: { events: CcTrailEvent[] }) {
   ]
 
   return (
-    <ol className="grid gap-0 border-l border-cc-line pl-5">
-      {ordered.map((e, i) => (
-        <li key={`${e.stage}-${e.created_at}-${i}`} className="relative pb-6 last:pb-0">
-          <span
-            className={`absolute -left-[1.55rem] flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-semibold ${
-              e.status === 'failed'
-                ? 'border-cc-fail bg-cc-card text-cc-fail'
-                : e.status === 'succeeded'
-                  ? 'border-cc-pass bg-cc-card text-cc-pass'
-                  : 'border-cc-line bg-cc-card text-cc-muted'
-            }`}
-            aria-hidden="true"
-          >
-            {statusMark(e.status)}
-          </span>
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <p className="text-sm font-semibold text-cc-ink">{e.stage}</p>
-            <p className="text-[12px] text-cc-muted">
-              {e.created_at ? new Date(e.created_at).toLocaleString() : '—'}
-            </p>
-          </div>
-          {e.agentId ? <p className={`${ccMono} mt-1`}>Agent {e.agentId}</p> : null}
-          {e.error ? <p className="mt-1 text-[13px] text-cc-fail">{e.error}</p> : null}
-          {e.apis && e.apis.length > 0 ? (
-            <ul className="mt-2 grid gap-1">
-              {e.apis.map((api, j) => (
-                <li key={`${api.method}-${api.endpoint}-${j}`} className="flex flex-wrap items-baseline gap-2">
-                  <span className="text-[11px] font-semibold tracking-wide text-cc-muted">
-                    {api.method}
-                  </span>
-                  <code className={ccMono}>{api.endpoint}</code>
-                </li>
-              ))}
-            </ul>
-          ) : e.apis ? (
-            <p className="mt-1 text-[12px] text-cc-muted">No API recorded for this step</p>
-          ) : null}
-          {e.extra && Object.keys(e.extra).length > 0 ? (
-            <pre className="mt-2 overflow-x-auto rounded-md bg-cc-paper p-3 font-mono text-[12px] text-cc-muted">
-              {JSON.stringify(e.extra, null, 2)}
-            </pre>
-          ) : null}
-        </li>
-      ))}
+    <ol className="max-w-2xl border-l border-cc-line pl-5">
+      {ordered.map((e, i) => {
+        const extra = e.extra ? extraEntries(e.extra) : []
+        return (
+          <li key={`${e.stage}-${e.created_at}-${i}`} className="relative pb-5 last:pb-0">
+            <span
+              className={`absolute -left-[1.55rem] flex h-6 w-6 items-center justify-center rounded-full border bg-cc-card text-[11px] font-semibold ${
+                e.status === 'failed'
+                  ? 'border-cc-fail text-cc-fail'
+                  : e.status === 'succeeded'
+                    ? 'border-cc-pass text-cc-pass'
+                    : 'border-cc-line text-cc-muted'
+              }`}
+              aria-hidden="true"
+            >
+              {statusMark(e.status)}
+            </span>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              <p className="text-sm font-semibold text-cc-ink">{e.stage}</p>
+              <p className="text-[12px] text-cc-muted">
+                {e.created_at ? new Date(e.created_at).toLocaleString() : '—'}
+              </p>
+            </div>
+            {e.agentId ? <p className={`${ccMono} mt-0.5`}>Agent {e.agentId}</p> : null}
+            {e.error ? <p className="mt-1 text-[13px] text-cc-fail">{e.error}</p> : null}
+            {e.apis && e.apis.length > 0 ? (
+              <ul className="mt-1.5 grid gap-0.5">
+                {e.apis.map((api, j) => (
+                  <li key={`${api.method}-${api.endpoint}-${j}`} className="flex flex-wrap items-baseline gap-2">
+                    <span className="text-[11px] font-semibold tracking-wide text-cc-muted">
+                      {api.method}
+                    </span>
+                    <code className={ccMono}>{api.endpoint}</code>
+                  </li>
+                ))}
+              </ul>
+            ) : e.apis ? (
+              <p className="mt-1 text-[12px] text-cc-muted">No API recorded for this step</p>
+            ) : null}
+            {extra.length > 0 ? (
+              <details className="mt-1.5">
+                <summary className="cursor-pointer text-[12px] font-semibold text-cc-muted">
+                  Details
+                </summary>
+                <dl className="mt-2 grid gap-2">
+                  {extra.map(([key, text]) => (
+                    <div key={key}>
+                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-cc-muted">
+                        {key}
+                      </dt>
+                      <dd className="break-words text-[13px] text-cc-ink">{text}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </details>
+            ) : null}
+          </li>
+        )
+      })}
     </ol>
   )
 }

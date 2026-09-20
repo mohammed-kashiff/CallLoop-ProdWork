@@ -255,7 +255,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
       >
         <div className="sidebar-brand">
           <Link to={home} onClick={onNavigate} aria-label={adminHost ? 'Go to admin' : 'Go to home'}>
-            <BrandLogo size="sm" surface="dark" animate={false} />
+            <BrandLogo size="sm" surface={adminHost ? 'light' : 'dark'} animate={false} />
           </Link>
           <button
             type="button"
@@ -268,7 +268,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
         </div>
 
         {adminHost ? (
-          <p className="px-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/40">
+          <p className="px-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-cc-muted">
             Platform admin
           </p>
         ) : (
@@ -284,8 +284,8 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               to="/admin"
               className={({ isActive }) =>
                 [
-                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-white/70 hover:bg-white/5 hover:text-white',
-                  isActive ? 'bg-white/10 text-white' : '',
+                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-cc-muted hover:bg-cc-wash hover:text-cc-ink',
+                  isActive ? 'bg-cc-wash text-cc-ink' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')
@@ -298,8 +298,8 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               to="/call-logs"
               className={({ isActive }) =>
                 [
-                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-white/70 hover:bg-white/5 hover:text-white',
-                  isActive ? 'bg-white/10 text-white' : '',
+                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-cc-muted hover:bg-cc-wash hover:text-cc-ink',
+                  isActive ? 'bg-cc-wash text-cc-ink' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')
@@ -312,8 +312,8 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               to="/ticket-logs"
               className={({ isActive }) =>
                 [
-                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-white/70 hover:bg-white/5 hover:text-white',
-                  isActive ? 'bg-white/10 text-white' : '',
+                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-cc-muted hover:bg-cc-wash hover:text-cc-ink',
+                  isActive ? 'bg-cc-wash text-cc-ink' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')
@@ -326,8 +326,8 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               to="/platform-admins"
               className={({ isActive }) =>
                 [
-                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-white/70 hover:bg-white/5 hover:text-white',
-                  isActive ? 'bg-white/10 text-white' : '',
+                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-cc-muted hover:bg-cc-wash hover:text-cc-ink',
+                  isActive ? 'bg-cc-wash text-cc-ink' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')
@@ -340,8 +340,8 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               to="/admin-activity-log"
               className={({ isActive }) =>
                 [
-                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-white/70 hover:bg-white/5 hover:text-white',
-                  isActive ? 'bg-white/10 text-white' : '',
+                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-cc-muted hover:bg-cc-wash hover:text-cc-ink',
+                  isActive ? 'bg-cc-wash text-cc-ink' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')
@@ -350,14 +350,14 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
             >
               Security log
             </NavLink>
-            <div className="mt-auto flex items-center gap-2.5 border-t border-white/10 px-1 pt-3">
+            <div className="mt-auto flex items-center gap-2.5 border-t border-cc-line px-1 pt-3">
               <span
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-[13px] font-semibold text-white"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cc-wash text-[13px] font-semibold text-cc-ink"
                 aria-hidden="true"
               >
                 {(email || '?').slice(0, 1).toUpperCase()}
               </span>
-              <span className="truncate text-[12px] text-white/55">{email || 'Unknown admin'}</span>
+              <span className="truncate text-[12px] text-cc-muted">{email || 'Unknown admin'}</span>
             </div>
           </nav>
         ) : (
