@@ -268,7 +268,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
         </div>
 
         {adminHost ? (
-          <p className="px-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-cc-muted">
+          <p className="px-2 text-[13px] font-semibold text-cc-accent">
             Platform admin
           </p>
         ) : (
@@ -284,8 +284,8 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               to="/admin"
               className={({ isActive }) =>
                 [
-                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-cc-muted hover:bg-cc-wash hover:text-cc-ink',
-                  isActive ? 'bg-cc-wash text-cc-ink' : '',
+                  'rounded-md px-2.5 py-2.5 text-[15px] font-semibold text-cc-muted hover:bg-cc-wash hover:text-cc-navy',
+                  isActive ? 'border-l-4 border-cc-accent bg-cc-wash text-cc-navy' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')
@@ -298,8 +298,8 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               to="/call-logs"
               className={({ isActive }) =>
                 [
-                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-cc-muted hover:bg-cc-wash hover:text-cc-ink',
-                  isActive ? 'bg-cc-wash text-cc-ink' : '',
+                  'rounded-md px-2.5 py-2.5 text-[15px] font-semibold text-cc-muted hover:bg-cc-wash hover:text-cc-navy',
+                  isActive ? 'border-l-4 border-cc-accent bg-cc-wash text-cc-navy' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')
@@ -312,8 +312,8 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               to="/ticket-logs"
               className={({ isActive }) =>
                 [
-                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-cc-muted hover:bg-cc-wash hover:text-cc-ink',
-                  isActive ? 'bg-cc-wash text-cc-ink' : '',
+                  'rounded-md px-2.5 py-2.5 text-[15px] font-semibold text-cc-muted hover:bg-cc-wash hover:text-cc-navy',
+                  isActive ? 'border-l-4 border-cc-accent bg-cc-wash text-cc-navy' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')
@@ -326,8 +326,8 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               to="/platform-admins"
               className={({ isActive }) =>
                 [
-                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-cc-muted hover:bg-cc-wash hover:text-cc-ink',
-                  isActive ? 'bg-cc-wash text-cc-ink' : '',
+                  'rounded-md px-2.5 py-2.5 text-[15px] font-semibold text-cc-muted hover:bg-cc-wash hover:text-cc-navy',
+                  isActive ? 'border-l-4 border-cc-accent bg-cc-wash text-cc-navy' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')
@@ -340,8 +340,8 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               to="/admin-activity-log"
               className={({ isActive }) =>
                 [
-                  'rounded-md px-2.5 py-2 text-[13px] font-medium text-cc-muted hover:bg-cc-wash hover:text-cc-ink',
-                  isActive ? 'bg-cc-wash text-cc-ink' : '',
+                  'rounded-md px-2.5 py-2.5 text-[15px] font-semibold text-cc-muted hover:bg-cc-wash hover:text-cc-navy',
+                  isActive ? 'border-l-4 border-cc-accent bg-cc-wash text-cc-navy' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')
@@ -357,7 +357,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
               >
                 {(email || '?').slice(0, 1).toUpperCase()}
               </span>
-              <span className="truncate text-[12px] text-cc-muted">{email || 'Unknown admin'}</span>
+              <span className="truncate text-[14px] text-cc-muted">{email || 'Unknown admin'}</span>
             </div>
           </nav>
         ) : (

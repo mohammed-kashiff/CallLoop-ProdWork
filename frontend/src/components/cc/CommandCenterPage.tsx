@@ -16,11 +16,11 @@ export function CommandCenterPage({
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           {crumb ? (
-            <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-cc-muted">
+            <p className="mb-1.5 text-[14px] font-semibold text-cc-accent">
               {crumb}
             </p>
           ) : null}
-          <h1 className="text-[1.65rem] font-semibold tracking-tight text-cc-ink">{title}</h1>
+          <h1 className="text-[2rem] font-bold leading-tight tracking-tight text-cc-navy">{title}</h1>
         </div>
         {actions}
       </header>
@@ -32,7 +32,7 @@ export function CommandCenterPage({
 export function CcDenied({ title }: { title: string }) {
   return (
     <CommandCenterPage title={title} crumb="Command Center">
-      <p className="text-sm text-cc-muted">This console is limited to platform admins.</p>
+      <p className="text-[16px] text-cc-muted">This console is limited to platform admins.</p>
     </CommandCenterPage>
   )
 }

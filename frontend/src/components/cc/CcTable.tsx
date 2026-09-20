@@ -43,8 +43,8 @@ export function CcEmpty({
 }) {
   return (
     <div className="rounded-lg border border-dashed border-cc-line px-6 py-12 text-center">
-      <p className="font-semibold text-cc-ink">{title}</p>
-      {body ? <p className="mt-1 text-sm text-cc-muted">{body}</p> : null}
+      <p className="text-[17px] font-semibold text-cc-navy">{title}</p>
+      {body ? <p className="mt-1 text-[15px] text-cc-muted">{body}</p> : null}
       {action ? <div className="mt-4">{action}</div> : null}
     </div>
   )
