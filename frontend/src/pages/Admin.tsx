@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useCallback,
   useEffect,
   useRef,
@@ -985,7 +984,7 @@ export function Admin() {
       {selectedOrg ? (
         <div className="fixed inset-0 z-40 bg-black/40" onClick={closeDrawer}>
           <aside
-            className="absolute right-0 top-0 flex h-full w-full max-w-[32rem] flex-col overflow-y-auto border-l border-cc-line bg-cc-card p-6 text-cc-ink shadow-xl"
+            className="absolute right-0 top-0 flex h-full w-full max-w-[min(40rem,100%)] flex-col overflow-y-auto border-l border-cc-line bg-cc-card p-6 text-cc-ink shadow-xl"
             role="dialog"
             aria-modal="true"
             aria-label={selectedOrg.org_name || 'Organization'}
@@ -1258,131 +1257,113 @@ export function Admin() {
 
               {activeTab === 'members' ? (
                 <div>
-                  <p className={ccHint}>
+                  <p className={`${ccHint} mb-4`}>
                     Every real member of this org — each has their own "Log
                     in as," never ambiguous about who's being impersonated.
                   </p>
                   {membersError ? (
-                    <p className="upload-error" role="alert">
+                    <p className={ccErr} role="alert">
                       {membersError}
                     </p>
                   ) : null}
                   {orgMembers.length > 0 ? (
-                    <div className="admin-table-wrap">
-                      <table className="admin-table">
-                        <thead>
-                          <tr>
-                            <th>Name</th>
-                            <th>Email</th>
-                            <th>Role</th>
-                            <th>Short ID</th>
-                            <th>Joined</th>
-                            <th></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {orgMembers.map((m) => (
-                            <Fragment key={m.user_id}>
-                              <tr>
-                                <td>{displayName(m)}</td>
-                                <td>{m.email || '—'}</td>
-                                <td>
-                                  <span className="topbar-chip soft">{roleTagLabel(m.role)}</span>
-                                </td>
-                                <td>{m.short_id ?? '—'}</td>
-                                <td>
-                                  {m.first_seen ? new Date(m.first_seen).toLocaleDateString() : '—'}
-                                </td>
-                                <td className="flex flex-wrap gap-2">
-                                  <button
-                                    type="button"
-                                    className={ccGhost}
-                                    disabled={impersonatingMemberId === m.user_id || !m.email}
-                                    onClick={() => void logInAsMember(m)}
-                                  >
-                                    {impersonatingMemberId === m.user_id ? 'Starting…' : 'Log in as'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className={ccGhost}
-                                    disabled={
-                                      resettingMemberId === m.user_id ||
-                                      !m.email ||
-                                      !supabaseConfigured
-                                    }
-                                    onClick={() => void sendResetEmailForMember(m)}
-                                  >
-                                    {resettingMemberId === m.user_id ? 'Sending…' : 'Send reset email'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className={ccGhost}
-                                    onClick={() => void toggleMemberHistory(m)}
-                                  >
-                                    {expandedMemberId === m.user_id ? 'Hide history' : 'History'}
-                                  </button>
-                                  {memberImpersonateErrors[m.user_id] ? (
-                                    <p className={ccErr} role="alert">
-                                      {memberImpersonateErrors[m.user_id]}
-                                    </p>
-                                  ) : null}
-                                  {memberResetErrors[m.user_id] ? (
-                                    <p className={ccErr} role="alert">
-                                      {memberResetErrors[m.user_id]}
-                                    </p>
-                                  ) : null}
-                                  {memberResetInfo[m.user_id] ? (
-                                    <p className="auth-info" role="status">
-                                      {memberResetInfo[m.user_id]}
-                                    </p>
-                                  ) : null}
-                                </td>
-                              </tr>
-                              {expandedMemberId === m.user_id ? (
-                                <tr key={`${m.user_id}-history`}>
-                                  <td colSpan={6}>
-                                    {pwEventsByUser[m.user_id] === undefined ? (
-                                      <p className={ccHint}>Loading…</p>
-                                    ) : pwEventsByUser[m.user_id] === null ? (
-                                      <p className={ccErr} role="alert">
-                                        Could not load password history.
-                                      </p>
-                                    ) : (pwEventsByUser[m.user_id] as PasswordEvent[]).length === 0 ? (
-                                      <p className="empty-copy">No password changes recorded.</p>
-                                    ) : (
-                                      <table className="admin-table">
-                                        <thead>
-                                          <tr>
-                                            <th>When</th>
-                                            <th>Event</th>
-                                            <th>IP</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {(pwEventsByUser[m.user_id] as PasswordEvent[]).map((e, i) => (
-                                            <tr key={i}>
-                                              <td>
-                                                {e.created_at
-                                                  ? new Date(e.created_at).toLocaleString()
-                                                  : '—'}
-                                              </td>
-                                              <td>{passwordEventLabel(e)}</td>
-                                              <td>{e.ip_address || '—'}</td>
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
-                                    )}
-                                  </td>
-                                </tr>
-                              ) : null}
-                            </Fragment>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <ul className="grid gap-3">
+                      {orgMembers.map((m) => (
+                        <li key={m.user_id} className="rounded-lg border border-cc-line p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold">{displayName(m)}</p>
+                              <p className="truncate text-[13px] text-cc-muted">{m.email || '—'}</p>
+                              <p className={`${ccMono} mt-1`}>
+                                {m.short_id ?? '—'}
+                                {m.first_seen
+                                  ? ` · ${new Date(m.first_seen).toLocaleDateString()}`
+                                  : ''}
+                              </p>
+                            </div>
+                            <span className="shrink-0 rounded-full border border-cc-line px-2 py-0.5 text-[11px] font-semibold">
+                              {roleTagLabel(m.role)}
+                            </span>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              className={`${ccGhost} whitespace-nowrap`}
+                              disabled={impersonatingMemberId === m.user_id || !m.email}
+                              onClick={() => void logInAsMember(m)}
+                            >
+                              {impersonatingMemberId === m.user_id ? 'Starting…' : 'Log in as'}
+                            </button>
+                            <button
+                              type="button"
+                              className={`${ccGhost} whitespace-nowrap`}
+                              disabled={
+                                resettingMemberId === m.user_id ||
+                                !m.email ||
+                                !supabaseConfigured
+                              }
+                              onClick={() => void sendResetEmailForMember(m)}
+                            >
+                              {resettingMemberId === m.user_id ? 'Sending…' : 'Reset email'}
+                            </button>
+                            <button
+                              type="button"
+                              className={`${ccGhost} whitespace-nowrap`}
+                              onClick={() => void toggleMemberHistory(m)}
+                            >
+                              {expandedMemberId === m.user_id ? 'Hide history' : 'History'}
+                            </button>
+                          </div>
+                          {memberImpersonateErrors[m.user_id] ? (
+                            <p className={`${ccErr} mt-2`} role="alert">
+                              {memberImpersonateErrors[m.user_id]}
+                            </p>
+                          ) : null}
+                          {memberResetErrors[m.user_id] ? (
+                            <p className={`${ccErr} mt-2`} role="alert">
+                              {memberResetErrors[m.user_id]}
+                            </p>
+                          ) : null}
+                          {memberResetInfo[m.user_id] ? (
+                            <p className={`${ccHint} mt-2`} role="status">
+                              {memberResetInfo[m.user_id]}
+                            </p>
+                          ) : null}
+                          {expandedMemberId === m.user_id ? (
+                            <div className="mt-3 border-t border-cc-line pt-3">
+                              {pwEventsByUser[m.user_id] === undefined ? (
+                                <p className={ccHint}>Loading…</p>
+                              ) : pwEventsByUser[m.user_id] === null ? (
+                                <p className={ccErr} role="alert">
+                                  Could not load password history.
+                                </p>
+                              ) : (pwEventsByUser[m.user_id] as PasswordEvent[]).length === 0 ? (
+                                <p className={ccHint}>No password changes recorded.</p>
+                              ) : (
+                                <ul className="grid gap-2">
+                                  {(pwEventsByUser[m.user_id] as PasswordEvent[]).map((e, i) => (
+                                    <li key={i} className="text-[13px]">
+                                      <span className="text-cc-muted">
+                                        {e.created_at
+                                          ? new Date(e.created_at).toLocaleString()
+                                          : '—'}
+                                      </span>
+                                      <span className="mx-2">·</span>
+                                      {passwordEventLabel(e)}
+                                      {e.ip_address ? (
+                                        <span className={`${ccMono} ml-2`}>{e.ip_address}</span>
+                                      ) : null}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
                   ) : !membersError ? (
-                    <p className="empty-copy">No members found for this org.</p>
+                    <p className={ccHint}>No members found for this org.</p>
                   ) : null}
                 </div>
               ) : null}
