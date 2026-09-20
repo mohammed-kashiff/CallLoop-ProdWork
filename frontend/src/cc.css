@@ -37,11 +37,14 @@
   --color-cc-sidebar: #f3faf8;
   --color-cc-accent: #0d9488;
   --color-cc-navy: #0b1f44;
+  --color-cc-btn: #0d9488;
+  --color-cc-on-btn: #ffffff;
   --color-cc-fail: #b42318;
   --color-cc-pass: #0f766e;
 }
 
 html[data-color-mode="dark"] .layout-shell--admin {
+  color-scheme: dark;
   --color-cc-paper: #0c1014;
   --color-cc-card: #141a20;
   --color-cc-wash: #12332f;
@@ -51,6 +54,8 @@ html[data-color-mode="dark"] .layout-shell--admin {
   --color-cc-sidebar: #0a1416;
   --color-cc-accent: #2dd4bf;
   --color-cc-navy: #e8eef2;
+  --color-cc-btn: #0d9488;
+  --color-cc-on-btn: #ffffff;
   --color-cc-fail: #fb7185;
   --color-cc-pass: #5eead4;
 }
@@ -60,4 +65,41 @@ html[data-color-mode="dark"] .layout-shell--admin {
   background: var(--color-cc-sidebar);
   border-right: 1px solid var(--color-cc-line);
   color: var(--color-cc-ink);
+}
+
+/* Native search/date/text controls ignore layered Tailwind bg-* and stay
+   scheme-light (white) in dark mode. Unlayered + appearance:none wins. */
+.layout-shell--admin input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"]),
+.layout-shell--admin textarea,
+.layout-shell--admin select {
+  appearance: none;
+  background-color: var(--color-cc-card);
+  color: var(--color-cc-ink);
+  border-color: var(--color-cc-line);
+}
+
+.layout-shell--admin input::placeholder,
+.layout-shell--admin textarea::placeholder {
+  color: var(--color-cc-muted);
+  opacity: 1;
+}
+
+.layout-shell--admin input[type="search"]::-webkit-search-decoration,
+.layout-shell--admin input[type="search"]::-webkit-search-cancel-button,
+.layout-shell--admin input[type="search"]::-webkit-search-results-button,
+.layout-shell--admin input[type="search"]::-webkit-search-results-decoration {
+  appearance: none;
+}
+
+html[data-color-mode="dark"] .layout-shell--admin input:-webkit-autofill,
+html[data-color-mode="dark"] .layout-shell--admin textarea:-webkit-autofill,
+html[data-color-mode="dark"] .layout-shell--admin select:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px var(--color-cc-card) inset;
+  -webkit-text-fill-color: var(--color-cc-ink);
+  caret-color: var(--color-cc-ink);
+}
+
+html[data-color-mode="dark"] .layout-shell--admin input[type="date"]::-webkit-calendar-picker-indicator,
+html[data-color-mode="dark"] .layout-shell--admin input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
 }

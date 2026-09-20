@@ -1,5 +1,5 @@
 export const ccBtn =
-  'inline-flex items-center justify-center rounded-md bg-cc-navy px-4 py-2.5 text-[15px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40'
+  'inline-flex items-center justify-center rounded-md bg-cc-btn px-4 py-2.5 text-[15px] font-semibold text-cc-on-btn disabled:cursor-not-allowed disabled:opacity-40'
 export const ccGhost =
   'inline-flex items-center justify-center rounded-md border border-cc-line bg-cc-card px-4 py-2.5 text-[15px] font-semibold text-cc-navy disabled:cursor-not-allowed disabled:opacity-40'
 export const ccInput =
