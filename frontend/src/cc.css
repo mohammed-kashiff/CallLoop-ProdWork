@@ -28,13 +28,14 @@
   --font-sans: Figtree, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
-  --color-cc-paper: #ffffff;
+  --color-cc-paper: #e8eef4;
   --color-cc-card: #ffffff;
   --color-cc-wash: #e8f6f3;
   --color-cc-ink: #0b1f44;
   --color-cc-muted: #3d5a6e;
-  --color-cc-line: #cde8e2;
-  --color-cc-sidebar: #f3faf8;
+  --color-cc-line: #d5dee8;
+  --color-cc-sidebar: #0b1f44;
+  --color-cc-rail-text: #d7e2ee;
   --color-cc-accent: #0d9488;
   --color-cc-navy: #0b1f44;
   --color-cc-btn: #0d9488;
@@ -50,8 +51,9 @@ html[data-color-mode="dark"] .layout-shell--admin {
   --color-cc-wash: #12332f;
   --color-cc-ink: #e8eef2;
   --color-cc-muted: #93a3bb;
-  --color-cc-line: rgba(45, 212, 191, 0.22);
-  --color-cc-sidebar: #0a1416;
+  --color-cc-line: rgba(232, 238, 248, 0.12);
+  --color-cc-sidebar: #0b1f44;
+  --color-cc-rail-text: #d7e2ee;
   --color-cc-accent: #2dd4bf;
   --color-cc-navy: #e8eef2;
   --color-cc-btn: #0d9488;
@@ -63,8 +65,21 @@ html[data-color-mode="dark"] .layout-shell--admin {
 /* Unlayered so it beats App.css `.sidebar { background: var(--sidebar-bg) }`. */
 .layout-shell--admin .sidebar {
   background: var(--color-cc-sidebar);
-  border-right: 1px solid var(--color-cc-line);
-  color: var(--color-cc-ink);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--color-cc-rail-text);
+}
+
+.layout-shell--admin .sidebar-close {
+  color: var(--color-cc-rail-text);
+}
+
+.layout-shell--admin .nav-toggle {
+  background: var(--color-cc-card);
+  border-color: var(--color-cc-line);
+}
+
+.layout-shell--admin .nav-toggle span {
+  background: var(--color-cc-ink);
 }
 
 /* Native search/date/text controls ignore layered Tailwind bg-* and stay

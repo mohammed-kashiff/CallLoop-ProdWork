@@ -12,7 +12,7 @@ export function CommandCenterPage({
   children?: ReactNode
 }) {
   return (
-    <div className="mx-auto max-w-[1120px] px-1 pb-16">
+    <div className="mx-auto w-full max-w-[1400px] px-1 pb-16">
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           {crumb ? (

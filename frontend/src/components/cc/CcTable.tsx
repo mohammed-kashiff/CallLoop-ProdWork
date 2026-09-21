@@ -13,9 +13,9 @@ export function CcTable({
   footer?: ReactNode
 }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-cc-line bg-cc-card">
+    <div className="overflow-x-auto rounded-xl border border-cc-line bg-cc-card shadow-sm">
       <table className="w-full min-w-[40rem] border-collapse text-left">
-        <thead className="sticky top-0 bg-cc-card">
+        <thead className="sticky top-0 bg-cc-paper">
           <tr className="border-b border-cc-line">
             {columns.map((c, i) => (
               <th key={i} className={ccTh}>

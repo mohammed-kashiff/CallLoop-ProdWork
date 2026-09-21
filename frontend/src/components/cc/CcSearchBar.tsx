@@ -26,7 +26,7 @@ export function CcSearchBar({
 }) {
   return (
     <form
-      className="mb-6 grid gap-3"
+      className="mb-6"
       onSubmit={(e) => {
         if (hideSubmit) {
           e.preventDefault()
@@ -35,12 +35,12 @@ export function CcSearchBar({
         onSubmit?.(e)
       }}
     >
-      {hint ? <p className={ccHint}>{hint}</p> : null}
-      <div className="flex flex-wrap items-center gap-2">
+      {hint ? <p className={`${ccHint} mb-3`}>{hint}</p> : null}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-cc-line bg-cc-card p-2 shadow-sm">
         <input
           ref={inputRef}
           type="search"
-          className={`${ccInput} min-w-[16rem] flex-1`}
+          className={`${ccInput} min-w-[16rem] flex-1 border-0 shadow-none focus:border-0`}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}

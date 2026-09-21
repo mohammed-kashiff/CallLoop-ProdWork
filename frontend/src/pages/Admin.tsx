@@ -17,6 +17,7 @@ import { CUSTOMER_ORIGIN, isAdminHost } from '../lib/adminHost'
 import { CcDenied, CommandCenterPage } from '../components/cc/CommandCenterPage'
 import { CcEmpty, CcTable } from '../components/cc/CcTable'
 import { CcSearchBar } from '../components/cc/CcSearchBar'
+import { CcOrgTile } from '../components/cc/orgTile'
 import {
   ccBtn,
   ccErr,
@@ -878,17 +879,12 @@ export function Admin() {
             {orgRows.map((row) => (
               <tr
                 key={row.org_id}
-                className={`${ccRow} cursor-pointer ${selectedOrg?.org_id === row.org_id ? 'bg-cc-paper' : ''}`}
+                className={`${ccRow} cursor-pointer ${selectedOrg?.org_id === row.org_id ? 'bg-cc-wash' : ''}`}
                 onClick={() => void openOrg(row)}
               >
                 <td className={ccTd}>
                   <div className="flex items-center gap-3">
-                    <span
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cc-paper text-[13px] font-semibold"
-                      aria-hidden="true"
-                    >
-                      {(row.org_name || '?').slice(0, 1).toUpperCase()}
-                    </span>
+                    <CcOrgTile name={row.org_name || '?'} />
                     <span>
                       <span className="block font-medium">{row.org_name || '—'}</span>
                       <span className={ccMono}>{row.org_id}</span>
@@ -991,17 +987,31 @@ export function Admin() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold">{selectedOrg.org_name || 'Organization'}</h2>
-                <div className="mt-1 flex items-center gap-2">
-                  <p className={ccMono}>{selectedOrg.org_id}</p>
-                  <button
-                    type="button"
-                    className="text-[12px] font-semibold text-cc-muted hover:text-cc-ink"
-                    onClick={() => void copyOrgId(selectedOrg.org_id)}
-                  >
-                    {copiedOrgId ? 'Copied' : 'Copy'}
-                  </button>
+              <div className="flex min-w-0 items-start gap-3">
+                <CcOrgTile name={selectedOrg.org_name || '?'} size="lg" />
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold">{selectedOrg.org_name || 'Organization'}</h2>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <p className={ccMono}>{selectedOrg.org_id}</p>
+                    <button
+                      type="button"
+                      className="text-[12px] font-semibold text-cc-accent hover:text-cc-ink"
+                      onClick={() => void copyOrgId(selectedOrg.org_id)}
+                    >
+                      {copiedOrgId ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <span className="rounded-md bg-cc-wash px-2 py-0.5 text-[12px] font-semibold text-cc-navy">
+                      {selectedOrg.member_count}{' '}
+                      {selectedOrg.member_count === 1 ? 'member' : 'members'}
+                    </span>
+                    <span className="rounded-md bg-cc-paper px-2 py-0.5 text-[12px] font-semibold text-cc-muted">
+                      {selectedOrg.created_at
+                        ? new Date(selectedOrg.created_at).toLocaleDateString()
+                        : '—'}
+                    </span>
+                  </div>
                 </div>
               </div>
               <button type="button" className="text-xl leading-none text-cc-muted" onClick={closeDrawer} aria-label="Close">
@@ -1016,7 +1026,7 @@ export function Admin() {
                   type="button"
                   className={`-mb-px border-b-2 px-3 py-2 text-[13px] font-semibold ${
                     activeTab === tab
-                      ? 'border-cc-ink text-cc-ink'
+                      ? 'border-cc-accent text-cc-accent'
                       : 'border-transparent text-cc-muted hover:text-cc-ink'
                   }`}
                   onClick={() => setActiveTab(tab)}

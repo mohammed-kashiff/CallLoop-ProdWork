@@ -6,6 +6,7 @@ import { useAudit } from '../context/AuditContext'
 import { useAuth } from '../context/AuthContext'
 import { flagEnabled } from '../lib/features'
 import { appHomePath, isAdminHost } from '../lib/adminHost'
+import { adminNavClass } from './cc/classes'
 
 const HOME = { to: '/', label: 'Home', end: true, icon: 'home' } as const
 
@@ -255,7 +256,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
       >
         <div className="sidebar-brand">
           <Link to={home} onClick={onNavigate} aria-label={adminHost ? 'Go to admin' : 'Go to home'}>
-            <BrandLogo size="sm" surface={adminHost ? 'light' : 'dark'} animate={false} />
+            <BrandLogo size="sm" surface="dark" animate={false} />
           </Link>
           <button
             type="button"
@@ -282,82 +283,47 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
           <nav className="flex min-h-0 flex-1 flex-col gap-0.5" aria-label="Admin">
             <NavLink
               to="/admin"
-              className={({ isActive }) =>
-                [
-                  'rounded-md px-2.5 py-2.5 text-[15px] font-semibold text-cc-muted hover:bg-cc-wash hover:text-cc-navy',
-                  isActive ? 'border-l-4 border-cc-accent bg-cc-wash text-cc-navy' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')
-              }
+              className={({ isActive }) => adminNavClass(isActive)}
               onClick={onNavigate}
             >
               Command Center
             </NavLink>
             <NavLink
               to="/call-logs"
-              className={({ isActive }) =>
-                [
-                  'rounded-md px-2.5 py-2.5 text-[15px] font-semibold text-cc-muted hover:bg-cc-wash hover:text-cc-navy',
-                  isActive ? 'border-l-4 border-cc-accent bg-cc-wash text-cc-navy' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')
-              }
+              className={({ isActive }) => adminNavClass(isActive)}
               onClick={onNavigate}
             >
               Call logs
             </NavLink>
             <NavLink
               to="/ticket-logs"
-              className={({ isActive }) =>
-                [
-                  'rounded-md px-2.5 py-2.5 text-[15px] font-semibold text-cc-muted hover:bg-cc-wash hover:text-cc-navy',
-                  isActive ? 'border-l-4 border-cc-accent bg-cc-wash text-cc-navy' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')
-              }
+              className={({ isActive }) => adminNavClass(isActive)}
               onClick={onNavigate}
             >
               Ticket logs
             </NavLink>
             <NavLink
               to="/platform-admins"
-              className={({ isActive }) =>
-                [
-                  'rounded-md px-2.5 py-2.5 text-[15px] font-semibold text-cc-muted hover:bg-cc-wash hover:text-cc-navy',
-                  isActive ? 'border-l-4 border-cc-accent bg-cc-wash text-cc-navy' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')
-              }
+              className={({ isActive }) => adminNavClass(isActive)}
               onClick={onNavigate}
             >
               Platform Admins
             </NavLink>
             <NavLink
               to="/admin-activity-log"
-              className={({ isActive }) =>
-                [
-                  'rounded-md px-2.5 py-2.5 text-[15px] font-semibold text-cc-muted hover:bg-cc-wash hover:text-cc-navy',
-                  isActive ? 'border-l-4 border-cc-accent bg-cc-wash text-cc-navy' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')
-              }
+              className={({ isActive }) => adminNavClass(isActive)}
               onClick={onNavigate}
             >
               Security log
             </NavLink>
-            <div className="mt-auto flex items-center gap-2.5 border-t border-cc-line px-1 pt-3">
+            <div className="mt-auto flex items-center gap-2.5 border-t border-white/15 px-1 pt-3">
               <span
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cc-wash text-[13px] font-semibold text-cc-ink"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-[13px] font-semibold text-cc-rail-text"
                 aria-hidden="true"
               >
                 {(email || '?').slice(0, 1).toUpperCase()}
               </span>
-              <span className="truncate text-[14px] text-cc-muted">{email || 'Unknown admin'}</span>
+              <span className="truncate text-[14px] text-cc-rail-text">{email || 'Unknown admin'}</span>
             </div>
           </nav>
         ) : (
