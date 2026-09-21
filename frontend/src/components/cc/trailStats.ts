@@ -57,10 +57,11 @@ export function trailSpan(events: CcTrailEvent[]): {
   }
   const firstMs = times[0]
   const lastMs = times[times.length - 1]
+  const delta = lastMs - firstMs
   return {
     first: new Date(firstMs).toLocaleString(),
     last: new Date(lastMs).toLocaleString(),
-    elapsed: formatElapsed(lastMs - firstMs),
+    elapsed: delta < 1000 ? '—' : formatElapsed(delta),
   }
 }
 
@@ -76,10 +77,18 @@ function formatElapsed(ms: number): string {
   return mins ? `${h}h ${mins}m` : `${h}h`
 }
 
+const TRAIL_META_KEYS = new Set(['source', 'reconstructed', 'reconstructed_from'])
+
+export function isReconstructed(extra: Record<string, unknown> | null | undefined): boolean {
+  if (!extra) return false
+  return extra.reconstructed === true || extra.source === 'backfill'
+}
+
 export function trailDetailEntries(extra: Record<string, unknown> | null | undefined): [string, string][] {
   if (!extra) return []
   const out: [string, string][] = []
   for (const [key, value] of Object.entries(extra)) {
+    if (TRAIL_META_KEYS.has(key)) continue
     if (value == null || value === '') continue
     const text = typeof value === 'string' ? value : JSON.stringify(value)
     if (!text || text === '{}' || text === '[]') continue

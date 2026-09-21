@@ -1,5 +1,5 @@
 import { ccMono } from './classes'
-import { orderTrailEvents, type CcTrailEvent } from './trailStats'
+import { isReconstructed, orderTrailEvents, type CcTrailEvent } from './trailStats'
 
 export type { CcTrailEvent }
 
@@ -59,6 +59,11 @@ export function CcTimeline({
                 <p className="text-[14px] text-cc-muted">
                   {e.created_at ? new Date(e.created_at).toLocaleString() : '—'}
                 </p>
+                {isReconstructed(e.extra) ? (
+                  <span className="rounded bg-cc-paper px-1.5 py-0.5 text-[12px] font-semibold text-cc-muted">
+                    Reconstructed
+                  </span>
+                ) : null}
               </div>
               {e.agentId ? <p className={`${ccMono} mt-0.5`}>Agent {e.agentId}</p> : null}
               {e.error ? <p className="mt-1 text-[15px] text-cc-fail">{e.error}</p> : null}

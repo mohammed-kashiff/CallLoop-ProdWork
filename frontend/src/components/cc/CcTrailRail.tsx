@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { ccHint, ccMono } from './classes'
 import {
+  isReconstructed,
   trailCounts,
   trailDetailEntries,
   trailSpan,
@@ -33,6 +34,11 @@ export function CcTrailRail({
         <p className="text-[13px] font-semibold text-cc-muted">Pipeline</p>
         <p className="mt-1 text-[16px] font-semibold text-cc-navy">{identity}</p>
         {source ? <p className={`${ccHint} mt-0.5`}>{source}</p> : null}
+        {events.some((e) => isReconstructed(e.extra)) ? (
+          <p className={`${ccHint} mt-1`}>
+            Reconstructed from the stored scorecard — not a live pipeline log.
+          </p>
+        ) : null}
       </div>
 
       <dl className="grid grid-cols-3 gap-2 text-center">
@@ -77,6 +83,9 @@ export function CcTrailRail({
         <div className="border-t border-cc-line pt-4">
           <p className="text-[13px] font-semibold text-cc-muted">Selected step</p>
           <p className="mt-1 text-[16px] font-bold text-cc-navy">{selected.stage}</p>
+          {isReconstructed(selected.extra) ? (
+            <p className={`${ccHint} mt-0.5`}>Reconstructed</p>
+          ) : null}
           {selected.agentId ? (
             <p className={`${ccMono} mt-0.5`}>Agent {selected.agentId}</p>
           ) : null}
