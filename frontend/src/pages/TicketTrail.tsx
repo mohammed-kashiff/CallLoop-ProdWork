@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { CommandCenterPage } from '../components/cc/CommandCenterPage'
 import { CcTimeline, type CcTrailEvent } from '../components/cc/CcTimeline'
-import { ccErr, ccHint, ccMono } from '../components/cc/classes'
+import { CcTrailRail } from '../components/cc/CcTrailRail'
+import { ccErr, ccHint } from '../components/cc/classes'
+import { defaultSelectedIndex, orderTrailEvents } from '../components/cc/trailStats'
 import { useAuth } from '../context/AuthContext'
 import { apiFetch, readError } from '../lib/api'
 import { isAdminHost } from '../lib/adminHost'
@@ -65,6 +67,7 @@ export function TicketTrail() {
   const [data, setData] = useState<TrailPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [selectedIndex, setSelectedIndex] = useState(0)
 
   useEffect(() => {
     if (!orgId) {
@@ -96,19 +99,29 @@ export function TicketTrail() {
     }
   }, [ticketId, orgId])
 
+  const events: CcTrailEvent[] = useMemo(
+    () =>
+      (data?.events || []).map((e) => ({
+        stage: stageLabel(e.stage),
+        status: e.status,
+        created_at: e.created_at,
+        error: e.error,
+        apis: apisFromDetail(e.detail),
+        extra: detailWithoutApis(e.detail),
+        agentId: agentIdFromDetail(e.detail),
+      })),
+    [data],
+  )
+  const ordered = useMemo(() => orderTrailEvents(events), [events])
+
+  useEffect(() => {
+    setSelectedIndex(defaultSelectedIndex(ordered))
+  }, [ordered])
+
   if (!isAdminHost()) return <Navigate to="/" replace />
   if (!isPlatformAdmin) return <Navigate to="/admin" replace />
 
   const title = data ? capFirst(data.subject || `Ticket ${data.ticket_id}`) : 'Ticket trail'
-  const events: CcTrailEvent[] = (data?.events || []).map((e) => ({
-    stage: stageLabel(e.stage),
-    status: e.status,
-    created_at: e.created_at,
-    error: e.error,
-    apis: apisFromDetail(e.detail),
-    extra: detailWithoutApis(e.detail),
-    agentId: agentIdFromDetail(e.detail),
-  }))
 
   return (
     <CommandCenterPage
@@ -129,10 +142,22 @@ export function TicketTrail() {
       ) : null}
       {loading ? <p className={ccHint}>Loading trail…</p> : null}
       {data && !loading ? (
-        <div className="grid gap-4">
-          <p className={ccMono}>{data.org_id}</p>
-          {data.source ? <p className={ccHint}>{data.source}</p> : null}
-          <CcTimeline events={events} />
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <aside className="lg:col-start-2 lg:row-start-1">
+            <div className="lg:sticky lg:top-6">
+              <CcTrailRail
+                events={ordered}
+                selectedIndex={selectedIndex}
+                orgId={data.org_id}
+                logsTo={`/ticket-logs?query=${encodeURIComponent(data.org_id)}`}
+                identity={capFirst(data.subject || `Ticket ${data.ticket_id}`)}
+                source={data.source}
+              />
+            </div>
+          </aside>
+          <div className="rounded-xl border border-cc-line bg-cc-card p-6 shadow-sm lg:col-start-1 lg:row-start-1">
+            <CcTimeline events={ordered} selectedIndex={selectedIndex} onSelect={setSelectedIndex} />
+          </div>
         </div>
       ) : null}
     </CommandCenterPage>
