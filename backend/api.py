@@ -84,6 +84,9 @@ from . import ticket_api
 from . import team_performance_api
 from . import ticket_score_api
 from . import training_api
+from . import home_api
+from . import finding_responses_api
+from . import org_invite
 from . import performance_kpis_api
 from . import transcribe
 from .org_ids import (
@@ -130,6 +133,9 @@ call_agent_identity_aliases_api.register(app)
 ticket_score_api.register(app)
 team_performance_api.register(app)
 training_api.register(app)
+home_api.register(app)
+finding_responses_api.register(app)
+org_invite.register(app)
 performance_kpis_api.register(app)
 ticket_api.register(app)
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Workspace } from '../components/Workspace'
 import { useAudit } from '../context/AuditContext'
+import { useAuth } from '../context/AuthContext'
 import { apiFetch, readError } from '../lib/api'
 import { capFirst, capWords } from '../lib/format'
 import type { FlaggedCallRow } from '../types'
@@ -267,11 +268,25 @@ function ReviewPage({
 export function FlaggedForReview() {
   const navigate = useNavigate()
   const { selectCall } = useAudit()
+  const { isOwnerOrManager } = useAuth()
   const [items, setItems] = useState<FlagItem[]>([])
   const [tab, setTab] = useState<ReviewStatus>('pending')
   const [noteOpenId, setNoteOpenId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [disputes, setDisputes] = useState<
+    Array<{
+      id: string
+      channel: 'call' | 'ticket'
+      call_id: number | null
+      ticket_id: string | null
+      dimension_id: string
+      note: string | null
+      display_name: string | null
+      filename: string | null
+      subject: string | null
+    }>
+  >([])
 
   useEffect(() => {
     let cancelled = false
@@ -294,6 +309,25 @@ export function FlaggedForReview() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!isOwnerOrManager) return
+    let cancelled = false
+    apiFetch('/api/findings/responses?stance=dispute')
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await readError(r, 'Could not load disputes.'))
+        return r.json() as Promise<{ responses?: typeof disputes }>
+      })
+      .then((body) => {
+        if (!cancelled) setDisputes(Array.isArray(body.responses) ? body.responses : [])
+      })
+      .catch(() => {
+        if (!cancelled) setDisputes([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isOwnerOrManager])
 
   const pending = useMemo(() => items.filter((item) => item.status === 'pending'), [items])
   const completed = useMemo(() => items.filter((item) => item.status === 'completed'), [items])
@@ -328,6 +362,51 @@ export function FlaggedForReview() {
         </p>
       )}
       {loading && <p className="panel-lede">Loading flagged calls…</p>}
+
+      {isOwnerOrManager ? (
+        <section className="profile-card" aria-label="Disputes">
+          <h2>Disputes</h2>
+          <p className="panel-lede">
+            Completing a call flag does not clear a dispute.
+          </p>
+          {disputes.length === 0 ? (
+            <p className="panel-lede">No open disputes.</p>
+          ) : (
+          <ul className="home-list">
+            {disputes.map((row) => {
+              const href =
+                row.channel === 'ticket' && row.ticket_id
+                  ? `/ticket-audit/${row.ticket_id}`
+                  : row.call_id
+                    ? `/audits/${row.call_id}`
+                    : '/agents-pulse/flagged'
+              const label =
+                row.channel === 'ticket'
+                  ? row.subject || row.ticket_id?.slice(0, 8) || 'Ticket'
+                  : row.filename || `call-${row.call_id}`
+              return (
+                <li key={row.id}>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => {
+                      if (row.channel === 'call' && row.call_id) {
+                        void selectCall(row.call_id).then(() => navigate('/agents-pulse'))
+                        return
+                      }
+                      navigate(href)
+                    }}
+                  >
+                    {capWords(row.display_name || 'Agent')} · {label} · {row.dimension_id}
+                  </button>
+                  {row.note ? <p className="panel-lede">{row.note}</p> : null}
+                </li>
+              )
+            })}
+          </ul>
+          )}
+        </section>
+      ) : null}
 
       <Workspace
         allowNotes={false}

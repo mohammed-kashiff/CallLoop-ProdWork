@@ -7,6 +7,7 @@ import { capFirst } from '../lib/format'
 import { isAdminHost } from '../lib/adminHost'
 import { flagEnabled } from '../lib/features'
 import { useAuth } from '../context/AuthContext'
+import { FindingStance, useFindingResponses } from '../components/FindingStance'
 
 // TA-10 (PRD §3/§9/§10): its own page, not a variant of AuditDetail.tsx —
 // the ticket engine is a separate engine from calls end to end.
@@ -592,8 +593,13 @@ export function TicketAudit() {
   const { ticketId } = useParams()
   const navigate = useNavigate()
   const inputRef = useRef<HTMLInputElement>(null)
-  const { role, features } = useAuth()
+  const { role, features, userId } = useAuth()
   const autoAuditEnabled = flagEnabled(features, 'enable_ticket_auto_audit')
+  const finding = useFindingResponses({
+    channel: 'ticket',
+    ticketId: ticketId || null,
+    enabled: Boolean(ticketId),
+  })
 
   const [ticket, setTicket] = useState<TicketDetail | null>(null)
   const [loading, setLoading] = useState(false)
@@ -885,6 +891,16 @@ export function TicketAudit() {
                                   isImage={Boolean(turn?.has_image)}
                                   assetUrl={assetUrl}
                                   verified={f.evidence_verified}
+                                />
+                                <FindingStance
+                                  current={finding.rows.find(
+                                    (row) =>
+                                      row.dimension_id === f.id && row.user_id === audit.agent_user_id,
+                                  )}
+                                  canRespond={userId === audit.agent_user_id}
+                                  busy={finding.busyId === f.id}
+                                  error={finding.errors[f.id] || null}
+                                  onRespond={(stance, note) => void finding.onRespond(f.id, stance, note)}
                                 />
                               </li>
                             )

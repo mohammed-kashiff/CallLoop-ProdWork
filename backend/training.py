@@ -1,8 +1,10 @@
-"""Training drills from stored Top Gap findings.
+"""Training drills from stored Top Gap findings, plus persisted assignments.
 
-No new Claude call, job, or table. Ticket drills use finding reasoning;
-call drills prefer coaching_note. Org-scoped SQL with RLS. Members always
-see themselves; Owner/Manager may pick an org teammate.
+Suggested drills need no new Claude call. Ticket drills use finding
+reasoning; call drills prefer coaching_note. Assigning copies a snapshot
+into training_assignments so Done/reply have a stable row. Org-scoped
+SQL with RLS. Members always see themselves; Owner/Manager may pick an
+org teammate.
 """
 
 from __future__ import annotations
@@ -15,8 +17,14 @@ from . import team_performance
 from .org_ids import org_scope, parse_org_id
 
 _DRILL_LIMIT = 5
+_REPLY_MAX = 400
+_PROMPT_MAX = 2000
 _DIM_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _CHANNELS = frozenset({"ticket", "call"})
+
+
+class DuplicateOpenAssignment(Exception):
+    """An open assignment already exists for this agent + source + dimension."""
 
 
 def _iso(value: object) -> str | None:
@@ -236,6 +244,7 @@ def snapshot(
                     "id": call_focus["id"],
                     "name": _focus_name(call_focus["id"], "call", call_drills),
                 }
+            assignments = list_assignments(conn, oid, target)
 
     member = by_id[target]
     return {
@@ -257,4 +266,190 @@ def snapshot(
             "dim": dim,
         },
         "drills": drills,
+        "assignments": assignments,
     }
+
+
+def _clip(text: object, limit: int) -> str:
+    value = str(text or "").strip()
+    if len(value) <= limit:
+        return value
+    return value[:limit]
+
+
+def _assignment_row(row: dict) -> dict:
+    call_id = row.get("call_id")
+    try:
+        cid = int(call_id) if call_id is not None else None
+    except (TypeError, ValueError):
+        cid = None
+    ticket_id = parse_org_id(row.get("ticket_id")) if row.get("ticket_id") else None
+    return {
+        "id": str(row["id"]),
+        "assignee_user_id": str(row["assignee_user_id"]),
+        "assigned_by": str(row["assigned_by"]),
+        "channel": row["channel"],
+        "call_id": cid,
+        "ticket_id": ticket_id,
+        "dimension_id": str(row.get("dimension_id") or ""),
+        "dimension_name": str(row.get("dimension_name") or ""),
+        "prompt": str(row.get("prompt") or ""),
+        "status": row["status"],
+        "reply": (str(row["reply"]).strip() if row.get("reply") else None),
+        "created_at": _iso(row.get("created_at")),
+        "completed_at": _iso(row.get("completed_at")),
+    }
+
+
+def list_assignments(conn, org_id: str, assignee_user_id: str) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT id, assignee_user_id, assigned_by, channel, call_id, ticket_id,
+               dimension_id, dimension_name, prompt, status, reply,
+               created_at, completed_at
+        FROM training_assignments
+        WHERE org_id = %s AND assignee_user_id = %s
+        ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END, created_at DESC
+        LIMIT 40
+        """,
+        (org_id, assignee_user_id),
+    ).fetchall()
+    return [_assignment_row(r) for r in rows or []]
+
+
+def list_open_assignments(conn, org_id: str, assignee_user_id: str, *, limit: int = 3) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT id, assignee_user_id, assigned_by, channel, call_id, ticket_id,
+               dimension_id, dimension_name, prompt, status, reply,
+               created_at, completed_at
+        FROM training_assignments
+        WHERE org_id = %s AND assignee_user_id = %s AND status = 'open'
+        ORDER BY created_at DESC
+        LIMIT %s
+        """,
+        (org_id, assignee_user_id, limit),
+    ).fetchall()
+    return [_assignment_row(r) for r in rows or []]
+
+
+def assign(
+    org_id: str,
+    *,
+    assigned_by: str,
+    agent: str,
+    channel: str,
+    dimension_id: str,
+    call_id: int | None = None,
+    ticket_id: str | None = None,
+) -> dict:
+    oid = parse_org_id(org_id)
+    by = parse_org_id(assigned_by)
+    assignee = parse_org_id(agent)
+    ch = parse_channel(channel)
+    dim = parse_dim(dimension_id)
+    if not oid or not by or not assignee:
+        raise ValueError("org_id, assigned_by, and agent are required.")
+    if not ch or not dim:
+        raise ValueError("channel and dimension_id are required.")
+    tid = parse_org_id(ticket_id) if ticket_id else None
+    cid: int | None = None
+    if call_id is not None and call_id != "":
+        try:
+            cid = int(call_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("call_id is not a valid call.") from exc
+        if cid < 1:
+            raise ValueError("call_id is not a valid call.")
+    if ch == "call":
+        if cid is None or tid is not None:
+            raise ValueError("A call assignment needs call_id only.")
+    else:
+        if tid is None or cid is not None:
+            raise ValueError("A ticket assignment needs ticket_id only.")
+
+    with org_scope(oid):
+        with db.connection() as conn:
+            roster = team_performance._members(conn, oid, only_user_id=None)
+            by_id = {m["user_id"]: m for m in roster}
+            if assignee not in by_id:
+                raise ValueError("Unknown teammate.")
+            if by not in by_id:
+                raise ValueError("Unknown teammate.")
+            if ch == "ticket":
+                drills = _ticket_drills(conn, oid, 365, assignee, dim)
+                hit = next((d for d in drills if d.get("ticket_id") == tid), drills[0] if drills else None)
+            else:
+                drills = _call_drills(conn, oid, 365, assignee, dim)
+                hit = next((d for d in drills if d.get("call_id") == cid), drills[0] if drills else None)
+            name = (hit or {}).get("dimension_name") or _focus_name(dim, ch, drills)
+            prompt = ""
+            if hit:
+                prompt = (hit.get("coaching_note") or hit.get("reasoning") or "").strip()
+            prompt = _clip(prompt, _PROMPT_MAX)
+            try:
+                row = conn.execute(
+                    """
+                    INSERT INTO training_assignments (
+                        org_id, assignee_user_id, assigned_by, channel,
+                        call_id, ticket_id, dimension_id, dimension_name, prompt, status
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'open')
+                    RETURNING id, assignee_user_id, assigned_by, channel, call_id, ticket_id,
+                              dimension_id, dimension_name, prompt, status, reply,
+                              created_at, completed_at
+                    """,
+                    (oid, assignee, by, ch, cid, tid, dim, name, prompt),
+                ).fetchone()
+            except db.IntegrityError as exc:
+                raise DuplicateOpenAssignment() from exc
+    if not row:
+        raise ValueError("Could not assign this drill.")
+    return _assignment_row(row)
+
+
+def complete(
+    org_id: str,
+    assignment_id: str,
+    *,
+    viewer_user_id: str,
+    reply: str | None = None,
+) -> dict:
+    oid = parse_org_id(org_id)
+    aid = parse_org_id(assignment_id)
+    vid = parse_org_id(viewer_user_id)
+    if not oid or not aid or not vid:
+        raise ValueError("assignment is required.")
+    clipped = _clip(reply, _REPLY_MAX) or None
+    with org_scope(oid):
+        with db.connection() as conn:
+            existing = conn.execute(
+                """
+                SELECT id, assignee_user_id, assigned_by, channel, call_id, ticket_id,
+                       dimension_id, dimension_name, prompt, status, reply,
+                       created_at, completed_at
+                FROM training_assignments
+                WHERE org_id = %s AND id = %s
+                """,
+                (oid, aid),
+            ).fetchone()
+            if not existing:
+                raise LookupError("Assignment not found.")
+            if str(existing["assignee_user_id"]) != vid:
+                raise PermissionError("Only the assigned agent can complete this drill.")
+            if existing["status"] == "done":
+                return _assignment_row(existing)
+            row = conn.execute(
+                """
+                UPDATE training_assignments
+                SET status = 'done', reply = %s, completed_at = now()
+                WHERE org_id = %s AND id = %s AND assignee_user_id = %s AND status = 'open'
+                RETURNING id, assignee_user_id, assigned_by, channel, call_id, ticket_id,
+                          dimension_id, dimension_name, prompt, status, reply,
+                          created_at, completed_at
+                """,
+                (clipped, oid, aid, vid),
+            ).fetchone()
+    if not row:
+        raise LookupError("Assignment not found.")
+    return _assignment_row(row)

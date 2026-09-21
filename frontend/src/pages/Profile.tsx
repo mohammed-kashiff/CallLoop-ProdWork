@@ -64,13 +64,95 @@ function TeamSection() {
   const memberName = (m: TeamMember) =>
     [m.first_name, m.last_name].filter(Boolean).join(' ') || m.user_id.slice(0, 8)
 
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteFirst, setInviteFirst] = useState('')
+  const [inviteLast, setInviteLast] = useState('')
+  const [inviteBusy, setInviteBusy] = useState(false)
+  const [inviteError, setInviteError] = useState<string | null>(null)
+  const [inviteOk, setInviteOk] = useState<string | null>(null)
+
+  const sendInvite = async (e: FormEvent) => {
+    e.preventDefault()
+    setInviteError(null)
+    setInviteOk(null)
+    setInviteBusy(true)
+    try {
+      const r = await apiFetch('/api/team/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          first_name: inviteFirst.trim(),
+          last_name: inviteLast.trim(),
+        }),
+      })
+      if (!r.ok) throw new Error(await readError(r, 'Could not send that invite.'))
+      const data = (await r.json()) as { email?: string }
+      setInviteOk(`Invite sent to ${data.email || inviteEmail.trim()}.`)
+      setInviteEmail('')
+      setInviteFirst('')
+      setInviteLast('')
+      load()
+    } catch (err: unknown) {
+      setInviteError(err instanceof Error ? err.message : 'Could not send that invite.')
+    } finally {
+      setInviteBusy(false)
+    }
+  }
+
   return (
     <section className="profile-card">
       <h2>Your team</h2>
       <p className="admin-provision-hint">
         Managers see the same ticket-audit team view and rubric builder access you do — nothing
-        else changes.
+        else changes. Invite a teammate by email; they set their own password. No temporary
+        password is created.
       </p>
+      <form className="auth-form profile-invite" onSubmit={(e) => void sendInvite(e)}>
+        <label>
+          Work email
+          <input
+            type="email"
+            autoComplete="off"
+            value={inviteEmail}
+            onChange={(ev) => setInviteEmail(ev.target.value)}
+            required
+          />
+        </label>
+        <label>
+          First name
+          <input
+            type="text"
+            value={inviteFirst}
+            onChange={(ev) => setInviteFirst(ev.target.value)}
+            required
+            maxLength={80}
+          />
+        </label>
+        <label>
+          Last name
+          <input
+            type="text"
+            value={inviteLast}
+            onChange={(ev) => setInviteLast(ev.target.value)}
+            required
+            maxLength={80}
+          />
+        </label>
+        {inviteError ? (
+          <p className="upload-error" role="alert">
+            {inviteError}
+          </p>
+        ) : null}
+        {inviteOk ? (
+          <p className="auth-info" role="status">
+            {inviteOk}
+          </p>
+        ) : null}
+        <button className="start-btn" type="submit" disabled={inviteBusy}>
+          {inviteBusy ? 'Sending…' : 'Send invite'}
+        </button>
+      </form>
       {error ? (
         <p className="upload-error" role="alert">
           {error}

@@ -9,6 +9,7 @@ import { ScoreOverview } from '../components/ScoreOverview'
 import { TranscriptPlayer } from '../components/TranscriptPlayer'
 import { UploadZone } from '../components/UploadZone'
 import { Workspace, callNoteScopeKey } from '../components/Workspace'
+import { useFindingResponses } from '../components/FindingStance'
 import { useAudit } from '../context/AuditContext'
 import { useAuth } from '../context/AuthContext'
 import { flagEnabled } from '../lib/features'
@@ -91,6 +92,11 @@ export function AgentsPulse() {
     clearCache,
   } = useAudit()
   const { features } = useAuth()
+  const finding = useFindingResponses({
+    channel: 'call',
+    callId: report.numericCallId,
+    enabled: showReport,
+  })
 
   const [tab, setTab] = useState('evaluation')
   const [flagMsg, setFlagMsg] = useState<string | null>(null)
@@ -347,7 +353,17 @@ export function AgentsPulse() {
               {
                 id: 'scorecard',
                 label: 'Scorecard',
-                panel: <CriteriaFindings criteria={report.criteria} onSeek={seek} />,
+                panel: (
+                  <CriteriaFindings
+                    criteria={report.criteria}
+                    onSeek={seek}
+                    responses={finding.responses}
+                    canRespond={finding.canRespond}
+                    busyId={finding.busyId}
+                    errors={finding.errors}
+                    onRespond={finding.onRespond}
+                  />
+                ),
               },
               {
                 id: 'close',

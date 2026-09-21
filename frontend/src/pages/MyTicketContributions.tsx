@@ -3,6 +3,7 @@ import { Link, Navigate } from 'react-router-dom'
 import { apiFetch, readError } from '../lib/api'
 import { AuditSummaryTiles } from '../components/AuditSummaryTiles'
 import { TicketEvidence } from '../components/TicketEvidence'
+import { FindingStance, useFindingResponses } from '../components/FindingStance'
 import { capFirst } from '../lib/format'
 import { isAdminHost } from '../lib/adminHost'
 
@@ -63,6 +64,53 @@ function marksLabel(f: OwnFinding): string | null {
   if (f.earned == null || f.weight == null) return null
   const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
   return `${fmt(f.earned)}/${fmt(f.weight)}`
+}
+
+function OwnFindings({ ticket }: { ticket: OwnTicketContribution }) {
+  const finding = useFindingResponses({ channel: 'ticket', ticketId: ticket.ticket_id })
+  return (
+    <>
+      <AuditSummaryTiles
+        summary={ticket.audit_summary}
+        strength={ticket.top_strength}
+        gap={ticket.top_gap}
+        resolveEvidence={(seq) => {
+          if (seq == null) return undefined
+          const turn = ticket.turns.find((row) => row.seq === seq)
+          return { isImage: Boolean(turn?.has_image) }
+        }}
+      />
+      <ul className="criteria-list">
+        {ticket.findings?.map((f) => (
+          <li key={f.id} className="criterion">
+            <div className="criterion-top">
+              <h3>{f.name || f.id}</h3>
+              <span className="criterion-badges">
+                {marksLabel(f) && <span className="criterion-marks">{marksLabel(f)}</span>}
+                <span className={`verdict verdict-${verdictSlug(f.verdict)}`}>
+                  {f.verdict === 'not_applicable' ? 'N/A' : f.verdict.toUpperCase()}
+                </span>
+              </span>
+            </div>
+            <TicketEvidence
+              text={f.evidence_text}
+              isImage={
+                f.evidence_seq != null &&
+                ticket.turns.some((turn) => turn.seq === f.evidence_seq && turn.has_image)
+              }
+            />
+            <FindingStance
+              current={finding.responses[f.id]}
+              canRespond={finding.canRespond}
+              busy={finding.busyId === f.id}
+              error={finding.errors[f.id] || null}
+              onRespond={(stance, note) => void finding.onRespond(f.id, stance, note)}
+            />
+          </li>
+        ))}
+      </ul>
+    </>
+  )
 }
 
 export function MyTicketContributions() {
@@ -153,40 +201,7 @@ export function MyTicketContributions() {
             ))}
           </ul>
           {t.findings && t.findings.length > 0 ? (
-            <>
-              <AuditSummaryTiles
-                summary={t.audit_summary}
-                strength={t.top_strength}
-                gap={t.top_gap}
-                resolveEvidence={(seq) => {
-                  if (seq == null) return undefined
-                  const turn = t.turns.find((turn) => turn.seq === seq)
-                  return { isImage: Boolean(turn?.has_image) }
-                }}
-              />
-              <ul className="criteria-list">
-              {t.findings.map((f) => (
-                <li key={f.id} className="criterion">
-                  <div className="criterion-top">
-                    <h3>{f.name || f.id}</h3>
-                    <span className="criterion-badges">
-                      {marksLabel(f) && <span className="criterion-marks">{marksLabel(f)}</span>}
-                      <span className={`verdict verdict-${verdictSlug(f.verdict)}`}>
-                        {f.verdict === 'not_applicable' ? 'N/A' : f.verdict.toUpperCase()}
-                      </span>
-                    </span>
-                  </div>
-                  <TicketEvidence
-                    text={f.evidence_text}
-                    isImage={
-                      f.evidence_seq != null &&
-                      t.turns.some((turn) => turn.seq === f.evidence_seq && turn.has_image)
-                    }
-                  />
-                </li>
-              ))}
-              </ul>
-            </>
+            <OwnFindings ticket={t} />
           ) : (
             <p className="panel-lede">Not scored yet, or none of the scored criteria were yours.</p>
           )}

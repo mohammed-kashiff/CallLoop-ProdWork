@@ -4566,3 +4566,76 @@ html[data-color-mode='dark'] .claude-cord-plug {
 .train-step-body {
   margin: 0.15rem 0 0;
 }
+
+.train-reply {
+  width: 100%;
+  margin: 0.35rem 0 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.home-week {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.home-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.home-kpi-link,
+.home-ingest-cue {
+  margin: 0.35rem 0 0;
+  font-size: 0.9rem;
+}
+
+.home-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.home-list p {
+  margin: 0.2rem 0 0;
+}
+
+.finding-stance {
+  margin-top: 0.65rem;
+}
+
+.finding-stance-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.finding-stance .ghost-btn.is-current {
+  border-color: var(--ink);
+  font-weight: 650;
+}
+
+.finding-stance-status {
+  margin: 0.35rem 0 0;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+}
+
+.finding-stance-note {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.profile-invite {
+  margin: 0.75rem 0 1rem;
+}

@@ -51,6 +51,10 @@ ALLOWED_EVENTS = frozenset({
     "upload_failed",
     "batch_partial_failure",
     "ticket_audit_opened",
+    "training_assigned",
+    "training_completed",
+    "finding_agreed",
+    "finding_disputed",
 })
 
 # Events with a natural backend call site (AC-44) — fired via this
@@ -68,6 +72,10 @@ BACKEND_WIRED_EVENTS = frozenset({
     "feedback_requested",
     "upload_failed",
     "batch_partial_failure",
+    "training_assigned",
+    "training_completed",
+    "finding_agreed",
+    "finding_disputed",
 })
 
 # Frontend-only interactions with no natural backend call site — these

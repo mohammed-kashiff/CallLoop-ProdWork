@@ -43,7 +43,8 @@ function captureRecoveryHint(params: URLSearchParams): void {
     params.get('code') ||
     params.get('access_token') ||
     params.get('token_hash') ||
-    params.get('type') === 'recovery'
+    params.get('type') === 'recovery' ||
+    params.get('type') === 'invite'
   ) {
     markPasswordRecovery()
   }
@@ -73,6 +74,7 @@ export function ResetPassword() {
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const isInvite = readAuthParams().get('type') === 'invite'
 
   useEffect(() => {
     const params = readAuthParams()
@@ -95,10 +97,12 @@ export function ResetPassword() {
 
     const { data: sub } = client.auth.onAuthStateChange((event, next) => {
       if (cancelled) return
-      if (event === 'PASSWORD_RECOVERY') {
-        markPasswordRecovery()
-        setGate('ready')
-        return
+      if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+        if (event === 'PASSWORD_RECOVERY' || hasPasswordRecoveryHint() || readAuthParams().get('type') === 'invite') {
+          markPasswordRecovery()
+          setGate('ready')
+          return
+        }
       }
       if (next && hasPasswordRecoveryHint()) {
         setGate('ready')
@@ -191,7 +195,7 @@ export function ResetPassword() {
     <div className="auth-page" data-color-mode={mode}>
       <div className="auth-card">
         <BrandLogo size="md" surface={mode === 'dark' ? 'dark' : 'light'} showMark />
-        <h1>Set a new password</h1>
+        <h1>{isInvite ? 'Set your password' : 'Set a new password'}</h1>
         {gate === 'checking' ? (
           <p className="auth-lead">Checking reset link…</p>
         ) : null}
@@ -205,7 +209,11 @@ export function ResetPassword() {
         ) : null}
         {gate === 'ready' ? (
           <>
-            <p className="auth-lead">Choose a new password for your account.</p>
+            <p className="auth-lead">
+              {isInvite
+                ? 'Choose a password for your CallLoop account.'
+                : 'Choose a new password for your account.'}
+            </p>
             <form className="auth-form" onSubmit={onSubmit}>
               <label>
                 New password

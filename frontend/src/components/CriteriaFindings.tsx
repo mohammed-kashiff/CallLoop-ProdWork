@@ -1,13 +1,27 @@
 import { formatTime } from '../lib/format'
 import type { CriterionFinding } from '../types'
+import { FindingStance, type FindingStanceRow, type FindingStanceValue } from './FindingStance'
 import { VerdictBadge } from './VerdictBadge'
 
 interface CriteriaFindingsProps {
   criteria: CriterionFinding[]
   onSeek: (seconds: number) => void
+  responses?: Record<string, FindingStanceRow>
+  canRespond?: boolean
+  busyId?: string | null
+  errors?: Record<string, string>
+  onRespond?: (dimensionId: string, stance: FindingStanceValue, note?: string) => void
 }
 
-export function CriteriaFindings({ criteria, onSeek }: CriteriaFindingsProps) {
+export function CriteriaFindings({
+  criteria,
+  onSeek,
+  responses,
+  canRespond = false,
+  busyId,
+  errors,
+  onRespond,
+}: CriteriaFindingsProps) {
   return (
     <section className="criteria-panel" aria-label="Per-criterion findings">
       <ul className="criteria-list">
@@ -50,6 +64,15 @@ export function CriteriaFindings({ criteria, onSeek }: CriteriaFindingsProps) {
                 Related moment {formatTime(c.evidenceTimestamp)}
               </button>
             )}
+            {onRespond ? (
+              <FindingStance
+                current={responses?.[c.id]}
+                canRespond={canRespond}
+                busy={busyId === c.id}
+                error={errors?.[c.id] || null}
+                onRespond={(stance, note) => onRespond(c.id, stance, note)}
+              />
+            ) : null}
           </li>
         ))}
       </ul>

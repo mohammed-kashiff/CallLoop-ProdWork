@@ -83,6 +83,11 @@ def test_api_handlers_do_not_bypass_rls():
         "team_performance_api.py",
         "training.py",
         "training_api.py",
+        "home.py",
+        "home_api.py",
+        "finding_responses.py",
+        "finding_responses_api.py",
+        "org_invite.py",
         "performance_kpis.py",
         "performance_kpis_api.py",
     ):

@@ -3,6 +3,7 @@ import { Link, Navigate, useParams } from 'react-router-dom'
 import { CriteriaFindings } from '../components/CriteriaFindings'
 import { ScoreOverview } from '../components/ScoreOverview'
 import { TranscriptPlayer } from '../components/TranscriptPlayer'
+import { useFindingResponses } from '../components/FindingStance'
 import { apiFetch, readError } from '../lib/api'
 import { isAdminHost } from '../lib/adminHost'
 import { capFirst, sentimentLabel } from '../lib/format'
@@ -21,6 +22,10 @@ export function AuditDetail() {
   const [seekTo, setSeekTo] = useState<number | null>(null)
   const [feedbackLoading, setFeedbackLoading] = useState(false)
   const [feedbackErr, setFeedbackErr] = useState<string | null>(null)
+  const finding = useFindingResponses({
+    channel: 'call',
+    callId: Number.isInteger(id) && id > 0 ? id : null,
+  })
 
   useEffect(() => {
     if (!Number.isInteger(id) || id < 1) {
@@ -207,6 +212,11 @@ export function AuditDetail() {
           <CriteriaFindings
             criteria={report.criteria}
             onSeek={(seconds) => setSeekTo(seconds)}
+            responses={finding.responses}
+            canRespond={finding.canRespond}
+            busyId={finding.busyId}
+            errors={finding.errors}
+            onRespond={finding.onRespond}
           />
         </>
       ) : null}

@@ -95,6 +95,8 @@ class _FakeConn:
         norm = " ".join(str(sql).split()).upper()
         args = tuple(params or ())
         self.executed.append((norm, args))
+        if "FROM TRAINING_ASSIGNMENTS" in norm:
+            return _Result([])
         if "JSONB_ARRAY_ELEMENTS" in norm:
             if "FROM TICKET_AUDITS" in norm:
                 rows = list(self.ticket_drills)
@@ -272,6 +274,7 @@ def test_http_member_ignores_agent_query(monkeypatch):
             "roster": [],
             "focus": {"ticket": None, "call": None, "channel": channel, "dim": dim},
             "drills": [],
+            "assignments": [],
         }
 
     monkeypatch.setattr("backend.training.snapshot", _snap)
@@ -307,3 +310,145 @@ def test_http_requires_auth():
 
     r = TestClient(app).get("/api/training")
     assert r.status_code in (401, 403)
+
+
+def test_member_cannot_assign_http(monkeypatch):
+    from backend.auth import Membership
+    from backend.api import app
+
+    called = []
+    monkeypatch.setattr("backend.training.assign", lambda *a, **k: called.append(1) or {})
+    member = TestClient(app)
+    monkeypatch.setattr(
+        "backend.auth.ensure_membership",
+        lambda user_id, email=None, first_name=None, last_name=None: Membership(
+            DEFAULT_ORG_ID, "member", str(user_id),
+        ),
+    )
+    member.headers["Authorization"] = f"Bearer {mint_access_token(sub=AGENT_B)}"
+    r = member.post(
+        "/api/training/assignments",
+        json={"agent": AGENT_B, "channel": "call", "dimension_id": "hold", "call_id": 42},
+    )
+    assert r.status_code == 403
+    assert called == []
+
+
+def test_member_cannot_complete_teammate_assignment(monkeypatch):
+    from backend.auth import Membership
+    from backend.api import app
+
+    def _boom(*_a, **_k):
+        raise PermissionError("Only the assigned agent can complete this drill.")
+
+    monkeypatch.setattr("backend.training.complete", _boom)
+    member = TestClient(app)
+    monkeypatch.setattr(
+        "backend.auth.ensure_membership",
+        lambda user_id, email=None, first_name=None, last_name=None: Membership(
+            DEFAULT_ORG_ID, "member", str(user_id),
+        ),
+    )
+    member.headers["Authorization"] = f"Bearer {mint_access_token(sub=AGENT_B)}"
+    r = member.post(f"/api/training/assignments/{uuid.uuid4()}/complete", json={"reply": "ok"})
+    assert r.status_code == 403
+
+
+def test_assign_duplicate_open_is_409(monkeypatch):
+    from backend.api import app
+    from backend.training import DuplicateOpenAssignment
+
+    monkeypatch.setattr(
+        "backend.training.assign",
+        lambda *a, **k: (_ for _ in ()).throw(DuplicateOpenAssignment()),
+    )
+    client = TestClient(app)
+    authorize(client, monkeypatch, sub=AGENT_A, org_id=DEFAULT_ORG_ID)
+    r = client.post(
+        "/api/training/assignments",
+        json={"agent": AGENT_B, "channel": "call", "dimension_id": "hold", "call_id": 42},
+    )
+    assert r.status_code == 409
+
+
+def test_complete_truncates_reply(monkeypatch):
+    from backend.training import complete
+
+    captured = {}
+
+    class _Conn:
+        def execute(self, sql, params=None):
+            norm = " ".join(str(sql).split()).upper()
+            if "FROM TRAINING_ASSIGNMENTS" in norm and "UPDATE" not in norm:
+                return _Result([{
+                    "id": captured.setdefault("id", str(uuid.uuid4())),
+                    "assignee_user_id": AGENT_B,
+                    "assigned_by": AGENT_A,
+                    "channel": "call",
+                    "call_id": 42,
+                    "ticket_id": None,
+                    "dimension_id": "hold",
+                    "dimension_name": "Hold Protocol",
+                    "prompt": "Announce hold.",
+                    "status": "open",
+                    "reply": None,
+                    "created_at": datetime(2026, 9, 21, 12, 0, 0),
+                    "completed_at": None,
+                }])
+            if "UPDATE TRAINING_ASSIGNMENTS" in norm:
+                captured["reply"] = params[0]
+                return _Result([{
+                    "id": captured["id"],
+                    "assignee_user_id": AGENT_B,
+                    "assigned_by": AGENT_A,
+                    "channel": "call",
+                    "call_id": 42,
+                    "ticket_id": None,
+                    "dimension_id": "hold",
+                    "dimension_name": "Hold Protocol",
+                    "prompt": "Announce hold.",
+                    "status": "done",
+                    "reply": params[0],
+                    "created_at": datetime(2026, 9, 21, 12, 0, 0),
+                    "completed_at": datetime(2026, 9, 21, 13, 0, 0),
+                }])
+            return _Result([])
+
+    @contextmanager
+    def _cm(*_a, **_k):
+        yield _Conn()
+
+    monkeypatch.setattr("backend.training.db.connection", _cm)
+    aid = str(uuid.uuid4())
+    out = complete(DEFAULT_ORG_ID, aid, viewer_user_id=AGENT_B, reply="x" * 500)
+    assert out["status"] == "done"
+    assert captured["reply"] == "x" * 400
+
+
+def test_snapshot_includes_assignments(monkeypatch):
+    from backend.training import snapshot
+
+    conn = _patch_db(monkeypatch, _FakeConn())
+    body = snapshot(
+        DEFAULT_ORG_ID,
+        viewer_user_id=AGENT_A,
+        is_manager=True,
+        days=30,
+    )
+    assert body["assignments"] == []
+    assert any("TRAINING_ASSIGNMENTS" in sql for sql, _ in conn.executed)
+
+
+def test_revision_training_assignments_uses_two_partial_unique_indexes():
+    rev = ROOT / "alembic" / "versions" / "0047_training_assignments.py"
+    raw = rev.read_text(encoding="utf-8")
+    assert 'revision: str = "0047_training_assignments"' in raw
+    assert "0046_ticket_audits_triggered_by" in raw
+    assert "uq_training_assignments_open_call" in raw
+    assert "uq_training_assignments_open_ticket" in raw
+    assert "COALESCE(call_id" not in raw
+    assert "ENABLE ROW LEVEL SECURITY" in raw.upper()
+    assert "bypass_rls" not in raw
+    assert "%s" in SRC
+    assert "f\"SELECT" not in SRC
+
