@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { apiFetch, readError } from '../lib/api'
 import { AuditSummaryTiles } from '../components/AuditSummaryTiles'
-import { TicketEvidence } from '../components/TicketEvidence'
+import { TicketEvidence, ticketTurnDomId } from '../components/TicketEvidence'
 import { FindingStance, useFindingResponses } from '../components/FindingStance'
 import { capFirst } from '../lib/format'
 import { isAdminHost } from '../lib/adminHost'
@@ -66,7 +66,13 @@ function marksLabel(f: OwnFinding): string | null {
   return `${fmt(f.earned)}/${fmt(f.weight)}`
 }
 
-function OwnFindings({ ticket }: { ticket: OwnTicketContribution }) {
+function OwnFindings({
+  ticket,
+  onJump,
+}: {
+  ticket: OwnTicketContribution
+  onJump: (seq: number) => void
+}) {
   const finding = useFindingResponses({ channel: 'ticket', ticketId: ticket.ticket_id })
   return (
     <>
@@ -79,6 +85,7 @@ function OwnFindings({ ticket }: { ticket: OwnTicketContribution }) {
           const turn = ticket.turns.find((row) => row.seq === seq)
           return { isImage: Boolean(turn?.has_image) }
         }}
+        onJump={onJump}
       />
       <ul className="criteria-list">
         {ticket.findings?.map((f) => (
@@ -97,6 +104,9 @@ function OwnFindings({ ticket }: { ticket: OwnTicketContribution }) {
               isImage={
                 f.evidence_seq != null &&
                 ticket.turns.some((turn) => turn.seq === f.evidence_seq && turn.has_image)
+              }
+              onJump={
+                f.evidence_seq != null ? () => onJump(f.evidence_seq as number) : undefined
               }
             />
             <FindingStance
@@ -117,6 +127,26 @@ export function MyTicketContributions() {
   const [tickets, setTickets] = useState<OwnTicketContribution[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [cited, setCited] = useState<{ ticketId: string; seq: number } | null>(null)
+  const citedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const jumpToSeq = (ticketId: string, seq: number) => {
+    setCited({ ticketId, seq })
+    if (citedTimer.current) clearTimeout(citedTimer.current)
+    citedTimer.current = setTimeout(() => setCited(null), 2500)
+    requestAnimationFrame(() => {
+      document.getElementById(ticketTurnDomId(seq, ticketId))?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+    })
+  }
+
+  useEffect(() => {
+    return () => {
+      if (citedTimer.current) clearTimeout(citedTimer.current)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -185,9 +215,11 @@ export function MyTicketContributions() {
             {t.turns.map((m) => (
               <li
                 key={m.seq}
+                id={ticketTurnDomId(m.seq, t.ticket_id)}
                 className={[
                   `ticket-turn is-${m.speaker}`,
                   t.own_span_seqs.includes(m.seq) ? 'is-own-turn' : '',
+                  cited?.ticketId === t.ticket_id && cited.seq === m.seq ? 'is-cited' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')}
@@ -201,7 +233,10 @@ export function MyTicketContributions() {
             ))}
           </ul>
           {t.findings && t.findings.length > 0 ? (
-            <OwnFindings ticket={t} />
+            <OwnFindings
+              ticket={t}
+              onJump={(seq) => jumpToSeq(t.ticket_id, seq)}
+            />
           ) : (
             <p className="panel-lede">Not scored yet, or none of the scored criteria were yours.</p>
           )}

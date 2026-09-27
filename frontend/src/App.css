@@ -1583,6 +1583,19 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   padding-left: 1.15rem;
 }
 
+@media (min-width: 1101px) {
+  .eval-split {
+    align-items: start;
+  }
+
+  .eval-pane.is-transcript {
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100dvh - 6rem);
+    overflow: auto;
+  }
+}
+
 .recap-turns {
   list-style: none;
   margin: 0.5rem 0 0;
@@ -2105,6 +2118,22 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   border-radius: 0 var(--radius) var(--radius) 0;
 }
 
+button.evidence {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: 0;
+  border-left: 3px solid var(--teal);
+}
+
+.evidence.is-jump:hover,
+.evidence.is-jump:focus-visible {
+  background: color-mix(in srgb, var(--teal) 14%, var(--evidence-bg));
+}
+
 .evidence p {
   font-style: italic;
   font-size: 1.02rem;
@@ -2151,7 +2180,8 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   border-radius: calc(var(--radius) - 2px);
 }
 
-.evidence.is-image figcaption {
+.evidence.is-image figcaption,
+.evidence.is-image .evidence-image-caption {
   margin-top: 0.5rem;
   font-style: normal;
   font-size: 0.95rem;
@@ -2294,6 +2324,17 @@ html[data-color-mode='dark'] .empty-card.is-pulse > .sketch-wallpaper {
   grid-template-columns: 2.25rem minmax(0, 1fr);
   gap: 0.7rem;
   align-items: start;
+  scroll-margin-top: 1.25rem;
+}
+
+.ticket-turn.is-cited .ticket-turn-content {
+  border-color: var(--teal);
+  box-shadow: inset 3px 0 0 var(--teal), 0 0 0 2px color-mix(in srgb, var(--teal) 35%, transparent);
+}
+
+.ticket-turn.is-cited:not(:has(.ticket-turn-content)) {
+  outline: 2px solid color-mix(in srgb, var(--teal) 45%, transparent);
+  border-radius: var(--radius);
 }
 
 .ticket-turn-avatar {

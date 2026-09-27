@@ -16,16 +16,20 @@ export function AuditSummaryTiles({
   strength,
   gap,
   resolveEvidence,
+  onJump,
 }: {
   summary?: string | null
   strength?: Highlight
   gap?: Highlight
   resolveEvidence?: (seq: number | null | undefined) => ResolvedEvidence | undefined
+  onJump?: (seq: number) => void
 }) {
   if (!summary && !strength && !gap) return null
 
   function tile(label: string, h: Highlight | undefined) {
-    const resolved = resolveEvidence?.(h?.evidence_seq)
+    const seq = h?.evidence_seq
+    const resolved = resolveEvidence?.(seq)
+    const canJump = seq != null && Number.isFinite(seq)
     return (
       <div>
         <dt>{label}</dt>
@@ -36,6 +40,7 @@ export function AuditSummaryTiles({
           isImage={Boolean(resolved?.isImage)}
           assetUrl={resolved?.assetUrl}
           verified={h?.evidence_verified ?? undefined}
+          onJump={canJump && onJump && seq != null ? () => onJump(seq) : undefined}
         />
       </div>
     )

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEv
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, readError, trackEvent } from '../lib/api'
 import { AuditSummaryTiles } from '../components/AuditSummaryTiles'
-import { TicketEvidence } from '../components/TicketEvidence'
+import { TicketEvidence, ticketTurnDomId } from '../components/TicketEvidence'
 import { capFirst } from '../lib/format'
 import { isAdminHost } from '../lib/adminHost'
 import { flagEnabled } from '../lib/features'
@@ -610,6 +610,8 @@ export function TicketAudit() {
   const [scoring, setScoring] = useState(false)
   const [scoreError, setScoreError] = useState<string | null>(null)
   const [assetUrls, setAssetUrls] = useState<Record<number, string>>({})
+  const [citedSeq, setCitedSeq] = useState<number | null>(null)
+  const citedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadTicket = useCallback(async (id: string) => {
     setLoading(true)
@@ -728,6 +730,25 @@ export function TicketAudit() {
     const turn = messagesBySeq.get(seq)
     return { isImage: Boolean(turn?.has_image), assetUrl: turn?.has_image ? assetUrls[turn.seq] : undefined }
   }
+
+  const jumpToSeq = useCallback((seq: number) => {
+    if (!(ticket?.messages || []).some((m) => m.seq === seq)) return
+    setCitedSeq(seq)
+    if (citedTimer.current) clearTimeout(citedTimer.current)
+    citedTimer.current = setTimeout(() => setCitedSeq(null), 2500)
+    requestAnimationFrame(() => {
+      document.getElementById(ticketTurnDomId(seq))?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+    })
+  }, [ticket])
+
+  useEffect(() => {
+    return () => {
+      if (citedTimer.current) clearTimeout(citedTimer.current)
+    }
+  }, [])
 
   if (isAdminHost()) return <Navigate to="/admin" replace />
 
@@ -856,6 +877,7 @@ export function TicketAudit() {
                           strength={audit.top_strength}
                           gap={audit.top_gap}
                           resolveEvidence={resolveEvidence}
+                          onJump={jumpToSeq}
                         />
                         <ul className="criteria-list">
                           {audit.findings.map((f) => {
@@ -891,6 +913,11 @@ export function TicketAudit() {
                                   isImage={Boolean(turn?.has_image)}
                                   assetUrl={assetUrl}
                                   verified={f.evidence_verified}
+                                  onJump={
+                                    f.evidence_seq != null
+                                      ? () => jumpToSeq(f.evidence_seq as number)
+                                      : undefined
+                                  }
                                 />
                                 <FindingStance
                                   current={finding.rows.find(
@@ -992,9 +1019,11 @@ export function TicketAudit() {
               {ticket.messages.map((m) => (
                 <li
                   key={m.seq}
+                  id={ticketTurnDomId(m.seq)}
                   className={[
                     `ticket-turn is-${m.speaker}`,
                     ticket.own_span_seqs.includes(m.seq) ? 'is-own-turn' : '',
+                    citedSeq === m.seq ? 'is-cited' : '',
                   ]
                     .filter(Boolean)
                     .join(' ')}
