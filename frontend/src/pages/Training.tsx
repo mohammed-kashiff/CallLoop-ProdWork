@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { EmptyState } from '../components/EmptyState'
 import { TrainingCue } from '../components/LoopCues'
-import { SketchWallpaper } from '../components/SketchWallpaper'
 import { useAuth } from '../context/AuthContext'
 import { apiFetch, readError } from '../lib/api'
 
@@ -261,7 +261,7 @@ export function Training() {
                 const href = sourceHref(row.channel, row.ticket_id, row.call_id)
                 const mine = userId === row.assignee_user_id
                 return (
-                  <article className="train-drill" key={row.id}>
+                  <article className="train-drill is-assigned" key={row.id}>
                     <h3>
                       {row.dimension_name}
                       {row.channel === 'ticket' ? ' · Ticket' : ' · Call'}
@@ -308,14 +308,11 @@ export function Training() {
           ) : null}
 
           {drills.length === 0 && openAssigned.length === 0 ? (
-            <div className="empty-card is-pulse">
-              <SketchWallpaper variant="training" />
-              <TrainingCue />
-              <p className="empty-title">Nothing to practice yet</p>
-              <p className="empty-copy">
-                No failing dimensions in this window. Score more tickets or calls, then come back.
-              </p>
-            </div>
+            <EmptyState
+              title="Nothing to practice yet"
+              copy="No failing dimensions in this window. Score more tickets or calls, then come back."
+              lead={<TrainingCue />}
+            />
           ) : (
             drills.map((drill, idx) => {
               const href = sourceHref(drill.channel, drill.ticket_id, drill.call_id)

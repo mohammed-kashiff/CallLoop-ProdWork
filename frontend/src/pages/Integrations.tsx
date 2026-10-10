@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { EmptyState } from '../components/EmptyState'
 import { JustCallAgentIdentityMapping } from '../components/JustCallAgentIdentityMapping'
-import { SketchWallpaper } from '../components/SketchWallpaper'
 import { useAudit } from '../context/AuditContext'
 import { useAuth } from '../context/AuthContext'
 import { apiFetch, readError } from '../lib/api'
@@ -433,14 +433,10 @@ export function Integrations() {
       <JustCallAgentIdentityMapping />
 
       {calls.length === 0 ? (
-        <div className="empty-card is-pulse">
-          <SketchWallpaper variant="pulse" />
-          <p className="empty-title">No JustCall evaluations yet</p>
-          <p className="empty-copy">
-            Connect JustCall, then click Sync now. Finished calls are transcribed and scored
-            here. Open one to see the Agent Pulse scorecard.
-          </p>
-        </div>
+        <EmptyState
+          title="No JustCall evaluations yet"
+          copy="Connect JustCall, then click Sync now. Finished calls are transcribed and scored here. Open one to see the Agent Pulse scorecard."
+        />
       ) : (
         <section className="call-lane" aria-label="JustCall evaluated calls">
           <div className="call-lane-head">

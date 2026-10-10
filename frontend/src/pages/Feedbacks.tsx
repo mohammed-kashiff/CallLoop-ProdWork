@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CallPicker } from '../components/CallPicker'
+import { EmptyState } from '../components/EmptyState'
 import { FeedbackCue } from '../components/LoopCues'
-import { SketchWallpaper } from '../components/SketchWallpaper'
 import { KpiCard } from '../components/KpiCard'
 import { Workspace, callNoteScopeKey } from '../components/Workspace'
 import { capFirst, capWords, sentimentLabel } from '../lib/format'
@@ -72,16 +72,15 @@ export function Feedbacks() {
       )}
 
       {!showReport && (
-        <div className="empty-card is-pulse">
-          <SketchWallpaper variant="feedbacks" />
-          <FeedbackCue />
-          <p className="empty-title">No voice of customer yet</p>
-          <p className="empty-copy">
-            {auditedCalls.length
+        <EmptyState
+          title="No voice of customer yet"
+          copy={
+            auditedCalls.length
               ? 'Pick a call above to view or load areas of improvement.'
-              : 'Ingest a recording to surface service and product signals.'}
-          </p>
-        </div>
+              : 'Ingest a recording to surface service and product signals.'
+          }
+          lead={<FeedbackCue />}
+        />
       )}
 
       {showReport && (

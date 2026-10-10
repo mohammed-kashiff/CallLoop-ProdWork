@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { EmptyState } from '../components/EmptyState'
 import { KpiCard } from '../components/KpiCard'
-import { ProblemSection } from '../components/ProblemSection'
 import { useAuth } from '../context/AuthContext'
 import { apiFetch, readError } from '../lib/api'
 
@@ -94,13 +94,16 @@ export function Home() {
 
   return (
     <div className="home-week">
-      <ProblemSection />
-
       <header className="page-bar">
         <div>
           <p className="crumb">Loop / Home</p>
           <h1>Your week</h1>
         </div>
+        {data && !emptyWeek ? (
+          <p className="home-kpi-link">
+            <Link to="/team-performance">Team performance</Link>
+          </p>
+        ) : null}
       </header>
 
       {error ? (
@@ -112,19 +115,20 @@ export function Home() {
 
       {data && !loading ? (
         emptyWeek ? (
-          <section className="profile-card">
-            <h2>Nothing scored yet</h2>
-            <p className="panel-lede">
-              {isOwnerOrManager
+          <EmptyState
+            title="Nothing scored yet"
+            copy={
+              isOwnerOrManager
                 ? 'When calls and tickets in this workspace are scored, your own numbers land here.'
-                : 'When you are scored on a call or ticket, your numbers land here.'}
-            </p>
+                : 'When you are scored on a call or ticket, your numbers land here.'
+            }
+          >
             {isOwnerOrManager ? (
               <p className="home-ingest-cue">
-                Owners and managers ingest from <Link to="/agents-pulse">Agent Pulse</Link>.
+                Ingest a recording from <Link to="/agents-pulse">Agent Pulse</Link>.
               </p>
             ) : null}
-          </section>
+          </EmptyState>
         ) : (
           <>
             <section className="home-kpis" aria-label="Your scores">
@@ -148,69 +152,68 @@ export function Home() {
                 }
                 tone={scoreTone(data.scores.calls.avg_score, data.scores.calls.target)}
               />
-              <p className="home-kpi-link">
-                <Link to="/team-performance">Team performance</Link>
-              </p>
             </section>
 
-            <section className="profile-card">
-              <h2>Open flags</h2>
-              {data.flags.length === 0 ? (
-                <p className="panel-lede">No open flags on your calls.</p>
-              ) : (
-                <ul className="home-list">
-                  {data.flags.map((row) => (
-                    <li key={row.call_id}>
-                      <Link to="/agents-pulse/flagged">{row.filename}</Link>
-                      {row.score != null ? <span> · {fmtScore(row.score)}</span> : null}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <p className="home-kpi-link">
-                <Link to="/agents-pulse/flagged">Flagged for review</Link>
-              </p>
-            </section>
+            <div className="home-work">
+              <section className="home-panel">
+                <h2>Open flags</h2>
+                {data.flags.length === 0 ? (
+                  <p className="panel-lede">No open flags on your calls.</p>
+                ) : (
+                  <ul className="home-list">
+                    {data.flags.map((row) => (
+                      <li key={row.call_id}>
+                        <Link to="/agents-pulse/flagged">{row.filename}</Link>
+                        {row.score != null ? <span> · {fmtScore(row.score)}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="home-kpi-link">
+                  <Link to="/agents-pulse/flagged">Flagged for review</Link>
+                </p>
+              </section>
 
-            <section className="profile-card">
-              <h2>{data.drills.some((d) => d.kind === 'assignment') ? 'Assigned drills' : 'Suggested drills'}</h2>
-              {data.drills.length === 0 ? (
-                <p className="panel-lede">No open drills right now.</p>
-              ) : (
-                <ul className="home-list">
-                  {data.drills.map((row) => (
-                    <li key={`${row.kind}:${row.id || row.dimension_id}:${row.call_id || row.ticket_id}`}>
-                      <Link to={drillHref(row)}>{row.dimension_name}</Link>
-                      {row.prompt ? <p className="panel-lede">{row.prompt}</p> : null}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <p className="home-kpi-link">
-                <Link to="/training">Training</Link>
-              </p>
-            </section>
+              <section className="home-panel">
+                <h2>{data.drills.some((d) => d.kind === 'assignment') ? 'Assigned drills' : 'Suggested drills'}</h2>
+                {data.drills.length === 0 ? (
+                  <p className="panel-lede">No open drills right now.</p>
+                ) : (
+                  <ul className="home-list">
+                    {data.drills.map((row) => (
+                      <li key={`${row.kind}:${row.id || row.dimension_id}:${row.call_id || row.ticket_id}`}>
+                        <Link to={drillHref(row)}>{row.dimension_name}</Link>
+                        {row.prompt ? <p className="panel-lede">{row.prompt}</p> : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="home-kpi-link">
+                  <Link to="/training">Training</Link>
+                </p>
+              </section>
 
-            <section className="profile-card">
-              <h2>Tickets you were on</h2>
-              {data.tickets.length === 0 ? (
-                <p className="panel-lede">No recent tickets.</p>
-              ) : (
-                <ul className="home-list">
-                  {data.tickets.map((row) => (
-                    <li key={row.ticket_id}>
-                      <Link to={`/ticket-audit/${row.ticket_id}`}>
-                        {row.subject || row.ticket_id.slice(0, 8)}
-                      </Link>
-                      {row.status ? <span> · {row.status}</span> : null}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <p className="home-kpi-link">
-                <Link to="/ticket-audit-mine">My contributions</Link>
-              </p>
-            </section>
+              <section className="home-panel">
+                <h2>Tickets you were on</h2>
+                {data.tickets.length === 0 ? (
+                  <p className="panel-lede">No recent tickets.</p>
+                ) : (
+                  <ul className="home-list">
+                    {data.tickets.map((row) => (
+                      <li key={row.ticket_id}>
+                        <Link to={`/ticket-audit/${row.ticket_id}`}>
+                          {row.subject || row.ticket_id.slice(0, 8)}
+                        </Link>
+                        {row.status ? <span> · {row.status}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="home-kpi-link">
+                  <Link to="/ticket-audit-mine">My contributions</Link>
+                </p>
+              </section>
+            </div>
 
             {isOwnerOrManager ? (
               <p className="home-ingest-cue">

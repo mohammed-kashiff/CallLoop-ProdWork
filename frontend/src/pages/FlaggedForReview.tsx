@@ -364,7 +364,7 @@ export function FlaggedForReview() {
       {loading && <p className="panel-lede">Loading flagged calls…</p>}
 
       {isOwnerOrManager ? (
-        <section className="profile-card" aria-label="Disputes">
+        <section className="home-panel" aria-label="Disputes">
           <h2>Disputes</h2>
           <p className="panel-lede">
             Completing a call flag does not clear a dispute.

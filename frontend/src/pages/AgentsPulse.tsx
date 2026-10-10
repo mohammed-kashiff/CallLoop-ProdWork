@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CallProgress } from '../components/CallProgress'
-import { CallWaveform } from '../components/CallWaveform'
-import { SketchWallpaper } from '../components/SketchWallpaper'
 import { CriteriaFindings } from '../components/CriteriaFindings'
+import { EmptyState } from '../components/EmptyState'
 import { KpiCard } from '../components/KpiCard'
 import { Pipeline } from '../components/Pipeline'
 import { ScoreOverview } from '../components/ScoreOverview'
@@ -176,16 +175,13 @@ export function AgentsPulse() {
       <Pipeline activeStep={activeStep} statuses={statuses} />
 
       {!showReport && !running && (
-        <div className="empty-card is-pulse">
-          <SketchWallpaper variant="pulse" />
+        <EmptyState
+          className="is-pulse"
+          title="No call on the pulse yet"
+          copy="Queue recordings, then press Start. Hear transcribes an 8 kHz stereo copy; scoring uses the transcript only."
+        >
           {upload}
-          <CallWaveform />
-          <p className="empty-title">No call on the pulse yet</p>
-          <p className="empty-copy">
-            Queue recordings, then press Start. Hear transcribes an 8 kHz stereo copy; scoring
-            uses the transcript only.
-          </p>
-        </div>
+        </EmptyState>
       )}
 
       {showReport && (

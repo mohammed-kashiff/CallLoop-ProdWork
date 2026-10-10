@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CallPicker } from '../components/CallPicker'
+import { EmptyState } from '../components/EmptyState'
 import { ChurnCue } from '../components/LoopCues'
-import { SketchWallpaper } from '../components/SketchWallpaper'
 import { KpiCard } from '../components/KpiCard'
 import { Workspace, callNoteScopeKey } from '../components/Workspace'
 import { capFirst, capWords, formatTime } from '../lib/format'
@@ -112,16 +112,15 @@ export function ChurnRisk() {
       )}
 
       {!viewingChurn && (
-        <div className="empty-card is-pulse">
-          <SketchWallpaper variant="churn" />
-          <ChurnCue />
-          <p className="empty-title">No churn language yet</p>
-          <p className="empty-copy">
-            {churnRiskCalls.length
+        <EmptyState
+          title="No churn language yet"
+          copy={
+            churnRiskCalls.length
               ? 'Pick a call above to score retention risk.'
-              : 'Ingest a recording to score retention risk before renewal.'}
-          </p>
-        </div>
+              : 'Ingest a recording to score retention risk before renewal.'
+          }
+          lead={<ChurnCue />}
+        />
       )}
 
       {viewingChurn && (

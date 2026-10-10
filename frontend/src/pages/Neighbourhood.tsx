@@ -1,5 +1,4 @@
 import { Neighbourhood as NeighbourhoodCompare } from '../components/Neighbourhood'
-import { SketchWallpaper } from '../components/SketchWallpaper'
 
 export function Neighbourhood() {
   return (
@@ -12,7 +11,6 @@ export function Neighbourhood() {
       </header>
 
       <div className="neighbourhood-wrap is-page">
-        <SketchWallpaper variant="neighbourhood" />
         <NeighbourhoodCompare />
       </div>
     </>
